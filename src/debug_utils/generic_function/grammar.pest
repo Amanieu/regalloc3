@@ -1,0 +1,52 @@
+// Entities
+number   = @{ ASCII_DIGIT+ }
+float    = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+value    = ${ "%" ~ number }
+unit     = ${ "unit" ~ number }
+physreg  = ${ "r" ~ number }
+regclass = ${ "class" ~ number }
+regbank  = ${ "bank" ~ number }
+inst     = ${ "inst" ~ number }
+block    = ${ "block" ~ number }
+
+// Comma-separated lists of entities
+value_list = { (value ~ ",")* ~ value? }
+block_list = { (block ~ ",")* ~ block? }
+
+// Value declaration
+remat_cost        =  { "cheaper_than_move" | "cheaper_than_load" }
+remat             =  { "remat" ~ "(" ~ remat_cost ~ "," ~ regclass ~ ")" }
+reftype           =  { "reftype" }
+value_attribute   = _{ regbank | remat | reftype }
+value_declaration =  { value ~ "=" ~ value_attribute+ }
+
+// Start of block label
+frequency   = { "freq" ~ "(" ~ float ~ ")" }
+block_label = { block ~ ("(" ~ value_list ~ ")")? ~ frequency ~ ":" }
+
+// Instruction operand
+reuse                  =  { "reuse" ~ "(" ~ number ~ ")" }
+constraint             =  { physreg | regclass | reuse }
+nonallocatable_operand =  { "NonAllocatable" ~ ":" ~ physreg }
+operand_kind           =  { "Def" | "EarlyDef" | "Use" }
+normal_operand         =  { operand_kind ~ "(" ~ value_list ~ ")" ~ ":" ~ constraint }
+operand                = _{ normal_operand | nonallocatable_operand }
+clobber                =  { "Clobber" ~ ":" ~ unit }
+
+// Instruction
+attribute   = { "safepoint" | "pure" }
+normal_inst = { "inst" }
+branch      = { "branch" ~ "(" ~ block_list ~ ")" }
+jump        = { "jump" ~ block ~ ("(" ~ value_list ~ ")")? }
+ret         = { "ret" }
+opcode      = { normal_inst | branch | jump | ret }
+inst_label = { inst ~ ":" }
+instruction = { inst_label? ~ opcode ~ attribute* ~ operand* ~ clobber* }
+
+// Declarations come before the body
+declaration = _{ value_declaration }
+body        = _{ block_label | instruction }
+function    = _{ SOI ~ (declaration? ~ "\n")* ~ (body? ~ "\n")* ~ body? ~ EOI }
+
+WHITESPACE = _{ " " | "\t" }
+COMMENT    = _{ ";" ~ (!NEWLINE ~ ANY)* }

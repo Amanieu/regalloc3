@@ -1,0 +1,59 @@
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@nightly
+      with:
+        targets: thumbv6m-none-eabi
+    - name: Build without features
+      run: cargo build
+    - name: Build with all features
+      run: cargo build --all-features
+    - name: Check no_std support (all features except `parse`)
+      run: cargo check --target thumbv6m-none-eabi --features trace-log,serde
+
+  tools:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: clippy,rustfmt
+    - name: Rustfmt
+      run: cargo fmt --all -- --check
+    - name: Clippy lints
+      run: cargo clippy --all
+
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fuzz_target: [func_gen, func_parse, reginfo_gen, reginfo_parse, parallel_moves, compile]
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@nightly
+    - name: Install cargo-fuzz
+      run: cargo +nightly install cargo-fuzz
+    - name: Run fuzz target for 60s
+      run: cargo fuzz run ${{ matrix.fuzz_target }} -s none -- -max_total_time=60
