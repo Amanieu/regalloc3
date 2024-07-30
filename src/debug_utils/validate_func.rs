@@ -7,12 +7,12 @@ use core::{fmt, slice};
 use anyhow::{bail, ensure, Result};
 use cranelift_entity::{EntityRef as _, EntitySet, SecondaryMap};
 
+use crate::debug_utils::dominator_tree::DominatorTree;
+use crate::debug_utils::postorder::PostOrder;
 use crate::function::{
     Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, Value, ValueGroup,
     MAX_BLOCKS, MAX_BLOCK_PARAMS, MAX_INSTS, MAX_INST_OPERANDS, MAX_VALUES,
 };
-use crate::internal::dominator_tree::DominatorTree;
-use crate::internal::postorder::PostOrder;
 use crate::reginfo::{AllocationOrderSet, PhysReg, RegInfo, RegOrRegGroup, RegUnitSet};
 
 /// Checks `func` to ensure it satisfies all of the pre-conditions required by

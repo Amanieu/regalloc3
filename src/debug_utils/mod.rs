@@ -6,8 +6,10 @@
 
 mod checker;
 mod display;
+mod dominator_tree;
 mod generic_function;
 mod generic_reginfo;
+mod postorder;
 mod validate_func;
 mod validate_reginfo;
 

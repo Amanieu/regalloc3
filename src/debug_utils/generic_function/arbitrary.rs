@@ -6,12 +6,12 @@ use arbitrary::{Result, Unstructured};
 use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 
 use super::{BlockData, GenericFunction, InstData};
+use crate::debug_utils::dominator_tree::DominatorTree;
 use crate::debug_utils::generic_function::ValueData;
+use crate::debug_utils::postorder::PostOrder;
 use crate::function::{
     Block, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost, Value,
 };
-use crate::internal::dominator_tree::DominatorTree;
-use crate::internal::postorder::PostOrder;
 use crate::reginfo::{
     AllocationOrderSet, PhysReg, RegBank, RegClass, RegInfo, RegOrRegGroup, RegUnit, RegUnitSet,
     MAX_REG_UNITS,

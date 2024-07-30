@@ -4,10 +4,8 @@
 pub(crate) mod allocations;
 pub(crate) mod allocator;
 pub(crate) mod coalescing;
-pub(crate) mod dominator_tree;
 pub(crate) mod live_range;
 pub(crate) mod move_resolver;
-pub(crate) mod postorder;
 pub(crate) mod reg_matrix;
 pub(crate) mod spill_allocator;
 pub(crate) mod split_placement;
