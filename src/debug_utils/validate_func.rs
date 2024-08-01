@@ -13,7 +13,7 @@ use crate::function::{
     Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, Value, ValueGroup,
     MAX_BLOCKS, MAX_BLOCK_PARAMS, MAX_INSTS, MAX_INST_OPERANDS, MAX_VALUES,
 };
-use crate::reginfo::{AllocationOrderSet, PhysReg, RegInfo, RegOrRegGroup, RegUnitSet};
+use crate::reginfo::{AllocationOrderSet, PhysReg, RegInfo, RegUnitSet};
 
 /// Checks `func` to ensure it satisfies all of the pre-conditions required by
 /// the register allocator.
@@ -704,18 +704,13 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     "{value} cannot be rematerialized into {class} which has an empty allocation \
                      order"
                 );
-                for reg in self.reginfo.regs() {
-                    if self
-                        .reginfo
-                        .class_contains(class, RegOrRegGroup::single(reg))
-                    {
-                        ensure!(
-                            self.reginfo.class_includes_spillslots(class)
-                                || !self.reginfo.is_memory(reg),
-                            "{value} cannot be rematerialized into {class} which has in-memory \
-                             members but doesn't include spill slots"
-                        );
-                    }
+                for reg in self.reginfo.class_members(class).iter() {
+                    ensure!(
+                        self.reginfo.class_includes_spillslots(class)
+                            || !self.reginfo.is_memory(reg.as_single()),
+                        "{value} cannot be rematerialized into {class} which has in-memory \
+                         members but doesn't include spill slots"
+                    );
                 }
             }
         }

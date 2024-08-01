@@ -278,9 +278,10 @@ impl<R: RegInfo> fmt::Display for DisplayRegInfo<'_, R> {
                         f,
                         "        registers = {}",
                         display_iter(
-                            self.0.regs().filter(|&reg| self
-                                .0
-                                .class_contains(class, RegOrRegGroup::single(reg))),
+                            self.0
+                                .class_members(class)
+                                .iter()
+                                .map(RegOrRegGroup::as_single),
                             ""
                         )
                     )?;
@@ -289,9 +290,10 @@ impl<R: RegInfo> fmt::Display for DisplayRegInfo<'_, R> {
                         f,
                         "        registers = {}",
                         display_iter(
-                            self.0.reg_groups().filter(|&reg| self
-                                .0
-                                .class_contains(class, RegOrRegGroup::multi(reg))),
+                            self.0
+                                .class_members(class)
+                                .iter()
+                                .map(RegOrRegGroup::as_multi),
                             ""
                         )
                     )?;

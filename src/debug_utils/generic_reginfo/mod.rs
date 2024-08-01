@@ -102,27 +102,12 @@ impl GenericRegInfo {
             });
         }
         for class in reginfo.classes() {
-            let group_size = reginfo.class_group_size(class) as u8;
-            let mut members = RegOrRegGroupSet::new();
-            if group_size == 1 {
-                for reg in reginfo.regs() {
-                    if reginfo.class_contains(class, RegOrRegGroup::single(reg)) {
-                        members.insert(RegOrRegGroup::single(reg));
-                    }
-                }
-            } else {
-                for group in reginfo.reg_groups() {
-                    if reginfo.class_contains(class, RegOrRegGroup::multi(group)) {
-                        members.insert(RegOrRegGroup::multi(group));
-                    }
-                }
-            }
             classes.push(RegClassData {
                 bank: reginfo.bank_for_class(class),
                 includes_spillslots: reginfo.class_includes_spillslots(class),
                 spill_cost: reginfo.class_spill_cost(class),
-                group_size,
-                members,
+                group_size: reginfo.class_group_size(class) as u8,
+                members: reginfo.class_members(class),
                 sub_classes: reginfo.sub_classes(class),
                 preferred_regs: reginfo
                     .allocation_order(class, AllocationOrderSet::Preferred)
@@ -198,8 +183,8 @@ impl RegInfo for GenericRegInfo {
     }
 
     #[inline]
-    fn class_contains(&self, class: RegClass, reg: RegOrRegGroup) -> bool {
-        self.classes[class].members.contains(reg)
+    fn class_members(&self, class: RegClass) -> RegOrRegGroupSet {
+        self.classes[class].members
     }
 
     #[inline]

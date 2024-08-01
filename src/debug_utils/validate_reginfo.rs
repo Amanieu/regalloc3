@@ -130,22 +130,22 @@ impl<R: RegInfo> Context<'_, R> {
                 empty = false;
                 ensure!(
                     self.reginfo
-                        .class_contains(top_level_class, RegOrRegGroup::single(reg)),
+                        .class_members(top_level_class)
+                        .contains(RegOrRegGroup::single(reg)),
                     "{bank}: {reg} not in top-level class {top_level_class}"
-                );
-            }
-
-            if self
-                .reginfo
-                .class_contains(stack_to_stack_class, RegOrRegGroup::single(reg))
-            {
-                ensure!(
-                    !self.reginfo.is_memory(reg),
-                    "{bank}: {reg} in stack-to-stack {stack_to_stack_class} cannot be in memory"
                 );
             }
         }
         ensure!(!empty, "{bank} has no registers");
+
+        // Check stack_to_stack_class
+        for reg in self.reginfo.class_members(stack_to_stack_class).iter() {
+            let reg = reg.as_single();
+            ensure!(
+                !self.reginfo.is_memory(reg),
+                "{bank}: {reg} in stack-to-stack {stack_to_stack_class} cannot be in memory"
+            );
+        }
 
         // Check reftype_class
         if let Some(reftype_class) = self.reginfo.reftype_class(bank) {
@@ -183,14 +183,12 @@ impl<R: RegInfo> Context<'_, R> {
 
         if group_size != 1 {
             let mut regs_per_index = [PhysRegSet::new(); MAX_GROUP_SIZE];
-            for group in self.reginfo.reg_groups() {
-                if !self
-                    .reginfo
-                    .class_contains(class, RegOrRegGroup::multi(group))
-                {
-                    continue;
-                }
-
+            for group in self
+                .reginfo
+                .class_members(class)
+                .iter()
+                .map(RegOrRegGroup::as_multi)
+            {
                 // Check that class members have the same group size as the class.
                 let members = self.reginfo.reg_group_members(group);
                 ensure!(
@@ -224,14 +222,12 @@ impl<R: RegInfo> Context<'_, R> {
                 }
             }
         } else {
-            for reg in self.reginfo.regs() {
-                if !self
-                    .reginfo
-                    .class_contains(class, RegOrRegGroup::single(reg))
-                {
-                    continue;
-                }
-
+            for reg in self
+                .reginfo
+                .class_members(class)
+                .iter()
+                .map(RegOrRegGroup::as_single)
+            {
                 // Check that class members are in the same bank as the class.
                 ensure!(
                     self.reginfo.bank_for_reg(reg) == Some(bank),
@@ -259,7 +255,7 @@ impl<R: RegInfo> Context<'_, R> {
                 self.check_entity(Entity::PhysReg(reg.as_single()))?;
             }
             ensure!(
-                self.reginfo.class_contains(class, reg),
+                self.reginfo.class_members(class).contains(reg),
                 "{class}: Allocation order contains {reg} which is outside class"
             );
         }
@@ -291,17 +287,17 @@ impl<R: RegInfo> Context<'_, R> {
             }
 
             if group_size == 1 && self.reginfo.class_group_size(subclass) > 1 {
-                for group in self.reginfo.reg_groups() {
-                    if !self
-                        .reginfo
-                        .class_contains(subclass, RegOrRegGroup::multi(group))
-                    {
-                        continue;
-                    }
+                for group in self
+                    .reginfo
+                    .class_members(subclass)
+                    .iter()
+                    .map(RegOrRegGroup::as_multi)
+                {
                     for &member in self.reginfo.reg_group_members(group) {
                         ensure!(
                             self.reginfo
-                                .class_contains(class, RegOrRegGroup::single(member)),
+                                .class_members(class)
+                                .contains(RegOrRegGroup::single(member)),
                             "Superclass {class} of {subclass} doesn't contain {member} (member of \
                              {group})"
                         );
@@ -312,34 +308,11 @@ impl<R: RegInfo> Context<'_, R> {
                     self.reginfo.class_group_size(subclass) == group_size,
                     "Subclass {subclass} must have same group size as {class}"
                 );
-                if group_size == 1 {
-                    for reg in self.reginfo.regs() {
-                        if !self
-                            .reginfo
-                            .class_contains(subclass, RegOrRegGroup::single(reg))
-                        {
-                            continue;
-                        }
-                        ensure!(
-                            self.reginfo
-                                .class_contains(class, RegOrRegGroup::single(reg)),
-                            "Subclass {subclass} of {class} doesn't contain {reg}"
-                        );
-                    }
-                } else {
-                    for group in self.reginfo.reg_groups() {
-                        if !self
-                            .reginfo
-                            .class_contains(subclass, RegOrRegGroup::multi(group))
-                        {
-                            continue;
-                        }
-                        ensure!(
-                            self.reginfo
-                                .class_contains(class, RegOrRegGroup::multi(group)),
-                            "Subclass {subclass} of {class} doesn't contain {group}"
-                        );
-                    }
+                for reg in self.reginfo.class_members(subclass).iter() {
+                    ensure!(
+                        self.reginfo.class_members(class).contains(reg),
+                        "Subclass {subclass} of {class} doesn't contain {reg}"
+                    );
                 }
             }
         }

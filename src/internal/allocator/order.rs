@@ -186,7 +186,9 @@ impl AllocationOrder {
         if let Some(hint) = hint {
             if !vreg.is_group() {
                 let hint = RegOrRegGroup::single(hint);
-                if !self.duplicate_mask.contains(hint) && reginfo.class_contains(class, hint) {
+                if !self.duplicate_mask.contains(hint)
+                    && reginfo.class_members(class).contains(hint)
+                {
                     self.duplicate_mask.insert(hint);
                     self.candidates.push(CandidateReg {
                         reg: hint,
@@ -282,12 +284,17 @@ impl AllocationOrder {
                     let Some(reg_group) = reginfo.group_for_reg(reg, group_index, class) else {
                         continue;
                     };
-                    debug_assert!(reginfo.class_contains(class, RegOrRegGroup::multi(reg_group)));
+                    debug_assert!(reginfo
+                        .class_members(class)
+                        .contains(RegOrRegGroup::multi(reg_group)));
                     RegOrRegGroup::multi(reg_group)
                 } else {
                     // Ignore preferences that conflict with our register class
                     // constraint.
-                    if !reginfo.class_contains(class, RegOrRegGroup::single(reg)) {
+                    if !reginfo
+                        .class_members(class)
+                        .contains(RegOrRegGroup::single(reg))
+                    {
                         continue;
                     }
                     RegOrRegGroup::single(reg)

@@ -432,13 +432,13 @@ pub trait RegInfo {
         Keys::with_len(self.num_classes())
     }
 
-    /// Checks whether a [`PhysReg`] or [`RegGroup`] is contained within a
+    /// Returns the set of [`PhysReg`] or [`RegGroup`] contained within a
     /// register class.
     ///
     /// This indicates that `reg` may be assigned to an operand constrainted to
     /// `class`. This is the case even if the register is not a part of the
     /// allocation order.
-    fn class_contains(&self, class: RegClass, reg: RegOrRegGroup) -> bool;
+    fn class_members(&self, class: RegClass) -> RegOrRegGroupSet;
 
     /// Whether an operand constrainted to this register class can be allocated
     /// to a [`SpillSlot`] instead of a [`PhysReg`].

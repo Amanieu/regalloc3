@@ -465,7 +465,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         self.evicted.remove(&slot);
                     }
                 } else {
-                    // Register evictions (used when the parallel move resolve
+                    // Register evictions (used when the parallel move resolver
                     // can't find a scratch register) requires special handling.
                     //
                     // The problem is that it creates moves that don't carry a
@@ -590,7 +590,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         let reginfo = self.output.reginfo();
         match alloc.kind() {
             AllocationKind::PhysReg(reg) => ensure!(
-                reginfo.class_contains(class, RegOrRegGroup::single(reg)),
+                reginfo
+                    .class_members(class)
+                    .contains(RegOrRegGroup::single(reg)),
                 "{class} doesn't contain {reg}"
             ),
             AllocationKind::SpillSlot(slot) => {

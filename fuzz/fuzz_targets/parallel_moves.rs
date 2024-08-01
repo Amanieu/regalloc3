@@ -164,11 +164,9 @@ impl Arbitrary<'_> for TestCase {
                             && reginfo.class_group_size(class) == 1
                             && (reginfo.class_includes_spillslots(class)
                                 || reginfo
-                                    .regs()
-                                    .filter(|&reg| {
-                                        reginfo.class_contains(class, RegOrRegGroup::single(reg))
-                                    })
-                                    .all(|reg| !reginfo.is_memory(reg)))
+                                    .class_members(class)
+                                    .iter()
+                                    .all(|reg| !reginfo.is_memory(reg.as_single())))
                     })
                     .collect();
                 if remat_classes.is_empty() {
@@ -528,7 +526,10 @@ fuzz_target!(|t: TestCase| {
             };
             match edit.to.kind() {
                 AllocationKind::PhysReg(reg) => {
-                    assert!(t.reginfo.class_contains(class, RegOrRegGroup::single(reg)));
+                    assert!(t
+                        .reginfo
+                        .class_members(class)
+                        .contains(RegOrRegGroup::single(reg)));
                     for &unit in t.reginfo.reg_units(reg) {
                         unit_values[unit] = Some(value);
                     }

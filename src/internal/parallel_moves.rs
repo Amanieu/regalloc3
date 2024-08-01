@@ -313,7 +313,10 @@ impl ScratchAllocator {
         // evicted registers since other moves in the cycle could require
         // un-evicting that register.
         if let Some((reg, _spillslot, _size)) = self.evicted_reg {
-            if reginfo.class_contains(class, RegOrRegGroup::single(reg)) {
+            if reginfo
+                .class_members(class)
+                .contains(RegOrRegGroup::single(reg))
+            {
                 trace!("-> re-using previously evicted {reg}");
                 return Allocation::reg(reg);
             }
@@ -603,9 +606,9 @@ impl ParallelMoves {
             .expect("add_remat called with non-rematerializable value");
 
         let need_scratch = match dest.kind() {
-            AllocationKind::PhysReg(reg) => {
-                !reginfo.class_contains(class, RegOrRegGroup::single(reg))
-            }
+            AllocationKind::PhysReg(reg) => !reginfo
+                .class_members(class)
+                .contains(RegOrRegGroup::single(reg)),
             AllocationKind::SpillSlot(_) => !reginfo.class_includes_spillslots(class),
         };
         if need_scratch {
@@ -630,9 +633,9 @@ impl ParallelMoves {
         if let Some((cost, class)) = func.can_rematerialize(value) {
             if cost == RematCost::CheaperThanMove || source.is_memory(reginfo) {
                 let need_scratch = match dest.kind() {
-                    AllocationKind::PhysReg(reg) => {
-                        !reginfo.class_contains(class, RegOrRegGroup::single(reg))
-                    }
+                    AllocationKind::PhysReg(reg) => !reginfo
+                        .class_members(class)
+                        .contains(RegOrRegGroup::single(reg)),
                     AllocationKind::SpillSlot(_) => !reginfo.class_includes_spillslots(class),
                 };
                 if need_scratch {
