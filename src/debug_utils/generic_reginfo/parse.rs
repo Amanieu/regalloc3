@@ -242,20 +242,22 @@ fn parse_class_def(
         Err(custom_error(span, "missing registers attribute"))?
     };
     let group_size = group_size.unwrap_or(1);
-    if is_group.unwrap() != (group_size != 1) {
-        Err(custom_error(span, "group_size doesn't match registers"))?;
-    }
-    if !is_group.unwrap() {
-        for &reg in &registers {
-            if regs[reg.as_single()]
-                .bank
-                .is_some_and(|reg_bank| reg_bank != bank)
-            {
-                Err(custom_error(span, "register used with different banks"))?;
-            }
-            regs[reg.as_single()].bank = Some(bank);
+    if let Some(is_group) = is_group {
+        if is_group != (group_size != 1) {
+            Err(custom_error(span, "group_size doesn't match registers"))?;
         }
-    }
+        if !is_group {
+            for &reg in &registers {
+                if regs[reg.as_single()]
+                    .bank
+                    .is_some_and(|reg_bank| reg_bank != bank)
+                {
+                    Err(custom_error(span, "register used with different banks"))?;
+                }
+                regs[reg.as_single()].bank = Some(bank);
+            }
+        }
+    };
     let mut members = RegOrRegGroupSet::new();
     for &reg in &registers {
         members.insert(reg);
