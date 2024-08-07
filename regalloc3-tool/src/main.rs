@@ -147,12 +147,7 @@ fn main() -> Result<()> {
 
             if verbose {
                 println!(
-                    "\
-==============
-Input function
-==============
-
-{}",
+                    "================ Input function ================\n{}",
                     debug_utils::DisplayFunction(&function)
                 );
             }
@@ -162,13 +157,11 @@ Input function
                 .allocate_registers(&function, &reginfo, &Default::default())
                 .unwrap();
 
-            println!(
-                "\
-======
-Output
-======
+            println!("================ Output ================\n{output}");
 
-{output}"
+            println!(
+                "Cost model score: {}",
+                debug_utils::CostModel::default().evaluate(&output)
             );
 
             debug_utils::check_output(&output)

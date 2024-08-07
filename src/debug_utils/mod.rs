@@ -5,6 +5,7 @@
 //! allocator.
 
 mod checker;
+mod cost_model;
 mod display;
 mod dominator_tree;
 mod generic_function;
@@ -14,6 +15,7 @@ mod validate_func;
 mod validate_reginfo;
 
 pub use checker::*;
+pub use cost_model::*;
 pub use display::*;
 pub use generic_function::*;
 pub use generic_reginfo::*;
