@@ -23,6 +23,7 @@ use super::value_live_ranges::ValueLiveRanges;
 use crate::function::{Block, Function, OperandConstraint, OperandKind, Value, ValueGroup};
 use crate::internal::value_live_ranges::ValueSet;
 use crate::union_find::UnionFind;
+use crate::Stats;
 
 pub struct Coalescing {
     /// Mapping of `Value` to `ValueSet`.
@@ -70,6 +71,7 @@ impl Coalescing {
         func: &impl Function,
         uses: &Uses,
         value_live_ranges: &mut ValueLiveRanges,
+        stats: &mut Stats,
     ) {
         self.set_for_value.reset(func.num_values());
         self.last_group_for_value.clear();
@@ -77,8 +79,14 @@ impl Coalescing {
         self.compute_block_order(func);
 
         for i in 0..self.blocks_by_priority.len() {
-            self.coalesce_in_block(self.blocks_by_priority[i], func, value_live_ranges);
+            self.coalesce_in_block(self.blocks_by_priority[i], func, value_live_ranges, stats);
         }
+
+        stat!(
+            stats,
+            value_sets,
+            value_live_ranges.all_value_sets().count()
+        );
 
         value_live_ranges.dump(uses);
     }
@@ -137,6 +145,7 @@ impl Coalescing {
         block: Block,
         func: &impl Function,
         value_live_ranges: &mut ValueLiveRanges,
+        stats: &mut Stats,
     ) {
         trace!("Coalescing values in {block}...");
 
@@ -154,7 +163,11 @@ impl Coalescing {
                             OperandKind::Use(use_value),
                         ) => {
                             trace!("Reused operand: {use_value} -> {def_value}");
-                            self.coalesce_values(use_value, def_value, value_live_ranges);
+                            if self.coalesce_values(use_value, def_value, value_live_ranges) {
+                                stat!(stats, coalesced_tied);
+                            } else {
+                                stat!(stats, coalesced_failed_tied);
+                            }
                         }
                         (
                             OperandKind::DefGroup(def_value_group)
@@ -167,7 +180,11 @@ impl Coalescing {
                                 .zip(func.value_group_members(use_value_group))
                             {
                                 trace!("Reused group operand: {use_value} -> {def_value}");
-                                self.coalesce_values(use_value, def_value, value_live_ranges);
+                                if self.coalesce_values(use_value, def_value, value_live_ranges) {
+                                    stat!(stats, coalesced_tied_group);
+                                } else {
+                                    stat!(stats, coalesced_failed_tied_group);
+                                }
                             }
                         }
                         _ => unreachable!(),
@@ -197,7 +214,11 @@ impl Coalescing {
                                         "Merging {prev_group}[{idx}]:{prev_value} and \
                                          {value_group}[{idx}]:{value}"
                                     );
-                                    self.coalesce_values(value, prev_value, value_live_ranges);
+                                    if self.coalesce_values(value, prev_value, value_live_ranges) {
+                                        stat!(stats, coalesced_group);
+                                    } else {
+                                        stat!(stats, coalesced_failed_group);
+                                    }
                                 }
                             }
                         }
@@ -215,15 +236,27 @@ impl Coalescing {
                 .zip(func.block_params(succ))
             {
                 trace!("Block parameter: {blockparam_out} -> {blockparam_in}");
-                self.coalesce_values(blockparam_out, blockparam_in, value_live_ranges);
+                if self.coalesce_values(blockparam_out, blockparam_in, value_live_ranges) {
+                    stat!(stats, coalesced_blockparam);
+                } else {
+                    stat!(stats, coalesced_failed_blockparam);
+                }
             }
         }
     }
 
     /// Attempts to merge the two given values into the same `ValueSet`.
-    fn coalesce_values(&mut self, a: Value, b: Value, value_live_ranges: &mut ValueLiveRanges) {
+    ///
+    /// Returns whether a merge was performed.
+    fn coalesce_values(
+        &mut self,
+        a: Value,
+        b: Value,
+        value_live_ranges: &mut ValueLiveRanges,
+    ) -> bool {
         trace!("Trying to merge {a} and {b} into the same value set...");
 
+        let mut merged = false;
         self.set_for_value.try_union(a, b, |set_a, set_b| {
             let set_a = ValueSet::new(set_a.index());
             let set_b = ValueSet::new(set_b.index());
@@ -261,7 +294,9 @@ impl Coalescing {
                     .cmp(&b.live_range.from)
                     .then(a.live_range.to.cmp(&b.live_range.to))
             });
+            merged = true;
             true
         });
+        merged
     }
 }

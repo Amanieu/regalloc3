@@ -47,7 +47,7 @@ use super::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
 use crate::function::Function;
 use crate::internal::reg_matrix::InterferenceKind;
 use crate::reginfo::{PhysReg, RegInfo, RegOrRegGroup};
-use crate::RegAllocError;
+use crate::{RegAllocError, Stats};
 
 /// Abstraction over a virtual register group.
 ///
@@ -317,6 +317,7 @@ impl Allocator {
         virt_reg_builder: &mut VirtRegBuilder,
         spill_allocator: &mut SpillAllocator,
         coalescing: &mut Coalescing,
+        stats: &mut Stats,
         func: &impl Function,
         reginfo: &impl RegInfo,
     ) -> Result<(), RegAllocError> {
@@ -332,6 +333,7 @@ impl Allocator {
             virt_reg_builder,
             spill_allocator,
             coalescing,
+            stats,
         };
 
         // Populate the queue with the initial set of virtual registers.
@@ -405,6 +407,7 @@ struct Context<'a, F, R> {
     virt_reg_builder: &'a mut VirtRegBuilder,
     spill_allocator: &'a mut SpillAllocator,
     coalescing: &'a mut Coalescing,
+    stats: &'a mut Stats,
 }
 
 impl<F: Function, R: RegInfo> Context<'_, F, R> {
@@ -416,6 +419,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     ) -> Result<(), RegAllocError> {
         trace!("Allocating {vreg} in stage {stage:?}");
         let first_vreg = vreg.first_vreg(self.virt_regs);
+        if vreg.is_group() {
+            stat!(self.stats, dequeued_group);
+        } else {
+            stat!(self.stats, dequeued_reg);
+        }
 
         // Determine the order in which to probe for available registers.
         let hint = self.allocator.assignments[first_vreg].allocation_hint();
@@ -439,6 +447,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // If the allocation order is empty then skip straight to spilling.
         if self.allocator.allocation_order.must_spill() {
             trace!("Empty allocation order, spilling immediately");
+            stat!(self.stats, must_spill_vreg);
             self.spill(vreg);
             return Ok(());
         }
@@ -448,6 +457,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         trace!("Attempting direct assignment");
         if let Some(candidate) = self.find_available_reg(vreg) {
             trace!("-> Got candidate {candidate}");
+            stat!(self.stats, found_free_reg);
 
             // We found a free register in which to allocate. However it may not
             // be the *best* register in which to allocate this virtual
@@ -458,9 +468,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 < self.allocator.allocation_order.highest_preferrence_weight()
                 && !self.allocator.assignments[first_vreg].evicted_for_preference()
             {
+                stat!(self.stats, try_evict_better_candidate);
                 trace!("Searching for a better candidate by evicting from a preferred register");
                 if let Some(better_candidate) = self.try_evict_for_preferred_reg(vreg, candidate) {
                     trace!("-> Found better candidate {better_candidate}");
+                    stat!(self.stats, evicted_better_candidate);
 
                     // The initial candidate that we found is likely to fit any
                     // virtual registers that we evict. Use it as a hint.
@@ -481,7 +493,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             // have a lower spill weight.
             Stage::Evict => {
                 trace!("Attempting to evict interfering registers");
+                stat!(self.stats, try_evict);
                 if self.try_evict(vreg) {
+                    stat!(self.stats, assigned_after_evict);
                     return Ok(());
                 }
 
@@ -530,6 +544,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             if vreg
                 .zip_with_reg_group(cand.reg, self.virt_regs, self.reginfo)
                 .all(|(vreg, reg)| {
+                    stat!(self.stats, probe_for_free_reg);
                     self.reg_matrix
                         .interference(vreg, reg, self.virt_regs, self.reginfo)
                         .next()

@@ -43,7 +43,7 @@ use cranelift_entity::{EntityRef as _, Keys, PrimaryMap};
 use crate::function::{Block, Function, Inst, InstRange, Value};
 use crate::internal::move_resolver::Edit;
 use crate::reginfo::{PhysReg, RegInfo, SpillSlotSize};
-use crate::RegisterAllocator;
+use crate::{RegisterAllocator, Stats};
 
 /// Maximum size of the spill area.
 pub const MAX_SPILL_AREA_SIZE: u32 = 1 << 29;
@@ -188,6 +188,14 @@ where
     #[must_use]
     pub fn reginfo(&self) -> &R {
         self.reginfo
+    }
+
+    /// Returns internal statistics collected from the register allocation
+    /// process.
+    #[inline]
+    #[must_use]
+    pub fn stats(&self) -> &Stats {
+        &self.regalloc.stats
     }
 
     /// Returns an iterator over the output instructions in the given block.

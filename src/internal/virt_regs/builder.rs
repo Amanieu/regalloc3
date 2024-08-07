@@ -35,6 +35,7 @@ use crate::internal::uses::{Use, UseIndex, UseKind, Uses, MOVE_COST, SPILL_RELOA
 use crate::internal::value_live_ranges::{ValueSegment, ValueSet};
 use crate::internal::virt_regs::{VirtReg, VirtRegData, VirtRegGroup, VirtRegs};
 use crate::reginfo::{RegBank, RegClass, RegInfo, MAX_GROUP_SIZE};
+use crate::Stats;
 
 /// Utility type for building a virtual register from value live ranges.
 pub struct VirtRegBuilder {
@@ -84,6 +85,7 @@ impl VirtRegBuilder {
         virt_regs: &mut VirtRegs,
         uses: &mut Uses,
         coalescing: &mut Coalescing,
+        stats: &mut Stats,
         empty_segments: &mut Vec<ValueSegment>,
         split_placement: Option<&SplitPlacement>,
         new_vregs: Option<&mut Vec<VirtReg>>,
@@ -98,6 +100,7 @@ impl VirtRegBuilder {
             reginfo,
             virt_regs,
             coalescing,
+            stats,
             empty_segments,
             value_group_mapping: &mut self.value_group_mapping,
             conflicting_uses: &mut self.conflicting_uses,
@@ -383,6 +386,7 @@ struct Context<'a, F, R> {
     uses: &'a mut Uses,
     split_placement: Option<&'a SplitPlacement>,
     coalescing: &'a mut Coalescing,
+    stats: &'a mut Stats,
     empty_segments: &'a mut Vec<ValueSegment>,
     value_group_mapping: &'a mut SecondaryMap<ValueGroup, PackedOption<VirtRegGroup>>,
     conflicting_uses: &'a mut Vec<Use>,
@@ -501,6 +505,7 @@ impl<'a, F: Function, R: RegInfo> Context<'a, F, R> {
                         }
                     } else {
                         trace!("-> conflict!");
+                        stat!(self.stats, vreg_conflicts);
                         debug_assert!(may_conflict, "should not conflict after split");
                         debug_assert!(
                             !segments[seg_idx].live_range.is_empty(),
@@ -525,6 +530,7 @@ impl<'a, F: Function, R: RegInfo> Context<'a, F, R> {
                                 "Conflicting constraints on same instruction, evicting a single \
                                  use to a vreg"
                             );
+                            stat!(self.stats, vreg_conflicts_on_same_inst);
 
                             // We can only replace a use with a
                             // `ConstraintConflict`, not a definition. It's

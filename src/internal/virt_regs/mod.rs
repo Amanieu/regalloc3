@@ -20,6 +20,7 @@ use crate::compact_list::{CompactList, CompactListPool};
 use crate::debug_utils::display_iter;
 use crate::function::Function;
 use crate::reginfo::{RegClass, RegInfo};
+use crate::Stats;
 
 pub mod builder;
 
@@ -163,6 +164,7 @@ impl VirtRegs {
         uses: &mut Uses,
         virt_reg_builder: &mut VirtRegBuilder,
         coalescing: &mut Coalescing,
+        stats: &mut Stats,
         empty_segments: &mut Vec<ValueSegment>,
         new_vregs: &mut Vec<VirtReg>,
     ) {
@@ -175,6 +177,7 @@ impl VirtRegs {
             self,
             uses,
             coalescing,
+            stats,
             empty_segments,
             None,
             Some(new_vregs),
@@ -194,6 +197,7 @@ impl VirtRegs {
         spill_allocator: &mut SpillAllocator,
         virt_reg_builder: &mut VirtRegBuilder,
         allocator: &mut Allocator,
+        stats: &mut Stats,
     ) {
         self.clear();
         virt_reg_builder.clear();
@@ -212,6 +216,7 @@ impl VirtRegs {
                 self,
                 uses,
                 coalescing,
+                stats,
                 &mut allocator.empty_segments,
                 Some(split_placement),
                 None,
@@ -222,6 +227,17 @@ impl VirtRegs {
         if trace_enabled!() {
             self.dump(uses, |_| true);
         }
+
+        stat!(stats, initial_vregs, self.virt_regs.len());
+        stat!(stats, initial_vreg_groups, self.groups.len());
+        stat!(
+            stats,
+            initial_vreg_segments,
+            self.virt_regs
+                .values()
+                .map(|vreg_data| vreg_data.segments.len())
+                .sum::<usize>()
+        );
     }
 
     /// Dumps the virtual registers to the log.

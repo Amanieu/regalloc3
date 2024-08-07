@@ -8,7 +8,7 @@ use cranelift_entity::EntityRef;
 
 use crate::function::{Function, Inst};
 use crate::output::Allocation;
-use crate::RegAllocError;
+use crate::{RegAllocError, Stats};
 
 /// Information about the stack map for an instruction.
 #[derive(Debug, Clone)]
@@ -47,7 +47,11 @@ impl Allocations {
 
     /// Computes the offsets for each instruction's operands in the allocation
     /// vector.
-    pub fn compute_alloc_offsets(&mut self, func: &impl Function) -> Result<(), RegAllocError> {
+    pub fn compute_alloc_offsets(
+        &mut self,
+        func: &impl Function,
+        stats: &mut Stats,
+    ) -> Result<(), RegAllocError> {
         self.allocations.clear();
         self.offsets.clear();
         self.offsets.resize(
@@ -74,6 +78,7 @@ impl Allocations {
         // Fill the allocation map with invalid allocations.
         self.allocations
             .resize(offset as usize, Allocation::reserved_value());
+        stat!(stats, operands, offset as usize);
 
         Ok(())
     }

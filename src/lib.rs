@@ -108,10 +108,21 @@ macro_rules! trace {
         }
     };
 }
-
 macro_rules! trace_enabled {
     () => {
         cfg!(feature = "trace-log") && ::log::log_enabled!(::log::Level::Trace)
+    };
+}
+
+// Macro for collecting statistics.
+//
+// If this turns out to be too much overhead then we can put it under a cfg().
+macro_rules! stat {
+    ($stats:expr, $field:ident) => {
+        $stats.$field += 1
+    };
+    ($stats:expr, $field:ident, $count:expr) => {
+        $stats.$field += $count
     };
 }
 
@@ -149,9 +160,11 @@ pub struct RegisterAllocator {
     allocator: Allocator,
     spill_allocator: SpillAllocator,
     move_resolver: MoveResolver,
+    stats: Stats,
 }
 
 impl Default for RegisterAllocator {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
@@ -173,6 +186,7 @@ impl RegisterAllocator {
             allocator: Allocator::new(),
             spill_allocator: SpillAllocator::new(),
             move_resolver: MoveResolver::new(),
+            stats: Stats::default(),
         }
     }
 
@@ -189,6 +203,13 @@ impl RegisterAllocator {
     {
         trace!("Input function:\n{}", debug_utils::DisplayFunction(func));
 
+        // Reset stats and gather initial information.
+        self.stats = Default::default();
+        stat!(self.stats, blocks, func.num_blocks());
+        stat!(self.stats, input_insts, func.num_insts());
+        stat!(self.stats, values, func.num_values());
+        stat!(self.stats, value_groups, func.num_value_groups());
+
         // No options currently defined.
         let _ = options;
 
@@ -196,13 +217,15 @@ impl RegisterAllocator {
         self.split_placement.prepare(func);
 
         // Reserve space for allocation results in the allocation map.
-        self.allocations.compute_alloc_offsets(func)?;
+        self.allocations
+            .compute_alloc_offsets(func, &mut self.stats)?;
 
         // Compute the live range for each SSA value.
         self.value_live_ranges.compute(
             &mut self.uses,
             &mut self.allocations,
             &mut self.reg_matrix,
+            &mut self.stats,
             func,
             reginfo,
         );
@@ -212,8 +235,12 @@ impl RegisterAllocator {
 
         // Coalesce SSA values into non-overlapping sets to eliminate
         // unnecessary move instructions.
-        self.coalescing
-            .run(func, &self.uses, &mut self.value_live_ranges);
+        self.coalescing.run(
+            func,
+            &self.uses,
+            &mut self.value_live_ranges,
+            &mut self.stats,
+        );
 
         // Build virtual registers from SSA values.
         self.virt_regs.build_initial_vregs(
@@ -226,6 +253,7 @@ impl RegisterAllocator {
             &mut self.spill_allocator,
             &mut self.virt_reg_builder,
             &mut self.allocator,
+            &mut self.stats,
         );
 
         // Allocate virtual registers to physical registers.
@@ -236,12 +264,13 @@ impl RegisterAllocator {
             &mut self.virt_reg_builder,
             &mut self.spill_allocator,
             &mut self.coalescing,
+            &mut self.stats,
             func,
             reginfo,
         )?;
 
         // Allocate spill slots.
-        self.spill_allocator.allocate()?;
+        self.spill_allocator.allocate(&mut self.stats)?;
 
         // Generate move instructions between registers.
         self.move_resolver.generate_moves(
@@ -251,6 +280,7 @@ impl RegisterAllocator {
             &self.uses,
             &mut self.allocations,
             &self.reg_matrix,
+            &mut self.stats,
             func,
             reginfo,
         );
@@ -303,5 +333,91 @@ impl fmt::Display for RegAllocError {
                 write!(f, "function size exceeded implementation limits")
             }
         }
+    }
+}
+
+/// Statistics collected by the register allocator.
+///
+/// This is an opaque type since the set of statistics may vary between
+/// different versions of the register allocator, even across minor versions.
+///
+/// The only supported operations on this type are:
+/// * Default initialization
+/// * Printing with `Debug` or `Display`
+#[derive(Debug, Default, Clone)]
+pub struct Stats {
+    // Stats from input function.
+    blocks: usize,
+    input_insts: usize,
+    operands: usize,
+    values: usize,
+    value_groups: usize,
+
+    // Stats from value live ranges.
+    fixed_def: usize,
+    class_def: usize,
+    reuse_def: usize,
+    reuse_group_def: usize,
+    group_def: usize,
+    fixed_use: usize,
+    class_use: usize,
+    group_use: usize,
+    nonallocatable_operand: usize,
+    blockparam_in: usize,
+    blockparam_out: usize,
+    local_values: usize,
+    global_values: usize,
+    value_segments: usize,
+
+    // Stats from coalescing.
+    value_sets: usize,
+    coalesced_tied: usize,
+    coalesced_tied_group: usize,
+    coalesced_blockparam: usize,
+    coalesced_group: usize,
+    coalesced_failed_tied: usize,
+    coalesced_failed_tied_group: usize,
+    coalesced_failed_blockparam: usize,
+    coalesced_failed_group: usize,
+
+    // Stats from virtual register building.
+    vreg_conflicts: usize,
+    vreg_conflicts_on_same_inst: usize,
+    initial_vregs: usize,
+    initial_vreg_groups: usize,
+    initial_vreg_segments: usize,
+
+    // Stats from register allocation.
+    dequeued_reg: usize,
+    dequeued_group: usize,
+    probe_for_free_reg: usize,
+    found_free_reg: usize,
+    try_evict_better_candidate: usize,
+    evicted_better_candidate: usize,
+    must_spill_vreg: usize,
+    try_evict: usize,
+    assigned_after_evict: usize,
+    evicted_vregs: usize,
+    evicted_groups: usize,
+    spilled_vregs: usize,
+    minimal_segments: usize,
+
+    // Stats from spillslot allocation.
+    spillsets: usize,
+    spill_segments: usize,
+    spillslots: usize,
+    spill_area_size: usize,
+
+    // Stats from move resolver.
+    edits: usize,
+    moves: usize,
+    remats: usize,
+    spills: usize,
+    reloads: usize,
+}
+
+impl fmt::Display for Stats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:#?}", self)
     }
 }

@@ -164,6 +164,8 @@ fn main() -> Result<()> {
                 debug_utils::CostModel::default().evaluate(&output)
             );
 
+            println!("{}", output.stats());
+
             debug_utils::check_output(&output)
                 .context("register allocation result failed checker")?;
         }

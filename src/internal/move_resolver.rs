@@ -37,6 +37,7 @@ use crate::function::{Block, Function, Inst, Value};
 use crate::internal::live_range::LiveRangeSegment;
 use crate::output::{Allocation, AllocationKind};
 use crate::reginfo::{RegClass, RegInfo};
+use crate::Stats;
 
 /// Position in which to insert a move.
 ///
@@ -191,6 +192,7 @@ impl MoveResolver {
         uses: &Uses,
         allocations: &mut Allocations,
         reg_matrix: &RegMatrix,
+        stats: &mut Stats,
         func: &impl Function,
         reginfo: &impl RegInfo,
     ) {
@@ -266,7 +268,14 @@ impl MoveResolver {
             allocations.set_allocation(tied.inst, tied.use_slot, alloc);
         }
 
-        self.resolve_moves(spill_allocator, allocations, reg_matrix, func, reginfo);
+        self.resolve_moves(
+            spill_allocator,
+            allocations,
+            reg_matrix,
+            stats,
+            func,
+            reginfo,
+        );
     }
 
     /// After all half-moves have been generated, resolve half-move pairs into
@@ -280,6 +289,7 @@ impl MoveResolver {
         spill_allocator: &mut SpillAllocator,
         allocations: &mut Allocations,
         reg_matrix: &RegMatrix,
+        stats: &mut Stats,
         func: &impl Function,
         reginfo: &impl RegInfo,
     ) {
@@ -340,6 +350,19 @@ impl MoveResolver {
             self.edits
                 .extend(self.parallel_move_resolver.edits().map(|edit| {
                     trace!("- {edit}");
+                    stat!(stats, edits);
+                    if let Some(from) = edit.from.expand() {
+                        if from.is_memory(reginfo) {
+                            stat!(stats, reloads);
+                        } else if edit.to.is_memory(reginfo) {
+                            stat!(stats, spills);
+                        } else {
+                            stat!(stats, moves);
+                        }
+                    } else {
+                        stat!(stats, remats);
+                    }
+
                     (pos.inst(), edit)
                 }));
         }

@@ -32,6 +32,7 @@ use crate::function::{
 use crate::internal::uses::{UseList, UsePosition};
 use crate::output::Allocation;
 use crate::reginfo::{RegClass, RegInfo};
+use crate::Stats;
 
 /// A continuous segment of a value's live range.
 #[derive(Debug, Clone, Copy)]
@@ -189,6 +190,7 @@ impl ValueLiveRanges {
         uses: &mut Uses,
         allocations: &mut Allocations,
         reg_matrix: &mut RegMatrix,
+        stats: &mut Stats,
         func: &impl Function,
         reginfo: &impl RegInfo,
     ) {
@@ -203,6 +205,7 @@ impl ValueLiveRanges {
             uses,
             allocations,
             reg_matrix,
+            stats,
             value_live_ranges: self,
         };
 
@@ -258,6 +261,7 @@ struct Context<'a, F, R> {
     uses: &'a mut Uses,
     allocations: &'a mut Allocations,
     reg_matrix: &'a mut RegMatrix,
+    stats: &'a mut Stats,
     value_live_ranges: &'a mut ValueLiveRanges,
 }
 
@@ -271,6 +275,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             // Create uses for incoming block parameters.
             for (idx, &value) in self.func.block_params(block).iter().enumerate() {
                 trace!("Processing incoming blockparam {value} in {block}");
+                stat!(self.stats, blockparam_in);
                 self.value_def(
                     value,
                     block_insts.from,
@@ -310,6 +315,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             if let &[_succ] = self.func.block_succs(block) {
                 for &value in self.func.jump_blockparams(block) {
                     trace!("Processing outgoing blockparam {value} in {block}");
+                    stat!(self.stats, blockparam_out);
                     self.value_use(value, block_insts.last(), UseKind::BlockparamOut {});
                 }
             }
@@ -472,6 +478,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         trace!("Processing {inst}[{slot}]: {operand}");
         match (operand.kind(), operand.constraint()) {
             (OperandKind::Def(value), OperandConstraint::Class(class)) => {
+                stat!(self.stats, class_def);
                 self.value_def(
                     value,
                     inst,
@@ -483,6 +490,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 );
             }
             (OperandKind::Def(value), OperandConstraint::Fixed(reg)) => {
+                stat!(self.stats, fixed_def);
                 self.allocations
                     .set_allocation(inst, slot, Allocation::reg(reg));
                 for &unit in self.reginfo.reg_units(reg) {
@@ -506,6 +514,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 );
             }
             (OperandKind::EarlyDef(value), OperandConstraint::Class(class)) => {
+                stat!(self.stats, class_def);
                 self.value_def(
                     value,
                     inst,
@@ -514,6 +523,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 );
             }
             (OperandKind::EarlyDef(value), OperandConstraint::Fixed(reg)) => {
+                stat!(self.stats, fixed_def);
                 self.allocations
                     .set_allocation(inst, slot, Allocation::reg(reg));
                 for &unit in self.reginfo.reg_units(reg) {
@@ -537,6 +547,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 );
             }
             (OperandKind::Use(value), OperandConstraint::Class(class)) => {
+                stat!(self.stats, class_use);
                 if let Some(reused) = self.try_reuse_value(value, slot, class, None, None) {
                     self.value_use(
                         value,
@@ -553,6 +564,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 }
             }
             (OperandKind::Use(value), OperandConstraint::Fixed(reg)) => {
+                stat!(self.stats, fixed_use);
                 self.allocations
                     .set_allocation(inst, slot, Allocation::reg(reg));
                 for &unit in self.reginfo.reg_units(reg) {
@@ -570,6 +582,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             ) => {
                 // At this point we just copy the constraint of the target
                 // operand. Tying is handled by the use operands.
+                stat!(self.stats, reuse_def);
                 let target_operand = self.func.inst_operands(inst)[target];
                 let OperandConstraint::Class(class) = target_operand.constraint() else {
                     unreachable!("Reuse target operand must have class constraint")
@@ -585,6 +598,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 );
             }
             (OperandKind::DefGroup(group), OperandConstraint::Class(class)) => {
+                stat!(self.stats, group_def);
                 for (idx, &value) in self.func.value_group_members(group).iter().enumerate() {
                     let group_index = idx as u8;
                     self.value_def(
@@ -603,6 +617,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 }
             }
             (OperandKind::EarlyDefGroup(group), OperandConstraint::Class(class)) => {
+                stat!(self.stats, group_def);
                 for (idx, &value) in self.func.value_group_members(group).iter().enumerate() {
                     let group_index = idx as u8;
                     self.value_def(
@@ -621,6 +636,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 }
             }
             (OperandKind::UseGroup(group), OperandConstraint::Class(class)) => {
+                stat!(self.stats, group_use);
                 let def_slot = self.try_reuse_value_group(group, slot, class);
                 for (idx, &value) in self.func.value_group_members(group).iter().enumerate() {
                     if let Some(def_slot) = def_slot {
@@ -653,6 +669,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             ) => {
                 // At this point we just copy the constraint of the target
                 // operand. Tying is handled by the use operands.
+                stat!(self.stats, reuse_group_def);
                 let target_operand = self.func.inst_operands(inst)[target];
                 let OperandConstraint::Class(class) = target_operand.constraint() else {
                     unreachable!("Reuse target operand must have class constraint")
@@ -675,6 +692,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 }
             }
             (OperandKind::NonAllocatable, OperandConstraint::Fixed(reg)) => {
+                stat!(self.stats, nonallocatable_operand);
                 self.allocations
                     .set_allocation(inst, slot, Allocation::reg(reg));
             }
@@ -761,6 +779,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     }
                 }
             }
+        }
+
+        if last_block == def_block {
+            stat!(self.stats, local_values);
+        } else {
+            stat!(self.stats, global_values);
         }
 
         last_block
@@ -886,6 +910,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             segment.use_list = UseList::empty();
             segment.use_list.set_livein(true);
         }
+
+        stat!(self.stats, value_segments, segments.len());
     }
 
     /// Inserts stack map uses for a reftype value.

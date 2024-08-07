@@ -215,6 +215,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             // the whole group needs to be re-enqueued.
             if let Some(group) = self.virt_regs[vreg].group.expand() {
                 trace!("Evicting {group}");
+                stat!(self.stats, evicted_groups);
                 for &vreg in self.virt_regs.group_members(group) {
                     let Assignment::Assigned {
                         evicted_for_preference,
@@ -238,6 +239,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 );
             } else {
                 trace!("Evicting {vreg}");
+                stat!(self.stats, evicted_vregs);
                 self.reg_matrix
                     .evict(vreg, reg, self.virt_regs, self.reginfo);
                 assignments[vreg] = Assignment::Unassigned {

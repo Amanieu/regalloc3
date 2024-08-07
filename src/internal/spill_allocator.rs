@@ -11,7 +11,7 @@ use super::live_range::LiveRangeSegment;
 use super::value_live_ranges::ValueSegment;
 use crate::output::{SpillSlot, StackLayout};
 use crate::reginfo::SpillSlotSize;
-use crate::RegAllocError;
+use crate::{RegAllocError, Stats};
 
 /// A spill set is used to assign spill slots to spilled virtual registers.
 ///
@@ -139,7 +139,7 @@ impl SpillAllocator {
     /// but at the cost of not being able to allocate spill sets in the live
     /// range gaps of another spill set. This is less of an issue than for
     /// registers though since spill slots are effectively unlimited.
-    pub fn allocate(&mut self) -> Result<(), RegAllocError> {
+    pub fn allocate(&mut self, stats: &mut Stats) -> Result<(), RegAllocError> {
         self.stack_layout.slots.clear();
         self.stack_layout.spillslot_area_size = 0;
         self.sets_to_allocate.clear();
@@ -156,6 +156,8 @@ impl SpillAllocator {
                 .filter(|(_, data)| !data.live_range_union.is_empty())
                 .map(|(set, _)| set),
         );
+        stat!(stats, spillsets, self.sets_to_allocate.len());
+        stat!(stats, spill_segments, self.spilled_segments.len());
         self.sets_to_allocate.sort_unstable_by_key(|&set| {
             (
                 Reverse(self.sets[set].size),
@@ -222,6 +224,12 @@ impl SpillAllocator {
             trace!("Assigned {set} to {slot}");
             self.active_sets.push(set);
         }
+        stat!(stats, spillslots, self.stack_layout.slots.len());
+        stat!(
+            stats,
+            spill_area_size,
+            self.stack_layout.spillslot_area_size as usize
+        );
 
         Ok(())
     }

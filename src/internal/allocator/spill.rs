@@ -84,6 +84,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // the stack.
         for (group_index, vreg) in vreg.vregs(self.virt_regs).enumerate() {
             trace!("Spilling {vreg}");
+            stat!(self.stats, spilled_vregs);
             for &segment in self.virt_regs[vreg].segments(self.virt_regs) {
                 // Empty segments don't need an allocation and can be skipped.
                 if segment.live_range.is_empty() {
@@ -261,6 +262,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             .minimal_segments
             .iter()
             .for_each(|&(spillset, segment)| {
+                stat!(self.stats, minimal_segments);
                 self.virt_regs.create_vreg_from_segments(
                     &mut [segment],
                     spillset,
@@ -269,6 +271,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     self.uses,
                     self.virt_reg_builder,
                     self.coalescing,
+                    self.stats,
                     &mut self.allocator.empty_segments,
                     &mut self.allocator.spiller.new_vregs,
                 );
