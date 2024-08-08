@@ -5,46 +5,41 @@ use alloc::vec::Vec;
 use core::cmp::Reverse;
 
 use cranelift_entity::packed_option::ReservedValue;
-use cranelift_entity::PrimaryMap;
+use cranelift_entity::{PrimaryMap, SecondaryMap};
 
 use super::live_range::LiveRangeSegment;
-use super::value_live_ranges::ValueSegment;
+use super::value_live_ranges::{ValueSegment, ValueSet};
 use crate::output::{SpillSlot, StackLayout};
 use crate::reginfo::SpillSlotSize;
 use crate::{RegAllocError, Stats};
 
-/// A spill set is used to assign spill slots to spilled virtual registers.
+/// All values in `ValueSet` (whose live ranges are therefore guaranteed not to
+/// overlap) are assigned to the same spill slot in order to avoid unnecessary
+/// stack-to-stack moves on block transitions.
 ///
-/// A single spill set is created for each group of coalesced SSA values (whose
-/// live ranges are therefore guaranteed not to overlap). This spill set is
-/// preserved by virtual registers constructed from these SSA values, even
-/// through splitting.
-///
-/// Any spilled virtual registers in the same spill set will be assigned to the
+/// Any spilled virtual registers in the same set will be assigned to the
 /// same spill slot, which helps avoid unnecessary stack-to-stack moves.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub struct SpillSet(u32);
-entity_impl!(SpillSet(u32), "spillset");
-
-struct SpillSetData {
-    /// Size of the spill slot needed by this `SpillSet`.
+#[derive(Clone)]
+struct SpillData {
+    /// Size of the spill slot needed by this `ValueSet`.
     size: SpillSlotSize,
 
-    /// Union of the live ranges of all segments spilled to this `SpillSet`.
+    /// Union of the live ranges of all segments spilled to this `ValueSet`.
     live_range_union: LiveRangeSegment,
 
-    /// Spill slot assigned to this spill set by `allocate`.
+    /// Spill slot assigned to this value set by `allocate`.
     ///
     /// This is only valid if `range` is non-empty.
     slot: SpillSlot,
 }
 
 pub struct SpillAllocator {
-    /// All spill sets, including those which don't contain any spills yet.
-    sets: PrimaryMap<SpillSet, SpillSetData>,
+    /// Spill data for all value sets, including those which don't contain any
+    /// spilled segments yet.
+    sets: SecondaryMap<ValueSet, SpillData>,
 
-    /// Unsorted list of live ranges that have been spilled to a `SpillSet`.
-    spilled_segments: Vec<(SpillSet, ValueSegment)>,
+    /// Unsorted list of live ranges that have been spilled.
+    spilled_segments: Vec<(ValueSet, ValueSegment)>,
 
     /// Stack frame layout.
     pub stack_layout: StackLayout,
@@ -52,14 +47,14 @@ pub struct SpillAllocator {
     // Everything below this point is temporary storage used in the linear scan
     // allocation algorithm.
     //
-    /// List of `SpillSet` for which a spill slot needs to be allocated. This is
-    /// grouped by spill slot size, and within each group the spill sets are
+    /// List of `ValueSet` for which a spill slot needs to be allocated. This is
+    /// grouped by spill slot size, and within each group the value sets are
     /// sorted by the start point of their live range.
-    sets_to_allocate: Vec<SpillSet>,
+    sets_to_allocate: Vec<ValueSet>,
 
-    /// Set of `SpillSet`s that are currently allocated to a spill slot at the
+    /// Set of `ValueSet`s that are currently allocated to a spill slot at the
     /// current point in the scan.
-    active_sets: Vec<SpillSet>,
+    active_sets: Vec<ValueSet>,
 
     /// Set of `SpillSlot`s that are free for allocation at this point in the
     /// scan.
@@ -69,7 +64,12 @@ pub struct SpillAllocator {
 impl SpillAllocator {
     pub fn new() -> Self {
         Self {
-            sets: PrimaryMap::new(),
+            sets: SecondaryMap::with_default(SpillData {
+                // The size for the set is initialized by `spill_segment`.
+                size: SpillSlotSize::from_log2_bytes(0),
+                live_range_union: LiveRangeSegment::EMPTY,
+                slot: SpillSlot::reserved_value(),
+            }),
             stack_layout: StackLayout {
                 slots: PrimaryMap::new(),
                 spillslot_area_size: 0,
@@ -81,29 +81,23 @@ impl SpillAllocator {
         }
     }
 
-    /// Clears any existing `SpillSet` definitions.
     pub fn clear(&mut self) {
         self.sets.clear();
         self.spilled_segments.clear();
     }
 
-    /// Creates a new `SpillSet` with the given spill slot size.
-    pub fn new_spillset(&mut self, size: SpillSlotSize) -> SpillSet {
-        self.sets.push(SpillSetData {
-            size,
-            live_range_union: LiveRangeSegment::EMPTY,
-            slot: SpillSlot::reserved_value(),
-        })
-    }
-
-    /// Spills the given `ValueSegment` to a spill set.
-    pub fn spill_segment(&mut self, set: SpillSet, segment: ValueSegment) {
+    /// Spills the given `ValueSegment` to a spill slot.
+    pub fn spill_segment(&mut self, set: ValueSet, size: SpillSlotSize, segment: ValueSegment) {
         debug_assert!(!segment.live_range.is_empty());
+        if !self.sets[set].live_range_union.is_empty() {
+            debug_assert_eq!(self.sets[set].size, size);
+        }
         trace!(
             "Spilling segment for {} at {} to {set}",
             segment.value,
             segment.live_range
         );
+        self.sets[set].size = size;
         self.sets[set].live_range_union = self.sets[set].live_range_union.union(segment.live_range);
         self.spilled_segments.push((set, segment));
     }
@@ -130,14 +124,14 @@ impl SpillAllocator {
         self.stack_layout.slots.push((offset, size))
     }
 
-    /// Assigns a `SpillSlot` to each `SpillSet` that has segments spilled into
+    /// Assigns a `SpillSlot` to each `ValueSet` that has segments spilled into
     /// it.
     ///
     /// The basic algorithm here is based on linear scan allocation from
-    /// <https://doi.org/10.1145/330249.330250> where each `SpillSet` is treated
+    /// <https://doi.org/10.1145/330249.330250> where each `ValueSet` is treated
     /// as a single live range segment. This has the advantage of being fast,
-    /// but at the cost of not being able to allocate spill sets in the live
-    /// range gaps of another spill set. This is less of an issue than for
+    /// but at the cost of not being able to allocate value sets in the live
+    /// range gaps of another value set. This is less of an issue than for
     /// registers though since spill slots are effectively unlimited.
     pub fn allocate(&mut self, stats: &mut Stats) -> Result<(), RegAllocError> {
         self.stack_layout.slots.clear();
@@ -148,7 +142,7 @@ impl SpillAllocator {
 
         trace!("Allocating spill slots:");
 
-        // Gather the spill sets that need to be allocated and sort them by
+        // Gather the value sets that need to be allocated and sort them by
         // spill slot size first, and then by start position.
         self.sets_to_allocate.extend(
             self.sets
@@ -156,7 +150,7 @@ impl SpillAllocator {
                 .filter(|(_, data)| !data.live_range_union.is_empty())
                 .map(|(set, _)| set),
         );
-        stat!(stats, spillsets, self.sets_to_allocate.len());
+        stat!(stats, spilled_sets, self.sets_to_allocate.len());
         stat!(stats, spill_segments, self.spilled_segments.len());
         self.sets_to_allocate.sort_unstable_by_key(|&set| {
             (
@@ -183,7 +177,7 @@ impl SpillAllocator {
             }
             current_size = self.sets[set].size;
 
-            // Remove any spill sets whose live range ended before the current
+            // Remove any value sets whose live range ended before the current
             // set from the list of active sets. These are no longer active at
             // this point and their spill slot is now available for allocation.
             self.active_sets.retain(|&active_set| {

@@ -7,7 +7,6 @@ use super::queue::VirtRegOrGroup;
 use super::{AbstractVirtRegGroup, Assignment, Context, Stage};
 use crate::function::{Function, OperandKind};
 use crate::internal::live_range::{LiveRangeSegment, Slot};
-use crate::internal::spill_allocator::SpillSet;
 use crate::internal::uses::UseKind;
 use crate::internal::value_live_ranges::ValueSegment;
 use crate::internal::virt_regs::VirtReg;
@@ -16,7 +15,7 @@ use crate::reginfo::RegInfo;
 /// Temporary state used when spilling.
 pub struct Spiller {
     /// Scratch space for collecting minimal live ranges.
-    minimal_segments: Vec<(SpillSet, ValueSegment)>,
+    minimal_segments: Vec<ValueSegment>,
 
     /// Newly created virtual register from the minimal live ranges.
     new_vregs: Vec<VirtReg>,
@@ -165,8 +164,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 value: segment.value,
                             };
                             if must_spill || !can_remat {
-                                self.spill_allocator
-                                    .spill_segment(self.virt_regs[vreg].spillset, segment);
+                                let set = self.coalescing.set_for_value(segment.value);
+                                let bank = self.func.value_bank(segment.value);
+                                let size = self.reginfo.spillslot_size(bank);
+                                self.spill_allocator.spill_segment(set, size, segment);
                             } else {
                                 trace!(
                                     "Rematerializing segment for {} at {}",
@@ -193,10 +194,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 segment.value,
                                 segment.live_range
                             );
-                            self.allocator
-                                .spiller
-                                .minimal_segments
-                                .push((self.virt_regs[vreg].spillset, segment));
+                            self.allocator.spiller.minimal_segments.push(segment);
                             break 'outer;
                         } else {
                             // Otherwise split the segment at the next
@@ -217,10 +215,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 segment.value,
                                 segment.live_range
                             );
-                            self.allocator
-                                .spiller
-                                .minimal_segments
-                                .push((self.virt_regs[vreg].spillset, segment));
+                            self.allocator.spiller.minimal_segments.push(segment);
                             use_list = after;
                             start_pos = u.pos().next().slot(Slot::Boundary);
                             continue 'outer;
@@ -236,8 +231,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         value: segment.value,
                     };
                     if must_spill || !can_remat {
-                        self.spill_allocator
-                            .spill_segment(self.virt_regs[vreg].spillset, segment);
+                        let set = self.coalescing.set_for_value(segment.value);
+                        let bank = self.func.value_bank(segment.value);
+                        let size = self.reginfo.spillslot_size(bank);
+                        self.spill_allocator.spill_segment(set, size, segment);
                     } else {
                         trace!(
                             "Rematerializing segment for {} at {}",
@@ -261,11 +258,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             .spiller
             .minimal_segments
             .iter()
-            .for_each(|&(spillset, segment)| {
+            .for_each(|&segment| {
                 stat!(self.stats, minimal_segments);
                 self.virt_regs.create_vreg_from_segments(
                     &mut [segment],
-                    spillset,
                     self.func,
                     self.reginfo,
                     self.uses,

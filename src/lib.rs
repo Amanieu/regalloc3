@@ -403,7 +403,7 @@ pub struct Stats {
     minimal_segments: usize,
 
     // Stats from spillslot allocation.
-    spillsets: usize,
+    spilled_sets: usize,
     spill_segments: usize,
     spillslots: usize,
     spill_area_size: usize,

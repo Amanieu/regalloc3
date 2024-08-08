@@ -6,7 +6,7 @@
 //! of a move, and key both to a `(inst, value)` so they can find each other.
 //!
 //! All the information necessary to produce half-moves is in the use list
-//! associated with every virtual register and spill set, so we just scan
+//! associated with every virtual register and spilled segments, so we just scan
 //! through them in a single pass to generate half-moves and assign allocations
 //! to instruction operands.
 //!

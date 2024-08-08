@@ -12,7 +12,7 @@ use cranelift_entity::{Keys, PrimaryMap};
 use self::builder::VirtRegBuilder;
 use super::allocator::Allocator;
 use super::coalescing::Coalescing;
-use super::spill_allocator::{SpillAllocator, SpillSet};
+use super::spill_allocator::SpillAllocator;
 use super::split_placement::SplitPlacement;
 use super::uses::Uses;
 use super::value_live_ranges::{ValueLiveRanges, ValueSegment};
@@ -74,15 +74,6 @@ pub struct VirtRegData {
     /// When a virtual register is part of a group, the spill weight of each
     /// virtual register is set to the lowest spill weight of the group.
     pub spill_weight: f32,
-
-    /// Spill set that this virtual register is part of.
-    ///
-    /// Virtual registers that are copy-related and whose live range doesn't
-    /// overlap are assigned to the same spill set. This ensures that, if they
-    /// are spilled, they will all share the same spill slot. This is preserved
-    /// through splitting, so this minimizes stack-to-stack moves in spilled
-    /// ranges.
-    pub spillset: SpillSet,
 }
 
 impl VirtRegData {
@@ -158,7 +149,6 @@ impl VirtRegs {
     pub fn create_vreg_from_segments(
         &mut self,
         segments: &mut [ValueSegment],
-        spillset: SpillSet,
         func: &impl Function,
         reginfo: &impl RegInfo,
         uses: &mut Uses,
@@ -171,7 +161,6 @@ impl VirtRegs {
         let bank = func.value_bank(segments[0].value);
         virt_reg_builder.build(
             bank,
-            spillset,
             func,
             reginfo,
             self,
@@ -205,12 +194,9 @@ impl VirtRegs {
         allocator.empty_segments.clear();
 
         for (_set, mut segments) in value_live_ranges.take_all_value_sets() {
-            // Assign a separate SpillSet for each ValueSet.
             let bank = func.value_bank(segments[0].value);
-            let spillset = spill_allocator.new_spillset(reginfo.spillslot_size(bank));
             virt_reg_builder.build(
                 bank,
-                spillset,
                 func,
                 reginfo,
                 self,

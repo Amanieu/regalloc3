@@ -29,7 +29,6 @@ use crate::compact_list::CompactList;
 use crate::function::{Function, Inst, OperandKind, ValueGroup};
 use crate::internal::coalescing::Coalescing;
 use crate::internal::live_range::{LiveRangeSegment, Slot};
-use crate::internal::spill_allocator::SpillSet;
 use crate::internal::split_placement::SplitPlacement;
 use crate::internal::uses::{Use, UseIndex, UseKind, Uses, MOVE_COST, SPILL_RELOAD_COST};
 use crate::internal::value_live_ranges::{ValueSegment, ValueSet};
@@ -79,7 +78,6 @@ impl VirtRegBuilder {
     pub fn build(
         &mut self,
         bank: RegBank,
-        spillset: SpillSet,
         func: &impl Function,
         reginfo: &impl RegInfo,
         virt_regs: &mut VirtRegs,
@@ -93,7 +91,7 @@ impl VirtRegBuilder {
     ) {
         self.conflicting_uses.clear();
         let top_level_class = reginfo.top_level_class(bank);
-        trace!("Building new vregs in {spillset} ({bank})");
+        trace!("Building new vregs in {bank}");
 
         let mut ctx = Context {
             func,
@@ -107,7 +105,6 @@ impl VirtRegBuilder {
             new_vregs,
             uses,
             split_placement,
-            spillset,
             top_level_class,
             constraints: VirtRegBuilderConstraints::new(top_level_class),
         };
@@ -391,9 +388,6 @@ struct Context<'a, F, R> {
     value_group_mapping: &'a mut SecondaryMap<ValueGroup, PackedOption<VirtRegGroup>>,
     conflicting_uses: &'a mut Vec<Use>,
     new_vregs: Option<&'a mut Vec<VirtReg>>,
-
-    /// Spill set that this virtual register is part of.
-    spillset: SpillSet,
 
     /// Top-level class, used by `reset_constraints`.
     top_level_class: RegClass,
@@ -903,7 +897,6 @@ impl<'a, F: Function, R: RegInfo> Context<'a, F, R> {
             group: None.into(),
             has_fixed_use: self.constraints.has_fixed_use,
             spill_weight,
-            spillset: self.spillset,
         });
 
         // Special handling for vregs that are part of a register group.
