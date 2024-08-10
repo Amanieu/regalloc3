@@ -704,7 +704,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     "{value} cannot be rematerialized into {class} which has an empty allocation \
                      order"
                 );
-                for reg in self.reginfo.class_members(class).iter() {
+                for reg in &self.reginfo.class_members(class) {
                     ensure!(
                         self.reginfo.class_includes_spillslots(class)
                             || !self.reginfo.is_memory(reg.as_single()),

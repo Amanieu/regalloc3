@@ -139,7 +139,7 @@ impl<R: RegInfo> Context<'_, R> {
         ensure!(!empty, "{bank} has no registers");
 
         // Check stack_to_stack_class
-        for reg in self.reginfo.class_members(stack_to_stack_class).iter() {
+        for reg in &self.reginfo.class_members(stack_to_stack_class) {
             let reg = reg.as_single();
             ensure!(
                 !self.reginfo.is_memory(reg),
@@ -308,7 +308,7 @@ impl<R: RegInfo> Context<'_, R> {
                     self.reginfo.class_group_size(subclass) == group_size,
                     "Subclass {subclass} must have same group size as {class}"
                 );
-                for reg in self.reginfo.class_members(subclass).iter() {
+                for reg in &self.reginfo.class_members(subclass) {
                     ensure!(
                         self.reginfo.class_members(class).contains(reg),
                         "Subclass {subclass} of {class} doesn't contain {reg}"

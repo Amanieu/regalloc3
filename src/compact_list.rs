@@ -48,11 +48,6 @@ impl<T> CompactList<T> {
         }
     }
 
-    /// Returns `true` if the list has a length of 0.
-    pub fn is_empty(self) -> bool {
-        self.len() == 0
-    }
-
     /// Get the number of elements in the list.
     pub fn len(self) -> usize {
         (self.end - self.start) as usize

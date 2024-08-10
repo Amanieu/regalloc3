@@ -59,13 +59,6 @@ impl PostOrder {
         }
     }
 
-    /// Creates a new `PostOrder` for the given function.
-    pub fn for_function(func: &impl Function) -> Self {
-        let mut postorder = Self::new();
-        postorder.compute(func);
-        postorder
-    }
-
     /// Returns whether a basic block is reachable from the root block.
     pub fn is_reachable(&self, block: Block) -> bool {
         self.po_number[block] != UNREACHABLE

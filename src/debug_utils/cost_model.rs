@@ -44,6 +44,7 @@ impl CostModel {
     ///
     /// The returned value is approximately indicative of the execution time of
     /// the function based on the block frequencies provided.
+    #[must_use]
     pub fn evaluate(&self, output: &Output<'_, impl Function, impl RegInfo>) -> f32 {
         let mut score = 0.0;
         let reginfo = output.reginfo();

@@ -75,7 +75,8 @@ impl GenericFunction {
         let mut builder = FunctionBuilder::new(u, reginfo, config);
         builder.gen_cfg_skeleton()?;
 
-        let postorder = PostOrder::for_function(&builder.func);
+        let mut postorder = PostOrder::new();
+        postorder.compute(&builder.func);
         builder.domtree.compute(&builder.func, &postorder);
 
         builder.add_blockparams()?;
