@@ -96,6 +96,13 @@ impl Allocations {
         &self.allocations[start..end]
     }
 
+    /// Returns a mutable slice of allocations for an instruction's operands.
+    pub fn inst_allocations_mut(&mut self, inst: Inst) -> &mut [Allocation] {
+        let start = self.offsets[inst.index()].operands_offset as usize;
+        let end = self.offsets[inst.index() + 1].operands_offset as usize;
+        &mut self.allocations[start..end]
+    }
+
     /// Asserts that all allocations have been assigned.
     pub fn assert_all_assigned(&self) {
         self.allocations

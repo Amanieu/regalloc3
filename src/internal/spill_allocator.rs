@@ -5,10 +5,12 @@ use alloc::vec::Vec;
 use core::cmp::Reverse;
 
 use cranelift_entity::packed_option::ReservedValue;
-use cranelift_entity::{PrimaryMap, SecondaryMap};
+use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 
-use super::live_range::LiveRangeSegment;
+use super::coalescing::Coalescing;
+use super::live_range::{LiveRangeSegment, Slot};
 use super::value_live_ranges::{ValueSegment, ValueSet};
+use crate::function::{Inst, Value};
 use crate::output::{SpillSlot, StackLayout};
 use crate::reginfo::SpillSlotSize;
 use crate::{RegAllocError, Stats};
@@ -24,13 +26,16 @@ struct SpillData {
     /// Size of the spill slot needed by this `ValueSet`.
     size: SpillSlotSize,
 
-    /// Union of the live ranges of all segments spilled to this `ValueSet`.
+    /// Union of the live ranges of all segments in this `ValueSet`.
     live_range_union: LiveRangeSegment,
 
     /// Spill slot assigned to this value set by `allocate`.
     ///
-    /// This is only valid if `range` is non-empty.
+    /// This is only valid if `spilled` is true.
     slot: SpillSlot,
+
+    /// Whether this `ValueSet` requires a spill slot to be allocated.
+    spilled: bool,
 }
 
 pub struct SpillAllocator {
@@ -63,12 +68,15 @@ pub struct SpillAllocator {
 
 impl SpillAllocator {
     pub fn new() -> Self {
+        let zero_point = Inst::new(0).slot(Slot::Boundary);
         Self {
             sets: SecondaryMap::with_default(SpillData {
-                // The size for the set is initialized by `spill_segment`.
+                // The size and live range for the set are initialized by
+                // `set_range`.
                 size: SpillSlotSize::from_log2_bytes(0),
-                live_range_union: LiveRangeSegment::EMPTY,
+                live_range_union: LiveRangeSegment::new(zero_point, zero_point),
                 slot: SpillSlot::reserved_value(),
+                spilled: false,
             }),
             stack_layout: StackLayout {
                 slots: PrimaryMap::new(),
@@ -82,30 +90,57 @@ impl SpillAllocator {
     }
 
     pub fn clear(&mut self) {
-        self.sets.clear();
         self.spilled_segments.clear();
     }
 
+    /// Records the total live range of a `ValueSet` and its required spillslot
+    /// size.
+    ///
+    /// The move optimizer relies on the entire range being reserved instead of
+    /// just the range containing spilled segments.
+    pub fn set_range(
+        &mut self,
+        set: ValueSet,
+        size: SpillSlotSize,
+        live_range_union: LiveRangeSegment,
+    ) {
+        self.sets[set].size = size;
+        self.sets[set].live_range_union = live_range_union;
+        self.sets[set].spilled = false;
+    }
+
     /// Spills the given `ValueSegment` to a spill slot.
-    pub fn spill_segment(&mut self, set: ValueSet, size: SpillSlotSize, segment: ValueSegment) {
-        debug_assert!(!segment.live_range.is_empty());
-        if !self.sets[set].live_range_union.is_empty() {
-            debug_assert_eq!(self.sets[set].size, size);
-        }
+    pub fn spill_segment(&mut self, set: ValueSet, segment: ValueSegment) {
+        debug_assert_eq!(
+            self.sets[set]
+                .live_range_union
+                .intersection(segment.live_range),
+            Some(segment.live_range)
+        );
         trace!(
             "Spilling segment for {} at {} to {set}",
             segment.value,
             segment.live_range
         );
-        self.sets[set].size = size;
-        self.sets[set].live_range_union = self.sets[set].live_range_union.union(segment.live_range);
+        self.sets[set].spilled = true;
         self.spilled_segments.push((set, segment));
     }
 
+    /// Returns all segments that have been spilled along with the `SpillSlot`
+    /// that they have been spilled to.
+    ///
+    /// The spill slot is only valid after `allocate` has been called.
     pub fn spilled_segments(&self) -> impl Iterator<Item = (SpillSlot, &ValueSegment)> {
         self.spilled_segments
             .iter()
             .map(|&(set, ref segment)| (self.sets[set].slot, segment))
+    }
+
+    /// Returns the spill slot that the given value will be spilled to, or
+    /// `None` if the value has not been spilled.
+    pub fn value_spillslot(&self, value: Value, coalescing: &mut Coalescing) -> Option<SpillSlot> {
+        let set = coalescing.set_for_value(value);
+        self.sets[set].spilled.then_some(self.sets[set].slot)
     }
 
     /// Allocates a `SpillSlot` of the given size after stack allocation has
@@ -147,7 +182,7 @@ impl SpillAllocator {
         self.sets_to_allocate.extend(
             self.sets
                 .iter()
-                .filter(|(_, data)| !data.live_range_union.is_empty())
+                .filter(|(_, data)| data.spilled)
                 .map(|(set, _)| set),
         );
         stat!(stats, spilled_sets, self.sets_to_allocate.len());

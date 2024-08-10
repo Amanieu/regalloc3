@@ -846,9 +846,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         for &alloc in stack_map {
             for unit in alloc.units(reginfo) {
                 for value in self.state.unit_values(unit) {
-                    trace!("in stack map: {value} {unit} {alloc}");
                     if func.reftype_values().binary_search(&value).is_ok() {
-                        trace!("add to stack_map_values: {value} {unit} {alloc}");
                         self.stack_map_values.insert(value);
                     }
                 }

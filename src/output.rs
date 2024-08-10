@@ -335,22 +335,29 @@ impl<'a> Iterator for OutputIter<'a> {
             None
         } else {
             // Any edits happen before the corresponding instruction.
-            if let Some((&(pos, edit), rest)) = self.edits.split_first() {
-                if pos <= self.insts.from {
-                    debug_assert_eq!(pos, self.insts.from);
-                    self.edits = rest;
-                    return Some(match edit.from.expand() {
-                        Some(from) => OutputInst::Move {
-                            from,
-                            to: edit.to,
-                            value: edit.value.expand(),
-                        },
-                        None => OutputInst::Rematerialize {
-                            to: edit.to,
-                            value: edit.value.expect("remat without value"),
-                        },
-                    });
+            while let Some((&(pos, edit), rest)) = self.edits.split_first() {
+                if pos > self.insts.from {
+                    break;
                 }
+                debug_assert_eq!(pos, self.insts.from);
+                self.edits = rest;
+
+                // Skip edits that have been optimized away.
+                let Some(to) = edit.to.expand() else {
+                    continue;
+                };
+
+                return Some(match edit.from.expand() {
+                    Some(from) => OutputInst::Move {
+                        from,
+                        to,
+                        value: edit.value.expand(),
+                    },
+                    None => OutputInst::Rematerialize {
+                        to,
+                        value: edit.value.expect("remat without value"),
+                    },
+                });
             }
 
             let inst = self.insts.from;

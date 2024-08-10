@@ -19,6 +19,7 @@ use super::value_live_ranges::{ValueLiveRanges, ValueSegment};
 use crate::compact_list::{CompactList, CompactListPool};
 use crate::debug_utils::display_iter;
 use crate::function::Function;
+use crate::internal::live_range::LiveRangeSegment;
 use crate::reginfo::{RegClass, RegInfo};
 use crate::Stats;
 
@@ -193,8 +194,14 @@ impl VirtRegs {
         spill_allocator.clear();
         allocator.empty_segments.clear();
 
-        for (_set, mut segments) in value_live_ranges.take_all_value_sets() {
+        for (set, mut segments) in value_live_ranges.take_all_value_sets() {
             let bank = func.value_bank(segments[0].value);
+            let spillslot_size = reginfo.spillslot_size(bank);
+            let live_range_union = LiveRangeSegment::new(
+                segments[0].live_range.from,
+                segments.last().unwrap().live_range.to,
+            );
+            spill_allocator.set_range(set, spillslot_size, live_range_union);
             virt_reg_builder.build(
                 bank,
                 func,

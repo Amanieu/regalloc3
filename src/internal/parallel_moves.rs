@@ -202,7 +202,7 @@ impl ScratchAllocator {
             edits.push(Edit {
                 value: None.into(),
                 from: Some(Allocation::reg(reg)).into(),
-                to: Allocation::spillslot(spillslot),
+                to: Some(Allocation::spillslot(spillslot)).into(),
             });
             self.evicted_reg = None;
             self.emergency_spillslot_cache.release(spillslot, size);
@@ -239,7 +239,7 @@ impl ScratchAllocator {
             edits.push(Edit {
                 value: None.into(),
                 from: Some(Allocation::reg(evicted_reg)).into(),
-                to: Allocation::spillslot(spillslot),
+                to: Some(Allocation::spillslot(spillslot)).into(),
             });
             self.evicted_reg = None;
             self.emergency_spillslot_cache.release(spillslot, size);
@@ -344,7 +344,7 @@ impl ScratchAllocator {
         edits.push(Edit {
             value: None.into(),
             from: Some(Allocation::spillslot(spillslot)).into(),
-            to: Allocation::reg(reg),
+            to: Some(Allocation::reg(reg)).into(),
         });
 
         self.evicted_reg = Some((reg, spillslot, size));
@@ -477,18 +477,18 @@ impl ScratchAllocator {
             edits.push(Edit {
                 value: Some(value).into(),
                 from: Some(scratch).into(),
-                to,
+                to: Some(to).into(),
             });
             edits.push(Edit {
                 value: Some(value).into(),
                 from: Some(from).into(),
-                to: scratch,
+                to: Some(scratch).into(),
             });
         } else {
             edits.push(Edit {
                 value: Some(value).into(),
                 from: Some(from).into(),
-                to,
+                to: Some(to).into(),
             });
         }
 
@@ -703,7 +703,7 @@ impl ParallelMoves {
             self.edits.push(Edit {
                 value: Some(value).into(),
                 from: None.into(),
-                to: dest,
+                to: Some(dest).into(),
             });
 
             // Make the destination register available as a scratch register.
@@ -751,18 +751,18 @@ impl ParallelMoves {
                 self.edits.push(Edit {
                     value: Some(value).into(),
                     from: Some(scratch2).into(),
-                    to: dest,
+                    to: Some(dest).into(),
                 });
                 self.edits.push(Edit {
                     value: Some(value).into(),
                     from: Some(scratch).into(),
-                    to: scratch2,
+                    to: Some(scratch2).into(),
                 });
             } else {
                 self.edits.push(Edit {
                     value: Some(value).into(),
                     from: Some(scratch).into(),
-                    to: dest,
+                    to: Some(dest).into(),
                 });
             }
 
@@ -770,7 +770,7 @@ impl ParallelMoves {
             self.edits.push(Edit {
                 value: Some(value).into(),
                 from: None.into(),
-                to: scratch,
+                to: Some(scratch).into(),
             });
 
             // If get_scratch_reg gave us an emergency spillslot, release it so

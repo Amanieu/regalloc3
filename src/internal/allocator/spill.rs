@@ -165,9 +165,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             };
                             if must_spill || !can_remat {
                                 let set = self.coalescing.set_for_value(segment.value);
-                                let bank = self.func.value_bank(segment.value);
-                                let size = self.reginfo.spillslot_size(bank);
-                                self.spill_allocator.spill_segment(set, size, segment);
+                                self.spill_allocator.spill_segment(set, segment);
                             } else {
                                 trace!(
                                     "Rematerializing segment for {} at {}",
@@ -232,9 +230,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     };
                     if must_spill || !can_remat {
                         let set = self.coalescing.set_for_value(segment.value);
-                        let bank = self.func.value_bank(segment.value);
-                        let size = self.reginfo.spillslot_size(bank);
-                        self.spill_allocator.spill_segment(set, size, segment);
+                        self.spill_allocator.spill_segment(set, segment);
                     } else {
                         trace!(
                             "Rematerializing segment for {} at {}",

@@ -173,13 +173,6 @@ pub struct LiveRangeSegment {
 }
 
 impl LiveRangeSegment {
-    /// Empty live range which is guaranteed to return the other operand when
-    /// used with `union`.
-    pub const EMPTY: Self = LiveRangeSegment {
-        from: LiveRangePoint { bits: !0 },
-        to: LiveRangePoint { bits: 0 },
-    };
-
     /// Creates a new `LiveRangeSegment`.
     pub fn new(from: LiveRangePoint, to: LiveRangePoint) -> Self {
         Self { from, to }
@@ -203,14 +196,6 @@ impl LiveRangeSegment {
                 from: self.from.max(other.from),
                 to: self.to.min(other.to),
             })
-        }
-    }
-
-    /// Returns the union of two ranges, including any gaps between them.
-    pub fn union(self, other: Self) -> Self {
-        Self {
-            from: self.from.min(other.from),
-            to: self.to.max(other.to),
         }
     }
 

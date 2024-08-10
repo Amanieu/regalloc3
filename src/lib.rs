@@ -88,6 +88,7 @@ use function::Function;
 use internal::allocations::Allocations;
 use internal::allocator::Allocator;
 use internal::coalescing::Coalescing;
+use internal::move_optimizer::MoveOptimizer;
 use internal::move_resolver::MoveResolver;
 use internal::reg_matrix::RegMatrix;
 use internal::spill_allocator::SpillAllocator;
@@ -160,6 +161,7 @@ pub struct RegisterAllocator {
     allocator: Allocator,
     spill_allocator: SpillAllocator,
     move_resolver: MoveResolver,
+    move_optimizer: MoveOptimizer,
     stats: Stats,
 }
 
@@ -186,6 +188,7 @@ impl RegisterAllocator {
             allocator: Allocator::new(),
             spill_allocator: SpillAllocator::new(),
             move_resolver: MoveResolver::new(),
+            move_optimizer: MoveOptimizer::new(),
             stats: Stats::default(),
         }
     }
@@ -209,9 +212,6 @@ impl RegisterAllocator {
         stat!(self.stats, input_insts, func.num_insts());
         stat!(self.stats, values, func.num_values());
         stat!(self.stats, value_groups, func.num_value_groups());
-
-        // No options currently defined.
-        let _ = options;
 
         // Prepare data for computing optimal split placement.
         self.split_placement.prepare(func);
@@ -283,6 +283,19 @@ impl RegisterAllocator {
             &mut self.stats,
             func,
             reginfo,
+            options.move_optimization,
+        );
+
+        // Optimize generated moves.
+        self.move_optimizer.run(
+            &mut self.move_resolver,
+            &self.spill_allocator,
+            &mut self.coalescing,
+            &mut self.allocations,
+            &mut self.stats,
+            func,
+            reginfo,
+            options.move_optimization,
         );
 
         let output = Output {
@@ -291,14 +304,40 @@ impl RegisterAllocator {
             reginfo,
         };
         trace!("Output:\n{output}");
+        trace!("{}", self.stats);
         Ok(output)
     }
 }
 
+/// Controls how much optimization to perform after register allocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum MoveOptimizationLevel {
+    /// Don't do any optimizations.
+    Off,
+
+    /// Optimize moves within each block.
+    Local,
+
+    /// Optimize moves within blocks and across forward block edges.
+    ///
+    /// This is the default since it provides a good balance between
+    /// optimization and runtime efficiency.
+    #[default]
+    Forward,
+
+    /// Optimize moves across all blocks.
+    ///
+    /// This will find the most optimizations but is relatively slow since it
+    /// requires several passes over the CFG.
+    Global,
+}
+
 /// Configuration options for the register allocator.
 #[derive(Debug, Clone, Default)]
-#[non_exhaustive]
-pub struct Options {}
+pub struct Options {
+    /// Controls how moves are optimized after register allocation.
+    pub move_optimization: MoveOptimizationLevel,
+}
 
 /// Error returned by the register allocator if allocation is impossible.
 ///
@@ -414,6 +453,15 @@ pub struct Stats {
     remats: usize,
     spills: usize,
     reloads: usize,
+
+    // Stats from move optimizer.
+    blocks_preprocessed_for_optimizer: usize,
+    optimized_stack_use: usize,
+    optimized_reload_to_move: usize,
+    optimized_redundant_remat: usize,
+    optimized_redundant_move: usize,
+    optimized_redundant_spill: usize,
+    optimized_redundant_reload: usize,
 }
 
 impl fmt::Display for Stats {

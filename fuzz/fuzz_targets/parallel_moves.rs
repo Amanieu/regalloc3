@@ -428,10 +428,14 @@ fuzz_target!(|t: TestCase| {
     log::trace!("Generated move sequence:");
     for edit in parallel_moves.edits() {
         if let Some(from) = edit.from.expand() {
-            log::trace!("move {} <- {from} ({:?})", edit.to, edit.value.expand());
+            log::trace!(
+                "move {} <- {from} ({:?})",
+                edit.to.unwrap(),
+                edit.value.expand()
+            );
         } else {
             let value = edit.value.unwrap();
-            log::trace!("remat {} <- {value}", edit.to);
+            log::trace!("remat {} <- {value}", edit.to.unwrap());
         }
     }
 
@@ -439,9 +443,13 @@ fuzz_target!(|t: TestCase| {
     log::trace!("Executing sequential moves:");
     for edit in parallel_moves.edits() {
         if let Some(from) = edit.from.expand() {
-            log::trace!("move {} <- {from} ({:?})", edit.to, edit.value.expand());
-            if from.is_memory(&t.reginfo) && edit.to.is_memory(&t.reginfo) {
-                panic!("Stack-to-stack move from {from} to {}", edit.to);
+            log::trace!(
+                "move {} <- {from} ({:?})",
+                edit.to.unwrap(),
+                edit.value.expand()
+            );
+            if from.is_memory(&t.reginfo) && edit.to.unwrap().is_memory(&t.reginfo) {
+                panic!("Stack-to-stack move from {from} to {}", edit.to.unwrap());
             }
             if let Some(value) = edit.value.expand() {
                 match from.kind() {
@@ -460,7 +468,7 @@ fuzz_target!(|t: TestCase| {
                         );
                     }
                 }
-                match edit.to.kind() {
+                match edit.to.unwrap().kind() {
                     AllocationKind::PhysReg(reg) => {
                         assert_eq!(t.reginfo.bank_for_reg(reg).unwrap(), t.value_bank(value));
                         t.reginfo
@@ -477,7 +485,7 @@ fuzz_target!(|t: TestCase| {
                     }
                 }
             } else {
-                match (from.kind(), edit.to.kind()) {
+                match (from.kind(), edit.to.unwrap().kind()) {
                     (AllocationKind::PhysReg(_from), AllocationKind::PhysReg(_to)) => {
                         unreachable!()
                     }
@@ -526,11 +534,11 @@ fuzz_target!(|t: TestCase| {
             }
         } else {
             let value = edit.value.unwrap();
-            log::trace!("remat {} <- {value}", edit.to);
+            log::trace!("remat {} <- {value}", edit.to.unwrap());
             let Some((_cost, class)) = t.can_rematerialize(value) else {
                 panic!("Can't rematerialize {value}");
             };
-            match edit.to.kind() {
+            match edit.to.unwrap().kind() {
                 AllocationKind::PhysReg(reg) => {
                     assert!(t
                         .reginfo

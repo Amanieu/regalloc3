@@ -37,7 +37,7 @@ use crate::function::{Block, Function, Inst, Value};
 use crate::internal::live_range::LiveRangeSegment;
 use crate::output::{Allocation, AllocationKind};
 use crate::reginfo::{RegClass, RegInfo};
-use crate::Stats;
+use crate::{MoveOptimizationLevel, Stats};
 
 /// Position in which to insert a move.
 ///
@@ -100,26 +100,39 @@ impl MovePosition {
     }
 
     /// Instruction before which the move must be placed.
-    pub fn inst(self) -> Inst {
+    fn inst(self) -> Inst {
         Inst::new((self.bits >> 1) as usize)
     }
 }
 
 /// An edit represents either a move between 2 locations or a rematerialization
 /// of a value into a location.
+///
+/// Valid combinations are:
+/// - Move: value:Some from:Some to:Some
+/// - Emergency spill: value:None from:Some(reg) to:None(spillslot)
+/// - Emergency reload: value:None from:Some(spillslot) to:None(reg)
+/// - Rematerialization: value:Some from:None to:Some
+///
+/// If `to` is `None` then it means the entire edit has be optimized away to a
+/// nop. This is only done in the move optimization pass.
 #[derive(Debug, Clone, Copy)]
 pub struct Edit {
     pub value: PackedOption<Value>,
     pub from: PackedOption<Allocation>,
-    pub to: Allocation,
+    pub to: PackedOption<Allocation>,
 }
 
 impl fmt::Display for Edit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(from) = self.from.expand() {
-            write!(f, "move {:?} from {} to {}", self.value, from, self.to)
+        if let Some(to) = self.to.expand() {
+            if let Some(from) = self.from.expand() {
+                write!(f, "move {:?} from {} to {to}", self.value, from,)
+            } else {
+                write!(f, "remat {} in {to}", self.value.unwrap())
+            }
         } else {
-            write!(f, "remat {} in {}", self.value.unwrap(), self.to)
+            f.write_str("nop")
         }
     }
 }
@@ -136,6 +149,7 @@ struct TiedMove {
     def_slot: u16,
     class: RegClass,
     group_index: u8,
+    is_blockparam: bool,
 }
 
 #[derive(Debug)]
@@ -166,6 +180,7 @@ pub struct MoveResolver {
     tied_moves: Vec<TiedMove>,
     tied_operands: Vec<TiedOperands>,
     edits: Vec<(Inst, Edit)>,
+    blockparam_allocs: Vec<(Block, Value, Allocation)>,
     parallel_move_resolver: ParallelMoves,
 }
 
@@ -177,6 +192,7 @@ impl MoveResolver {
             tied_moves: vec![],
             tied_operands: vec![],
             edits: vec![],
+            blockparam_allocs: vec![],
             parallel_move_resolver: ParallelMoves::new(),
         }
     }
@@ -195,11 +211,13 @@ impl MoveResolver {
         stats: &mut Stats,
         func: &impl Function,
         reginfo: &impl RegInfo,
+        move_optimization: MoveOptimizationLevel,
     ) {
         self.source_half_moves.clear();
         self.dest_half_moves.clear();
         self.tied_moves.clear();
         self.tied_operands.clear();
+        self.blockparam_allocs.clear();
 
         let mut ctx = Context {
             func,
@@ -260,6 +278,13 @@ impl MoveResolver {
             );
             self.dest_half_moves
                 .push((tied.move_pos, tied.value, def_alloc));
+
+            if tied.is_blockparam {
+                // Record the allocation assigned to the block parameter
+                // for the move optimizer.
+                let block = func.inst_block(tied.inst);
+                self.blockparam_allocs.push((block, tied.value, def_alloc));
+            }
         }
 
         // Copy tied def allocations to the corresponding use slot.
@@ -276,6 +301,15 @@ impl MoveResolver {
             func,
             reginfo,
         );
+
+        // The move optimizer needs per-block information on incoming
+        // blockparams for each block, so ensure this is properly sorted.
+        if move_optimization != MoveOptimizationLevel::Off {
+            self.blockparam_allocs
+                .sort_unstable_by_key(|&(block, _, _)| block);
+        } else {
+            self.blockparam_allocs.clear();
+        }
     }
 
     /// After all half-moves have been generated, resolve half-move pairs into
@@ -354,7 +388,7 @@ impl MoveResolver {
                     if let Some(from) = edit.from.expand() {
                         if from.is_memory(reginfo) {
                             stat!(stats, reloads);
-                        } else if edit.to.is_memory(reginfo) {
+                        } else if edit.to.unwrap().is_memory(reginfo) {
                             stat!(stats, spills);
                         } else {
                             stat!(stats, moves);
@@ -424,6 +458,7 @@ impl MoveResolver {
                         def_slot,
                         class,
                         group_index,
+                        is_blockparam: false,
                     });
                 }
 
@@ -456,6 +491,27 @@ impl MoveResolver {
     pub fn edits_from(&self, inst: Inst) -> &[(Inst, Edit)] {
         let idx = self.edits.partition_point(|&(pos, _)| pos < inst);
         &self.edits[idx..]
+    }
+
+    /// Returns the list of edits starting from the given instruction.
+    pub fn edits_from_mut(&mut self, inst: Inst) -> &mut [(Inst, Edit)] {
+        let idx = self.edits.partition_point(|&(pos, _)| pos < inst);
+        &mut self.edits[idx..]
+    }
+
+    /// Returns the locations for block parameter values at the start of a
+    /// block.
+    pub fn blockparam_allocs(
+        &self,
+        block: Block,
+    ) -> impl Iterator<Item = (Value, Allocation)> + '_ {
+        let idx = self
+            .blockparam_allocs
+            .partition_point(|&(block2, _, _)| block2 < block);
+        self.blockparam_allocs[idx..]
+            .iter()
+            .take_while(move |&&(block2, _, _)| block2 == block)
+            .map(|&(_, value, alloc)| (value, alloc))
     }
 }
 
@@ -643,7 +699,7 @@ impl<F: Function> Context<'_, F> {
         inst: Inst,
         segment: &ValueSegment,
         alloc: Option<Allocation>,
-        mut f: impl FnMut(&mut Self, Value, MovePosition, Option<Allocation>),
+        mut f: impl FnMut(&mut Self, Value, MovePosition, Option<Allocation>, bool),
     ) {
         // If there is a live-in value at this point, move from the sources of
         // the live-in. These source will have already provided source
@@ -665,7 +721,7 @@ impl<F: Function> Context<'_, F> {
                         None
                     };
 
-                    f(self, segment.value, move_pos, alloc_out);
+                    f(self, segment.value, move_pos, alloc_out, false);
                 }
                 LiveInKind::Multi { blockparam_idx } => {
                     for &pred in self.func.block_preds(self.func.inst_block(inst)) {
@@ -691,7 +747,7 @@ impl<F: Function> Context<'_, F> {
                             }
                         };
                         let move_pos = MovePosition::late(self.func.block_insts(pred).last());
-                        f(self, value, move_pos, alloc_out);
+                        f(self, value, move_pos, alloc_out, blockparam_idx.is_some());
                     }
                 }
             }
@@ -705,7 +761,7 @@ impl<F: Function> Context<'_, F> {
             };
 
             let move_pos = MovePosition::early(inst);
-            f(self, segment.value, move_pos, Some(alloc_out));
+            f(self, segment.value, move_pos, Some(alloc_out), false);
         }
     }
 
@@ -756,7 +812,7 @@ impl<F: Function> Context<'_, F> {
                     u.pos(),
                     segment,
                     alloc,
-                    |self_, src_value, move_pos, src_alloc| {
+                    |self_, src_value, move_pos, src_alloc, is_blockparam| {
                         if let Some(alloc) = src_alloc {
                             // Nothing to do if this segment is already assigned
                             // to the desired register.
@@ -772,6 +828,17 @@ impl<F: Function> Context<'_, F> {
                             src_value,
                             Allocation::reg(reg),
                         );
+
+                        if is_blockparam {
+                            // Tell the move optimizer that the fixed register
+                            // now holds the blockparam value.
+                            let block = self.func.inst_block(u.pos());
+                            self_.move_resolver.blockparam_allocs.push((
+                                block,
+                                u.value,
+                                Allocation::reg(reg),
+                            ));
+                        }
                     },
                 );
             }
@@ -795,7 +862,7 @@ impl<F: Function> Context<'_, F> {
                     u.pos(),
                     segment,
                     alloc,
-                    |self_, src_value, move_pos, src_alloc| {
+                    |self_, src_value, move_pos, src_alloc, is_blockparam| {
                         if let Some(alloc) = src_alloc {
                             self_
                                 .move_resolver
@@ -812,6 +879,7 @@ impl<F: Function> Context<'_, F> {
                             def_slot,
                             class,
                             group_index,
+                            is_blockparam,
                         });
                     },
                 );
@@ -822,15 +890,15 @@ impl<F: Function> Context<'_, F> {
                     u.pos(),
                     segment,
                     alloc,
-                    |self_, src_value, move_pos, src_alloc| {
+                    |self_, src_value, move_pos, src_alloc, _is_blockparam| {
                         if let Some(alloc) = src_alloc {
                             self_
                                 .move_resolver
                                 .emit_source_half_move(move_pos, src_value, alloc);
                         }
 
-                        // The conflicting vreg will have a live-in that will read from
-                        // the appropriate source.
+                        // The conflicting vreg will have a live-in that will
+                        // read from the appropriate source.
                     },
                 );
             }
@@ -892,14 +960,22 @@ impl<F: Function> Context<'_, F> {
                     //
                     // We use the value of the corresponding outgoing blockparam
                     // so that rematerializations are properly handled.
+                    let alloc = alloc.expect("missing allocation for blockparam live-in");
                     for &pred in self.func.block_preds(self.func.inst_block(u.pos())) {
                         let value = self.func.jump_blockparams(pred)[blockparam_idx as usize];
                         self.move_resolver.emit_dest_half_move(
                             MovePosition::late(self.func.block_insts(pred).last()),
                             value,
-                            alloc.expect("missing allocation for blockparam live-in"),
+                            alloc,
                         );
                     }
+
+                    // Record the allocation assigned to the block parameter for
+                    // the move optimizer.
+                    let block = self.func.inst_block(u.pos());
+                    self.move_resolver
+                        .blockparam_allocs
+                        .push((block, u.value, alloc));
                 }
 
                 // Indicate that fixed uses on the first instruction
