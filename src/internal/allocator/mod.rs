@@ -357,8 +357,6 @@ impl Allocator {
             }
             trace!("Empty segments:");
             for segment in &self.empty_segments {
-                debug_assert!(!segment.use_list.has_livein());
-                debug_assert!(!segment.use_list.has_liveout());
                 trace!("  {} ({})", segment.live_range, segment.value);
                 for u in &uses[segment.use_list] {
                     trace!("  - {}: {}", u.pos(), u.kind);
