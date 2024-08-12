@@ -699,10 +699,10 @@ impl StateTracker {
                             match edit.from.expand() {
                                 Some(from) => match from.kind() {
                                     AllocationKind::PhysReg(_) => {
-                                        stat!(stats, optimized_redundant_move)
+                                        stat!(stats, optimized_redundant_move);
                                     }
                                     AllocationKind::SpillSlot(_) => {
-                                        stat!(stats, optimized_redundant_reload)
+                                        stat!(stats, optimized_redundant_reload);
                                     }
                                 },
                                 None => stat!(stats, optimized_redundant_remat),
@@ -753,10 +753,8 @@ impl StateTracker {
             if let Some(from) = edit.from.expand() {
                 if from.is_memory(reginfo) {
                     if let Some(&regs_with_value) = self.value_regs.get(&value) {
-                        if let Some(reg) = regs_with_value
-                            .iter()
-                            .filter(|&reg| !reginfo.is_memory(reg))
-                            .next()
+                        if let Some(reg) =
+                            regs_with_value.iter().find(|&reg| !reginfo.is_memory(reg))
                         {
                             trace!("Optimizing reload to use {reg}");
                             stat!(stats, optimized_reload_to_move);
@@ -834,29 +832,25 @@ impl StateTracker {
                 .zip(allocations.inst_allocations_mut(inst))
                 .enumerate()
             {
-                match op.kind() {
-                    OperandKind::Use(value) => {
-                        if !alloc.is_memory(reginfo) {
-                            continue;
-                        }
-                        if self.reused_operands.contains(&idx) {
-                            continue;
-                        }
-                        if let OperandConstraint::Class(class) = op.constraint() {
-                            if let Some(&regs_with_value) = self.value_regs.get(&value) {
-                                let class_members = reginfo.class_members(class).map_index();
-                                if let Some(reg) = (class_members & regs_with_value)
-                                    .iter()
-                                    .filter(|&reg| !reginfo.is_memory(reg))
-                                    .next()
-                                {
-                                    stat!(stats, optimized_stack_use);
-                                    *alloc = Allocation::reg(reg);
-                                }
+                if let OperandKind::Use(value) = op.kind() {
+                    if !alloc.is_memory(reginfo) {
+                        continue;
+                    }
+                    if self.reused_operands.contains(&idx) {
+                        continue;
+                    }
+                    if let OperandConstraint::Class(class) = op.constraint() {
+                        if let Some(&regs_with_value) = self.value_regs.get(&value) {
+                            let class_members = reginfo.class_members(class).map_index();
+                            if let Some(reg) = (class_members & regs_with_value)
+                                .iter()
+                                .find(|&reg| !reginfo.is_memory(reg))
+                            {
+                                stat!(stats, optimized_stack_use);
+                                *alloc = Allocation::reg(reg);
                             }
                         }
                     }
-                    _ => {}
                 }
             }
 

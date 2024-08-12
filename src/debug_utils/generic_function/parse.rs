@@ -295,7 +295,7 @@ fn parse_instruction(
 
 fn compute_preds_and_dominators(func: &mut GenericFunction) {
     let mut preds = SecondaryMap::with_default(vec![]);
-    for (block, data) in func.blocks.iter() {
+    for (block, data) in &func.blocks {
         for &succ in &data.succs {
             preds[succ].push(block);
         }
@@ -306,7 +306,7 @@ fn compute_preds_and_dominators(func: &mut GenericFunction) {
     let postorder = PostOrder::for_function(func);
     let mut dominator_tree = DominatorTree::new();
     dominator_tree.compute(func, &postorder);
-    for (block, data) in func.blocks.iter_mut() {
+    for (block, data) in &mut func.blocks {
         data.immediate_dominator = dominator_tree.immediate_dominator(block).into();
     }
 }
