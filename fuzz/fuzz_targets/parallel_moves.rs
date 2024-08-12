@@ -9,11 +9,13 @@ use arbitrary::{Arbitrary, Result, Unstructured};
 use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 use libfuzzer_sys::fuzz_target;
 use regalloc3::debug_utils::{self, GenericRegInfo};
-use regalloc3::function::{Function, RematCost, Value};
+use regalloc3::function::{
+    Block, Function, Inst, InstRange, Operand, RematCost, Value, ValueGroup,
+};
 use regalloc3::output::{Allocation, AllocationKind, SpillSlot};
 use regalloc3::parallel_moves::ParallelMoves;
 use regalloc3::reginfo::{
-    PhysReg, RegBank, RegClass, RegInfo, RegOrRegGroup, RegUnitSet, SpillSlotSize,
+    PhysReg, RegBank, RegClass, RegInfo, RegOrRegGroup, RegUnit, RegUnitSet, SpillSlotSize,
 };
 
 /// Alternate between a  simple register description with 2 banks that overlap,
@@ -243,43 +245,47 @@ impl Function for TestCase {
         unreachable!()
     }
 
-    fn block_insts(&self, _block: regalloc3::function::Block) -> regalloc3::function::InstRange {
+    fn block_insts(&self, _block: Block) -> InstRange {
         unreachable!()
     }
 
-    fn inst_block(&self, _inst: regalloc3::function::Inst) -> regalloc3::function::Block {
+    fn inst_block(&self, _inst: Inst) -> Block {
         unreachable!()
     }
 
-    fn block_succs(&self, _block: regalloc3::function::Block) -> &[regalloc3::function::Block] {
+    fn block_succs(&self, _block: Block) -> &[Block] {
         unreachable!()
     }
 
-    fn block_preds(&self, _block: regalloc3::function::Block) -> &[regalloc3::function::Block] {
+    fn block_preds(&self, _block: Block) -> &[Block] {
         unreachable!()
     }
 
-    fn block_params(&self, _block: regalloc3::function::Block) -> &[Value] {
+    fn block_immediate_dominator(&self, _block: Block) -> Option<Block> {
         unreachable!()
     }
 
-    fn inst_is_terminator(&self, _inst: regalloc3::function::Inst) -> bool {
+    fn block_params(&self, _block: Block) -> &[Value] {
         unreachable!()
     }
 
-    fn jump_blockparams(&self, _block: regalloc3::function::Block) -> &[Value] {
+    fn inst_is_terminator(&self, _inst: Inst) -> bool {
         unreachable!()
     }
 
-    fn block_frequency(&self, _block: regalloc3::function::Block) -> f32 {
+    fn jump_blockparams(&self, _block: Block) -> &[Value] {
         unreachable!()
     }
 
-    fn inst_operands(&self, _inst: regalloc3::function::Inst) -> &[regalloc3::function::Operand] {
+    fn block_frequency(&self, _block: Block) -> f32 {
         unreachable!()
     }
 
-    fn inst_clobbers(&self, _inst: regalloc3::function::Inst) -> &[regalloc3::reginfo::RegUnit] {
+    fn inst_operands(&self, _inst: Inst) -> &[Operand] {
+        unreachable!()
+    }
+
+    fn inst_clobbers(&self, _inst: Inst) -> &[RegUnit] {
         unreachable!()
     }
 
@@ -295,7 +301,7 @@ impl Function for TestCase {
         unreachable!()
     }
 
-    fn value_group_members(&self, _group: regalloc3::function::ValueGroup) -> &[Value] {
+    fn value_group_members(&self, _group: ValueGroup) -> &[Value] {
         unreachable!()
     }
 
@@ -303,11 +309,11 @@ impl Function for TestCase {
         self.values[value].remat
     }
 
-    fn can_eliminate_dead_inst(&self, _inst: regalloc3::function::Inst) -> bool {
+    fn can_eliminate_dead_inst(&self, _inst: Inst) -> bool {
         unreachable!()
     }
 
-    fn safepoint_insts(&self) -> &[regalloc3::function::Inst] {
+    fn safepoint_insts(&self) -> &[Inst] {
         unreachable!()
     }
 

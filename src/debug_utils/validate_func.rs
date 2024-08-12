@@ -36,7 +36,6 @@ pub fn validate_function(func: &impl Function, reginfo: &impl RegInfo) -> Result
         late_fixed: RegUnitSet::new(),
         used_value_groups: EntitySet::new(),
         reuse_targets: vec![],
-        postorder: PostOrder::new(),
         domtree: DominatorTree::new(),
     };
     ctx.check_function()?;
@@ -97,7 +96,6 @@ struct Context<'a, F, R> {
     late_fixed: RegUnitSet,
     used_value_groups: EntitySet<ValueGroup>,
     reuse_targets: Vec<usize>,
-    postorder: PostOrder,
     domtree: DominatorTree,
 }
 
@@ -555,6 +553,14 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// At this point the dominator tree should be valid and all values should
     /// have a `ValueDef`.
     fn check_ssa_dominance(&self, block: Block) -> Result<()> {
+        // Check that the block's immediate dominator is correct.
+        ensure!(
+            self.func.block_immediate_dominator(block) == self.domtree.immediate_dominator(block),
+            "{block} has incorrect immediate dominator: got {:?}, expected {:?}",
+            self.func.block_immediate_dominator(block),
+            self.domtree.immediate_dominator(block)
+        );
+
         if let Some(idom) = self.domtree.immediate_dominator(block) {
             // This also ensures that all defs come before uses in the linear
             // instruction ordering.
@@ -652,11 +658,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         );
 
         // Check that all blocks are reachable.
-        self.postorder.compute(self.func);
-        if self.postorder.cfg_postorder().len() != self.func.num_blocks() {
+        let postorder = PostOrder::for_function(self.func);
+        if postorder.cfg_postorder().len() != self.func.num_blocks() {
             for block in self.func.blocks() {
                 ensure!(
-                    self.postorder.is_reachable(block),
+                    postorder.is_reachable(block),
                     "{block} is not reachable from the entry block"
                 );
             }
@@ -666,7 +672,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         }
 
         // Check that defs dominate uses, as required by SSA.
-        self.domtree.compute(self.func, &self.postorder);
+        self.domtree.compute(self.func, &postorder);
         for block in self.func.blocks() {
             self.check_ssa_dominance(block)?;
         }

@@ -3,6 +3,7 @@
 
 use alloc::vec::Vec;
 use core::fmt;
+use cranelift_entity::packed_option::PackedOption;
 
 use cranelift_entity::PrimaryMap;
 
@@ -26,6 +27,7 @@ struct BlockData {
     succs: Vec<Block>,
     block_params_in: Vec<Value>,
     block_params_out: Vec<Value>,
+    immediate_dominator: PackedOption<Block>,
     frequency: f32,
 }
 
@@ -91,6 +93,7 @@ impl GenericFunction {
                 block_params_in: func.block_params(block).into(),
                 block_params_out: func.jump_blockparams(block).into(),
                 frequency: func.block_frequency(block),
+                immediate_dominator: func.block_immediate_dominator(block).into(),
             });
         }
         for inst in func.insts() {
@@ -146,6 +149,11 @@ impl Function for GenericFunction {
     #[inline]
     fn block_preds(&self, block: Block) -> &[Block] {
         &self.blocks[block].preds
+    }
+
+    #[inline]
+    fn block_immediate_dominator(&self, block: Block) -> Option<Block> {
+        self.blocks[block].immediate_dominator.expand()
     }
 
     #[inline]

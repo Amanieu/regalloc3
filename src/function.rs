@@ -585,6 +585,26 @@ pub trait Function {
     /// Get the CFG predecessors for a given block.
     fn block_preds(&self, block: Block) -> &[Block];
 
+    /// Returns the immediate dominator of the given block, or `None` if it is
+    /// the entry block.
+    fn block_immediate_dominator(&self, block: Block) -> Option<Block>;
+
+    /// Returns whether block `a` dominates block `b`.
+    ///
+    /// This should return true if `a == b`.
+    fn block_dominates(&self, a: Block, mut b: Block) -> bool {
+        // Walk b up the dominator tree until a is reached or we go past it.
+        // This works because the block ordering is required to be topologically
+        // ordered with regards to the dominator tree.
+        while a < b {
+            match self.block_immediate_dominator(b) {
+                Some(idom) => b = idom,
+                None => return false,
+            }
+        }
+        a == b
+    }
+
     /// Get the block parameters for a given block.
     ///
     /// Block parameters are only allowed on blocks with more than one

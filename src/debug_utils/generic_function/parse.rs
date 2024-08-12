@@ -10,6 +10,8 @@ use pest::{Parser, Span};
 use pest_derive::Parser;
 
 use super::{BlockData, GenericFunction, InstData, ValueData};
+use crate::debug_utils::dominator_tree::DominatorTree;
+use crate::debug_utils::postorder::PostOrder;
 use crate::function::{
     Block, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost, Value, ValueGroup,
 };
@@ -146,9 +148,10 @@ fn parse_block_label(
         insts: InstRange::new(insts.next_key(), insts.next_key()),
         preds: vec![],
         succs: vec![],
-        frequency,
         block_params_in,
         block_params_out: vec![],
+        immediate_dominator: None.into(),
+        frequency,
     });
     Ok(())
 }
@@ -290,15 +293,21 @@ fn parse_instruction(
     Ok(())
 }
 
-fn compute_preds(blocks: &mut PrimaryMap<Block, BlockData>) {
+fn compute_preds_and_dominators(func: &mut GenericFunction) {
     let mut preds = SecondaryMap::with_default(vec![]);
-    for (block, data) in blocks.iter() {
+    for (block, data) in func.blocks.iter() {
         for &succ in &data.succs {
             preds[succ].push(block);
         }
     }
     for (block, preds) in preds.iter() {
-        blocks[block].preds = preds.clone();
+        func.blocks[block].preds = preds.clone();
+    }
+    let postorder = PostOrder::for_function(func);
+    let mut dominator_tree = DominatorTree::new();
+    dominator_tree.compute(func, &postorder);
+    for (block, data) in func.blocks.iter_mut() {
+        data.immediate_dominator = dominator_tree.immediate_dominator(block).into();
     }
 }
 
@@ -338,16 +347,19 @@ impl GenericFunction {
             }
         }
 
-        // Compute block predecessors since they are not encoded in the dump.
-        compute_preds(&mut blocks);
-
-        Ok(Self {
+        let mut func = Self {
             blocks,
             insts,
             values,
             value_groups,
             safepoints,
             reftype_values,
-        })
+        };
+
+        // Compute block predecessors and immediate dominators since they are
+        // not encoded in the dump.
+        compute_preds_and_dominators(&mut func);
+
+        Ok(func)
     }
 }

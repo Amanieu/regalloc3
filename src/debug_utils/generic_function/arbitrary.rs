@@ -75,13 +75,14 @@ impl GenericFunction {
         let mut builder = FunctionBuilder::new(u, reginfo, config);
         builder.gen_cfg_skeleton()?;
 
-        let mut postorder = PostOrder::new();
-        postorder.compute(&builder.func);
+        let postorder = PostOrder::for_function(&builder.func);
         builder.domtree.compute(&builder.func, &postorder);
 
         builder.add_blockparams()?;
 
         for block in postorder.cfg_postorder() {
+            builder.func.blocks[block].immediate_dominator =
+                builder.domtree.immediate_dominator(block).into();
             builder.gen_block_insts(block)?;
         }
 
@@ -218,6 +219,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             succs: vec![],
             block_params_in: vec![],
             block_params_out: vec![],
+            immediate_dominator: None.into(),
             frequency: entry_frequency,
         });
 
@@ -266,6 +268,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
                     succs: vec![],
                     block_params_in: vec![],
                     block_params_out: vec![],
+                    immediate_dominator: None.into(),
                     frequency,
                 });
                 self.func.blocks[from].succs.push(to);
