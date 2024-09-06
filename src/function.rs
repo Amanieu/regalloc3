@@ -669,9 +669,8 @@ pub trait Function {
     /// used as an output, or fixed physical registers used as
     /// temps within an instruction out of necessity.
     ///
-    /// For convenience, duplicate clobbers are allowed as well as clobbers that
-    /// conflict with fixed-def operands on the same instruction. Such
-    /// conflicting clobbers are simply ignored.
+    /// Duplicate clobbers are not allowed and clobbers may not overlap with any
+    /// fixed-def operands on the same instruction.
     fn inst_clobbers(&self, inst: Inst) -> &[RegUnit];
 
     // -----------------------

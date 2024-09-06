@@ -653,11 +653,14 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             }
         }
 
-        // Add clobbers. This can be anything, including overlaps with fixed
-        // constraints on the same instruction.
+        // Add clobbers which don't conflict with fixed defs or other clobbers.
         if !is_ret {
             for _ in 0..self.u.int_in_range(self.config.clobbers_per_inst.clone())? {
                 let unit = RegUnit::new(self.u.int_in_range(0..=MAX_REG_UNITS - 1)?);
+                if self.late_fixed.contains(unit) {
+                    continue;
+                }
+                self.late_fixed.insert(unit);
                 inst.clobbers.push(unit);
             }
         }

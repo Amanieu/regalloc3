@@ -376,6 +376,21 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 },
             }
         }
+
+        // Check that clobbers don't overlap with fixed defs or other clobbers.
+        let mut clobbers = RegUnitSet::new();
+        for &unit in self.func.inst_clobbers(inst) {
+            ensure!(
+                !clobbers.contains(unit),
+                "{inst}: Clobber {unit} specified multiple times in same instruction"
+            );
+            ensure!(
+                !self.late_fixed.contains(unit),
+                "{inst}: Clobber {unit} conflicts with fixed def"
+            );
+            clobbers.insert(unit);
+        }
+
         Ok(())
     }
 

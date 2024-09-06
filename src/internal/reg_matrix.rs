@@ -250,24 +250,12 @@ impl RegMatrix {
     /// Indicates that a portion of the given register is clobbered for the
     /// given live range.
     ///
-    /// This has no effect if the given range is already reserved for a fixed
-    /// constraint or if there are duplicate clobbers.
-    ///
     /// This must be called in increasing instruction order and after any
     /// fixed constraint reservations are added for the current instruction.
     pub fn reserve_clobber(&mut self, unit: RegUnit, range: LiveRangeSegment) {
         trace!("Reserving {range} in {unit} for clobber");
         debug_assert_eq!(range.to, range.from.end_for_fixed_reservation());
         debug_assert_eq!(range.from.slot(), Slot::Normal);
-
-        // Ignore duplicate clobbers and clobbers that conflict with a fixed
-        // definition.
-        if let Some(last) = self.reservations[unit].fixed.last() {
-            debug_assert!(last.0 <= range.from);
-            if last.0 >= range.from.inst().slot(Slot::Early) {
-                return;
-            }
-        }
 
         self.reservations[unit]
             .fixed
