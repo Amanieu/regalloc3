@@ -58,8 +58,8 @@ impl EmergencySpillSlotCache {
 
 /// An index into the set of parallel moves that is currently being considered.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-struct MoveIndex(u16);
-entity_impl!(MoveIndex(u16), "move");
+struct MoveIndex(u32);
+entity_impl!(MoveIndex(u32), "move");
 
 /// Information about a parallel move.
 struct Move {
