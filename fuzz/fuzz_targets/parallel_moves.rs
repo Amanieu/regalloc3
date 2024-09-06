@@ -312,14 +312,6 @@ impl Function for TestCase {
     fn can_eliminate_dead_inst(&self, _inst: Inst) -> bool {
         unreachable!()
     }
-
-    fn safepoint_insts(&self) -> &[Inst] {
-        unreachable!()
-    }
-
-    fn reftype_values(&self) -> &[Value] {
-        unreachable!()
-    }
 }
 
 impl fmt::Debug for TestCase {

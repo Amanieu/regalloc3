@@ -134,7 +134,6 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         desc: "General-purpose registers".to_string(),
         top_level_class: x_stack_class,
         stack_to_stack_class: x_class,
-        reftype_class: Some(x_stack_only_class),
         spillslot_size: 8,
         classes: vec![x_stack_class, x_stack_only_class, x_class, casp_class],
     });
@@ -196,7 +195,6 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         desc: "Float registers".to_string(),
         top_level_class: f_stack_class,
         stack_to_stack_class: f_class,
-        reftype_class: Some(f_stack_only_class),
         spillslot_size: 8,
         classes: vec![f_stack_class, f_stack_only_class, f_class],
     });
@@ -293,7 +291,6 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
             desc: format!("Vector registers LMUL={lmul}"),
             top_level_class: v_stack_class,
             stack_to_stack_class: v_class,
-            reftype_class: Some(v_stack_only_class),
             // Technically this is a scalable vector, but for now we just
             // expose it as 128-bit * LMUL.
             spillslot_size: 16 * lmul,

@@ -365,7 +365,6 @@ impl<'a> Iterator for OutputIter<'a> {
             Some(OutputInst::Inst {
                 inst,
                 operand_allocs: self.regalloc.allocations.inst_allocations(inst),
-                stack_map: self.regalloc.allocations.inst_stack_map(inst),
             })
         }
     }
@@ -388,10 +387,6 @@ pub enum OutputInst<'a> {
         /// In the case of register group operands, only the allocation for the
         /// first group member is recorded here.
         operand_allocs: &'a [Allocation],
-
-        /// If this instruction is a safepoint, this contains the locations of
-        /// all ref-type values that are live at this program point.
-        stack_map: &'a [Allocation],
     },
 
     /// A value which should be re-materialized into the given `Allocation`.

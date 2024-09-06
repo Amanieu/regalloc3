@@ -140,9 +140,6 @@ impl RegInfo {
                 "    stack_to_stack_class = {}",
                 bankdata.stack_to_stack_class
             )?;
-            if let Some(reftype_class) = bankdata.reftype_class {
-                writeln!(f, "    reftype_class = {reftype_class}")?;
-            }
             writeln!(f, "    spillslot_size = {}", bankdata.spillslot_size)?;
 
             for &class in &bankdata.classes {
@@ -213,7 +210,6 @@ struct RegBankData {
     desc: String,
     top_level_class: RegClass,
     stack_to_stack_class: RegClass,
-    reftype_class: Option<RegClass>,
     spillslot_size: usize,
     classes: Vec<RegClass>,
 }

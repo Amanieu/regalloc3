@@ -475,8 +475,7 @@ impl MoveResolver {
                     slot: _,
                     class: _,
                     group_index: _,
-                }
-                | UseKind::StackMap { class: _ } => unreachable!("Cannot rematerialize class use"),
+                } => unreachable!("Cannot rematerialize class use"),
 
                 // Ignore everything else.
                 UseKind::FixedDef { reg: _ }
@@ -910,12 +909,6 @@ impl<F: Function> Context<'_, F> {
                     u.pos(),
                     slot,
                     alloc.expect("missing allocation for class use"),
-                );
-            }
-            UseKind::StackMap { class: _ } => {
-                self.allocations.add_stack_map_alloc(
-                    u.pos(),
-                    alloc.expect("missing allocation for stack map use"),
                 );
             }
             UseKind::GroupClassUse {

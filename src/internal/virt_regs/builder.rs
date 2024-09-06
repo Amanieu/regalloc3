@@ -179,9 +179,7 @@ impl VirtRegBuilderConstraints {
         match u.kind {
             // The simple case: we just need to ensure there exists a common
             // sub-class that covers all constraints used in this vreg.
-            UseKind::ClassUse { slot: _, class }
-            | UseKind::ClassDef { slot: _, class }
-            | UseKind::StackMap { class } => {
+            UseKind::ClassUse { slot: _, class } | UseKind::ClassDef { slot: _, class } => {
                 if let Some(new_class) = reginfo.common_subclass(self.class, class) {
                     self.class = new_class;
                     true
@@ -932,7 +930,6 @@ impl<'a, F: Function, R: RegInfo> Context<'a, F, R> {
                                 | UseKind::ConstraintConflict { .. }
                                 | UseKind::ClassUse { .. }
                                 | UseKind::ClassDef { .. }
-                                | UseKind::StackMap { .. }
                                 | UseKind::BlockparamIn { .. }
                                 | UseKind::BlockparamOut { .. } => continue,
                             };

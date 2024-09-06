@@ -8,7 +8,7 @@ use core::fmt;
 use anyhow::{bail, ensure, Result};
 use cranelift_entity::{EntityRef, SecondaryMap};
 use hashbrown::hash_map::DefaultHashBuilder;
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 use indexmap::IndexSet;
 use smallvec::SmallVec;
 
@@ -111,26 +111,6 @@ impl CheckerState {
         }
     }
 
-    /// Returns an iterator over all the values in an `AllocationUnit`.
-    fn unit_values(&mut self, unit: AllocationUnit) -> impl Iterator<Item = Value> + '_ {
-        self.unit_values.entry(unit).or_default().iter().copied()
-    }
-
-    /// In all units matching the given filter, removes all values for which
-    /// `keep_value` returns `false`.
-    fn retain_in_units(
-        &mut self,
-        mut unit_filter: impl FnMut(AllocationUnit) -> bool,
-        mut keep_value: impl FnMut(Value) -> bool,
-    ) {
-        for (&unit, values) in &mut self.unit_values {
-            if !unit_filter(unit) {
-                continue;
-            }
-            values.retain(|&mut value| keep_value(value));
-        }
-    }
-
     /// Returns an iterator over all `AllocationUnit`s containing the given
     /// value.
     fn units_containing_value(&self, value: Value) -> impl Iterator<Item = AllocationUnit> + '_ {
@@ -197,8 +177,6 @@ struct Context<'a, F, R> {
     fixed_def_units: RegUnitSet,
     early_reused_operands: Vec<usize>,
     next_inst: Inst,
-    stack_map_units: AllocationUnitSet,
-    stack_map_values: HashSet<Value>,
     terminated: bool,
     can_have_move: bool,
 }
@@ -380,7 +358,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             OutputInst::Inst {
                 inst,
                 operand_allocs,
-                stack_map,
             } => {
                 self.check_skipped_inst(inst)?;
 
@@ -405,16 +382,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     for (idx, (&op, &alloc)) in operands.iter().zip(operand_allocs).enumerate() {
                         self.check_operand(pass, inst, idx, op, alloc, operand_allocs)?;
                     }
-
-                    if pass == Pass::Use && func.safepoint_insts().binary_search(&inst).is_ok() {
-                        self.check_stack_map(inst, stack_map)?;
-                    }
-                }
-
-                // Ensure that all live reftype values are covered by the stack
-                // map.
-                if func.safepoint_insts().binary_search(&inst).is_ok() {
-                    self.clean_stale_reftype_values();
                 }
 
                 // Clear any clobbers, except when the corresponding unit has
@@ -807,79 +774,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         }
         Ok(())
     }
-
-    /// Checks the stack map entries in an instruction.
-    fn check_stack_map(&mut self, inst: Inst, stack_map: &[Allocation]) -> Result<()> {
-        let func = self.output.function();
-        let reginfo = self.output.reginfo();
-
-        self.stack_map_units.clear();
-        for &alloc in stack_map {
-            for unit in alloc.units(reginfo) {
-                // Check that stack map entries don't overlap.
-                ensure!(
-                    !self.stack_map_units.contains(unit),
-                    "{inst}: stack map entries overlap on {unit}"
-                );
-                self.stack_map_units.insert(unit);
-
-                // All units in the stack map must hold a reftype value.
-                let Some(value) = self
-                    .state
-                    .unit_values(unit)
-                    .find(|&value| func.reftype_values().binary_search(&value).is_ok())
-                else {
-                    bail!("{alloc} ({unit}) does not hold a reftype value at safepoint {inst}");
-                };
-
-                // All stack map entries must be in reftype_class.
-                let bank = func.value_bank(value);
-                let Some(class) = reginfo.reftype_class(bank) else {
-                    bail!("Stack map contains {value} in {bank} which has no reftype_class");
-                };
-                self.check_class(alloc, class)?;
-            }
-        }
-
-        // Find all reftype values that are preserved in the stack map.
-        self.stack_map_values.clear();
-        for &alloc in stack_map {
-            for unit in alloc.units(reginfo) {
-                for value in self.state.unit_values(unit) {
-                    if func.reftype_values().binary_search(&value).is_ok() {
-                        self.stack_map_values.insert(value);
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// All live reftype values at this point must be in the stack map. To
-    /// catch any cases where a live reftype value is missing from the stack
-    /// map we simply remove all reftype values from allocations not in the
-    /// stack map.
-    fn clean_stale_reftype_values(&mut self) {
-        self.state.retain_in_units(
-            // Exclude units that were defined in the current instruction.
-            |unit| !self.def_units.contains(unit),
-            // Remove all reftype values that were not saved in the stack map.
-            |value| {
-                let retain = self
-                    .output
-                    .function()
-                    .reftype_values()
-                    .binary_search(&value)
-                    .is_err()
-                    || self.stack_map_values.contains(&value);
-                if !retain {
-                    trace!("Removing {value} from unit");
-                }
-                retain
-            },
-        );
-    }
 }
 
 /// Verifies the output of the register allocator.
@@ -898,8 +792,6 @@ pub fn check_output(output: &Output<'_, impl Function, impl RegInfo>) -> Result<
         early_reused_operands: vec![],
         def_units: AllocationUnitSet::new(),
         fixed_def_units: RegUnitSet::new(),
-        stack_map_units: AllocationUnitSet::new(),
-        stack_map_values: HashSet::new(),
         terminated: false,
         can_have_move: false,
     };

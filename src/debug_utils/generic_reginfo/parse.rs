@@ -291,7 +291,6 @@ fn parse_bank_def(
     let span = pair.as_span();
     let mut top_level_class = None;
     let mut stack_to_stack_class = None;
-    let mut reftype_class = None;
     let mut spillslot_size = None;
     for pair in pair.into_inner() {
         match pair.as_rule() {
@@ -311,13 +310,6 @@ fn parse_bank_def(
                 }
                 let [class] = extract(pair, [Rule::class]);
                 stack_to_stack_class = Some(parse_entity(class)?);
-            }
-            Rule::reftype_class => {
-                if reftype_class.is_some() {
-                    Err(custom_error(pair.as_span(), "duplicate attribute"))?;
-                }
-                let [class] = extract(pair, [Rule::class]);
-                reftype_class = Some(parse_entity(class)?);
             }
             Rule::spillslot_size => {
                 if spillslot_size.is_some() {
@@ -349,7 +341,6 @@ fn parse_bank_def(
     banks.push(RegBankData {
         top_level_class,
         stack_to_stack_class,
-        reftype_class,
         spillslot_size,
     });
     Ok(())

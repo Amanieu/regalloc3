@@ -37,9 +37,8 @@ class_def                       =  { class ~ superclasses? ~ "{" ~ (class_statem
 // Register bank
 top_level_class      =  { "top_level_class" ~ "=" ~ class }
 stack_to_stack_class =  { "stack_to_stack_class" ~ "=" ~ class }
-reftype_class        =  { "reftype_class" ~ "=" ~ class }
 spillslot_size       =  { "spillslot_size" ~ "=" ~ number }
-bank_statement       = _{ top_level_class | stack_to_stack_class | reftype_class | spillslot_size | class_def }
+bank_statement       = _{ top_level_class | stack_to_stack_class | spillslot_size | class_def }
 bank_def             =  { bank ~ "{" ~ (bank_statement? ~ NEWLINE)* ~ "}" }
 
 // Top level

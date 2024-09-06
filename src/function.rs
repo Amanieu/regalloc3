@@ -735,33 +735,4 @@ pub trait Function {
     /// instruction is no longer needed.
     // TODO: We don't do this yet.
     fn can_eliminate_dead_inst(&self, inst: Inst) -> bool;
-
-    // -------------
-    // GC safepoints
-    // -------------
-
-    /// Sorted list of instructions that require all reference-typed
-    /// values to be placed into register class given by
-    /// [`RegInfo::reftype_class`]. For these instructions, stackmaps will be provided.
-    ///
-    /// This is usually associated with the concept of a garbage-collector
-    /// "safepoint" which requires reference-typed values to be on the stack
-    /// so that pointer-scanning can determine which GC objects are rooted.
-    ///
-    /// [`RegInfo::reftype_class`]: super::reginfo::RegInfo::reftype_class
-    fn safepoint_insts(&self) -> &[Inst];
-
-    /// Sorted list of [`Value`]s that are GC-tracked pointer/reference types.
-    /// This has the following effects for each such value:
-    ///
-    /// - At all safepoint instructions, the value will be in the register class
-    ///   specified by [`RegInfo::reftype_class`].
-    /// - At all safepoint instructions, all live values' locations
-    ///   will be included in a list in [`OutputInst`], so that
-    ///   pointer-inspecting/updating functionality (such as a moving
-    ///   garbage collector) may observe and edit their values.
-    ///
-    /// [`RegInfo::reftype_class`]: super::RegInfo::reftype_class
-    /// [`OutputInst`]: super::output::OutputInst
-    fn reftype_values(&self) -> &[Value];
 }

@@ -25,7 +25,6 @@ mod parse;
 struct RegBankData {
     top_level_class: RegClass,
     stack_to_stack_class: RegClass,
-    reftype_class: Option<RegClass>,
     spillslot_size: SpillSlotSize,
 }
 
@@ -97,7 +96,6 @@ impl GenericRegInfo {
             banks.push(RegBankData {
                 top_level_class: reginfo.top_level_class(bank),
                 stack_to_stack_class: reginfo.stack_to_stack_class(bank),
-                reftype_class: reginfo.reftype_class(bank),
                 spillslot_size: reginfo.spillslot_size(bank),
             });
         }
@@ -256,10 +254,5 @@ impl RegInfo for GenericRegInfo {
             }
         }
         None
-    }
-
-    #[inline]
-    fn reftype_class(&self, bank: RegBank) -> Option<RegClass> {
-        self.banks[bank].reftype_class
     }
 }

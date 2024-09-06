@@ -92,7 +92,6 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         desc: "General-purpose registers".to_string(),
         top_level_class: x_stack_class,
         stack_to_stack_class: x_class,
-        reftype_class: Some(x_stack_only_class),
         spillslot_size: 8,
         classes: vec![x_stack_class, x_stack_only_class, x_class, casp_class],
     });
@@ -200,7 +199,6 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         desc: "64-bit FP/SIMD registers".to_string(),
         top_level_class: d_stack_class,
         stack_to_stack_class: d_class,
-        reftype_class: Some(d_stack_only_class),
         spillslot_size: 8,
         classes: vec![
             d_stack_class,
@@ -317,7 +315,6 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         desc: "128-bit FP/SIMD registers".to_string(),
         top_level_class: q_stack_class,
         stack_to_stack_class: q_class,
-        reftype_class: Some(q_stack_only_class),
         spillslot_size: 16,
         classes: vec![
             q_stack_class,

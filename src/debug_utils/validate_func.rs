@@ -510,11 +510,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                          multiple predecessors"
                     );
                     ensure!(
-                        self.func.safepoint_insts().binary_search(&inst).is_err(),
-                        "{inst}: Terminator cannot requires reftype to be on the stack when the \
-                         successor block has multiple predecessors"
-                    );
-                    ensure!(
                         self.func.inst_clobbers(inst).is_empty(),
                         "{inst}: Terminator cannot have clobbers when the successor block has \
                          multiple predecessors"
@@ -615,30 +610,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     fn check_function(&mut self) -> Result<()> {
         self.check_limits()?;
 
-        // Check that safepoints are sorted.
-        for &inst in self.func.safepoint_insts() {
-            self.check_entity(Entity::Inst(inst))?;
-        }
-        ensure!(
-            self.func
-                .safepoint_insts()
-                .windows(2)
-                .all(|window| window[0] < window[1]),
-            "Safepoints must be sorted"
-        );
-
-        // Check that reftype values are sorted.
-        for &value in self.func.reftype_values() {
-            self.check_entity(Entity::Value(value))?;
-        }
-        ensure!(
-            self.func
-                .reftype_values()
-                .windows(2)
-                .all(|window| window[0] < window[1]),
-            "Reftype values must be sorted"
-        );
-
         // Check blocks and instructions. This also records a `ValueDef` for
         // each defined value.
         for block in self.func.blocks() {
@@ -682,14 +653,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             // Used values without a definition are caught by the prior
             // dominance check.
             ensure!(self.value_defs[value].is_some(), "{value} is unused");
-
-            if self.func.reftype_values().binary_search(&value).is_ok() {
-                let bank = self.func.value_bank(value);
-                ensure!(
-                    self.reginfo.reftype_class(bank).is_some(),
-                    "Missing reftype_class for {bank} when reftype values are used"
-                );
-            }
 
             if let Some((_cost, class)) = self.func.can_rematerialize(value) {
                 ensure!(

@@ -335,7 +335,6 @@ rg206 = r112 r81 r82 r83 ; (q31 q0 q1 q2)
 bank0 {
     top_level_class = class0
     stack_to_stack_class = class2
-    reftype_class = class1
     spillslot_size = 8
 
     ; General-purpose registers + stack
@@ -376,7 +375,6 @@ bank0 {
 bank1 {
     top_level_class = class4
     stack_to_stack_class = class6
-    reftype_class = class5
     spillslot_size = 8
 
     ; 64-bit FP/SIMD registers + stack
@@ -435,7 +433,6 @@ bank1 {
 bank2 {
     top_level_class = class10
     stack_to_stack_class = class12
-    reftype_class = class11
     spillslot_size = 16
 
     ; 128-bit FP/SIMD registers + stack

@@ -147,19 +147,6 @@ impl<R: RegInfo> Context<'_, R> {
             );
         }
 
-        // Check reftype_class
-        if let Some(reftype_class) = self.reginfo.reftype_class(bank) {
-            self.check_entity(Entity::RegClass(reftype_class))?;
-            ensure!(
-                self.reginfo.bank_for_class(reftype_class) == bank,
-                "{bank}: Ref-type class {reftype_class} is not in bank"
-            );
-            ensure!(
-                self.reginfo.class_group_size(reftype_class) == 1,
-                "{reftype_class}: Ref-type class must have a group size of 1"
-            );
-        }
-
         Ok(())
     }
 

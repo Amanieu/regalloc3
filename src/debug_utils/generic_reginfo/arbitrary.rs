@@ -144,7 +144,6 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
 
         // Generate additional classes.
         let mut classes = vec![top_level_class, stack_to_stack_class];
-        let mut nongroup_classes = vec![top_level_class, stack_to_stack_class];
         for _ in 0..self
             .u
             .int_in_range(self.config.extra_classes_per_bank.clone())?
@@ -152,22 +151,11 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
             let superclass = *self.u.choose(&classes)?;
             let class = self.gen_subclass(superclass, false)?;
             classes.push(class);
-            if self.reginfo.class_group_size(class) == 1 {
-                nongroup_classes.push(class);
-            }
         }
-
-        // Pick a reftype class from non-group classes.
-        let reftype_class = if self.u.arbitrary()? {
-            Some(*self.u.choose(&nongroup_classes)?)
-        } else {
-            None
-        };
 
         let bank_data = RegBankData {
             top_level_class,
             stack_to_stack_class,
-            reftype_class,
             spillslot_size: self.spillslot_size()?,
         };
         Ok(self.reginfo.banks.push(bank_data))

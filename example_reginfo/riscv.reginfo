@@ -437,7 +437,6 @@ rg257 = r150 r151 ; (v24_x4 v28_x4)
 bank0 {
     top_level_class = class0
     stack_to_stack_class = class2
-    reftype_class = class1
     spillslot_size = 8
 
     ; General-purpose registers + stack
@@ -482,7 +481,6 @@ bank0 {
 bank1 {
     top_level_class = class4
     stack_to_stack_class = class6
-    reftype_class = class5
     spillslot_size = 8
 
     ; Float registers + stack
@@ -518,7 +516,6 @@ bank1 {
 bank2 {
     top_level_class = class7
     stack_to_stack_class = class9
-    reftype_class = class8
     spillslot_size = 16
 
     ; Vector registers + stack LMUL=1
@@ -604,7 +601,6 @@ bank2 {
 bank3 {
     top_level_class = class17
     stack_to_stack_class = class19
-    reftype_class = class18
     spillslot_size = 32
 
     ; Vector registers + stack LMUL=2
@@ -658,7 +654,6 @@ bank3 {
 bank4 {
     top_level_class = class23
     stack_to_stack_class = class25
-    reftype_class = class24
     spillslot_size = 64
 
     ; Vector registers + stack LMUL=4
@@ -696,7 +691,6 @@ bank4 {
 bank5 {
     top_level_class = class27
     stack_to_stack_class = class29
-    reftype_class = class28
     spillslot_size = 128
 
     ; Vector registers + stack LMUL=8

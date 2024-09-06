@@ -273,7 +273,6 @@ impl AllocationOrder {
                     | UseKind::ClassDef { .. }
                     | UseKind::GroupClassUse { .. }
                     | UseKind::GroupClassDef { .. }
-                    | UseKind::StackMap { .. }
                     | UseKind::BlockparamIn { .. }
                     | UseKind::BlockparamOut { .. } => continue,
                 };

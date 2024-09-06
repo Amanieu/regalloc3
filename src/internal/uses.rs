@@ -121,8 +121,7 @@ impl Use {
                 slot: _,
                 class,
                 group_index: _,
-            }
-            | UseKind::StackMap { class } => reginfo.class_spill_cost(class),
+            } => reginfo.class_spill_cost(class),
 
             // Tied uses and constraint conflicts involve a move from one vreg
             // to another.
@@ -158,7 +157,6 @@ impl Use {
             UseKind::ConstraintConflict {} => inst.slot(Slot::Boundary),
             UseKind::ClassUse { .. } => inst.slot(Slot::Normal),
             UseKind::ClassDef { .. } => inst.next().slot(Slot::Boundary),
-            UseKind::StackMap { .. } => inst.slot(Slot::Normal),
             UseKind::GroupClassUse { .. } => inst.slot(Slot::Normal),
             UseKind::GroupClassDef { .. } => inst.next().slot(Slot::Boundary),
             UseKind::BlockparamIn { .. } => inst.slot(Slot::Boundary),
@@ -265,17 +263,6 @@ pub enum UseKind {
         class: RegClass,
     },
 
-    /// Use of the value in the given register class for a stack map entry.
-    ///
-    /// This is similar to `ClassUse` except that it doesn't have a `slot` since
-    /// stack map entries are unordered.
-    StackMap {
-        /// Register class that the stack map entry must be in.
-        ///
-        /// This is determined by [`RegInfo::reftype_class`].
-        class: RegClass,
-    },
-
     /// Use value in the given register class as part of a group.
     ///
     /// This is used to calculate the register class requirements of a virtual
@@ -369,9 +356,6 @@ impl fmt::Display for UseKind {
                 f,
                 "group_class_def: {class} slot={slot} group_index={group_index}"
             ),
-            UseKind::StackMap { class } => {
-                write!(f, "stack_map: {class}")
-            }
             UseKind::BlockparamIn { blockparam_idx } => {
                 write!(f, "blockparam_in: idx={blockparam_idx}")
             }
@@ -537,14 +521,6 @@ impl Uses {
         UseIndex(self.uses.len() as u32)
     }
 
-    /// Appends a copy of the given list as unsorted uses.
-    pub fn copy_list(&mut self, list: UseList) -> UseList {
-        let from = self.uses.len() as u32;
-        self.uses.extend_from_within(list.indices());
-        let to = self.uses.len() as u32;
-        UseList { from, to }
-    }
-
     /// Adds an unsorted `Use` to the vector.
     pub fn add_unsorted_use(
         &mut self,
@@ -588,14 +564,6 @@ impl Uses {
         self.sorted_until = self.uses.len();
 
         UseIndex(0)
-    }
-
-    /// Sorts the elements in the given `UseList`.
-    pub fn sort_use_list(&mut self, list: UseList) {
-        self[list].sort_unstable_by_key(|u| {
-            // Sort by value first, then by use position.
-            (u.value.index() as u64) << 32 | u.use_pos.bits as u64
-        });
     }
 
     /// Returns a `UseList` which covers all the uses of `value`.

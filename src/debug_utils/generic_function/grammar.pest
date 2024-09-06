@@ -16,8 +16,7 @@ block_list = { (block ~ ",")* ~ block? }
 // Value declaration
 remat_cost        =  { "cheaper_than_move" | "cheaper_than_load" }
 remat             =  { "remat" ~ "(" ~ remat_cost ~ "," ~ regclass ~ ")" }
-reftype           =  { "reftype" }
-value_attribute   = _{ regbank | remat | reftype }
+value_attribute   = _{ regbank | remat }
 value_declaration =  { value ~ "=" ~ value_attribute+ }
 
 // Start of block label
@@ -34,7 +33,7 @@ operand                = _{ normal_operand | nonallocatable_operand }
 clobber                =  { "Clobber" ~ ":" ~ unit }
 
 // Instruction
-attribute   = { "safepoint" | "pure" }
+attribute   = { "pure" }
 normal_inst = { "inst" }
 branch      = { "branch" ~ "(" ~ block_list ~ ")" }
 jump        = { "jump" ~ block ~ ("(" ~ value_list ~ ")")? }

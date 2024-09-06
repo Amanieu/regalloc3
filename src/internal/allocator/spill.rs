@@ -110,8 +110,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         // Ignore uses that can be assigned to spill slots.
                         let can_spill = match u.kind {
                             UseKind::ClassUse { slot: _, class }
-                            | UseKind::ClassDef { slot: _, class }
-                            | UseKind::StackMap { class } => {
+                            | UseKind::ClassDef { slot: _, class } => {
                                 if self.reginfo.class_includes_spillslots(class) {
                                     // Even if the value is rematerializable, we
                                     // must *still* spill it because ClassUse

@@ -61,8 +61,6 @@ pub struct GenericFunction {
     insts: PrimaryMap<Inst, InstData>,
     values: PrimaryMap<Value, ValueData>,
     value_groups: PrimaryMap<ValueGroup, Vec<Value>>,
-    safepoints: Vec<Inst>,
-    reftype_values: Vec<Value>,
 }
 
 impl fmt::Debug for GenericFunction {
@@ -119,8 +117,6 @@ impl GenericFunction {
             insts,
             values,
             value_groups,
-            safepoints: func.safepoint_insts().into(),
-            reftype_values: func.reftype_values().into(),
         }
     }
 }
@@ -219,15 +215,5 @@ impl Function for GenericFunction {
     #[inline]
     fn can_eliminate_dead_inst(&self, inst: Inst) -> bool {
         self.insts[inst].is_pure
-    }
-
-    #[inline]
-    fn safepoint_insts(&self) -> &[Inst] {
-        &self.safepoints
-    }
-
-    #[inline]
-    fn reftype_values(&self) -> &[Value] {
-        &self.reftype_values
     }
 }

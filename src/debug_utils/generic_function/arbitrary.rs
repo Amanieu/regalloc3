@@ -153,8 +153,6 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             insts: PrimaryMap::new(),
             values: PrimaryMap::new(),
             value_groups: PrimaryMap::new(),
-            safepoints: vec![],
-            reftype_values: vec![],
         };
 
         let mut class_per_bank: SecondaryMap<RegBank, Vec<RegClass>> = SecondaryMap::new();
@@ -305,9 +303,6 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             None
         };
         let value = self.func.values.push(ValueData { bank, remat });
-        if self.reginfo.reftype_class(bank).is_some() && self.u.arbitrary()? {
-            self.func.reftype_values.push(value);
-        }
         Ok(value)
     }
 
@@ -677,13 +672,8 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             // Instructions were generated in reverse, un-reverse them and add them
             // to the block.
             let from = self.func.insts.next_key();
-            for inst in self.block_insts[block].drain(..).rev() {
-                let inst = self.func.insts.push(inst);
-                if (!self.func.insts[inst].is_terminator || blockdata.succs.len() != 1)
-                    && self.u.arbitrary()?
-                {
-                    self.func.safepoints.push(inst);
-                }
+            for inst_data in self.block_insts[block].drain(..).rev() {
+                self.func.insts.push(inst_data);
             }
             let to = self.func.insts.next_key();
             blockdata.insts = InstRange::new(from, to);

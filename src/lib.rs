@@ -230,9 +230,6 @@ impl RegisterAllocator {
             reginfo,
         );
 
-        // Reserve space for stack maps in the allocation map.
-        self.allocations.compute_stack_map_offsets(func)?;
-
         // Coalesce SSA values into non-overlapping sets to eliminate
         // unnecessary move instructions.
         self.coalescing.run(

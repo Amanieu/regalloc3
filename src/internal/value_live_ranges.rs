@@ -27,7 +27,7 @@ use super::live_range::{LiveRangeSegment, Slot};
 use super::reg_matrix::RegMatrix;
 use super::uses::{UseIndex, UseKind, Uses};
 use crate::function::{
-    Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, Value, ValueGroup,
+    Block, Function, Inst, Operand, OperandConstraint, OperandKind, Value, ValueGroup,
 };
 use crate::internal::uses::{UseList, UsePosition};
 use crate::output::Allocation;
@@ -219,11 +219,6 @@ impl ValueLiveRanges {
         // Builds `ValueSegment`s for each value from the collected uses.
         for value in func.values() {
             ctx.build_segments(value, &mut use_list_end);
-        }
-
-        // Add stack map uses for reftype values at safepoints.
-        for &value in func.reftype_values() {
-            ctx.insert_stack_map_uses(value);
         }
 
         self.dump(uses);
@@ -912,70 +907,5 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         }
 
         stat!(self.stats, value_segments, segments.len());
-    }
-
-    /// Inserts stack map uses for a reftype value.
-    fn insert_stack_map_uses(&mut self, value: Value) {
-        for (idx, segment) in self.value_live_ranges.value_sets[ValueSet::from_value(value)]
-            .segments
-            .iter_mut()
-            .enumerate()
-        {
-            // Convert the live range to a range of instructions that need to be
-            // checked for being safepoints. We only need to create a stack map
-            // use if the value is used in the Normal->Boundary live range (and
-            // not as part of a def). This is achieved by simply rounding to the
-            // previous instruction boundary.
-            //
-            // We take special care to skip the instruction that defines the
-            // value itself, unless it is a blockparam which comes from a
-            // predecessor block.
-            let start = if idx == 0 {
-                self.value_live_ranges.def_range[value].to.inst()
-            } else {
-                segment.live_range.from.inst()
-            };
-            let range = InstRange::new(start, segment.live_range.to.inst());
-            if range.is_empty() {
-                continue;
-            }
-
-            let first_extra_use = self.uses.next_unsorted_use();
-            let safepoints = self.func.safepoint_insts();
-            let idx = safepoints.partition_point(|&inst| inst < range.from);
-            for &inst in &safepoints[idx..] {
-                if inst >= range.to {
-                    break;
-                }
-
-                // Add a stack map use at all safepoint instruction within the
-                // range.
-                trace!("Adding stack map use for {value} at {inst}");
-                let bank = self.func.value_bank(value);
-                let class = self
-                    .reginfo
-                    .reftype_class(bank)
-                    .expect("missing reftype_class for bank");
-                self.allocations.reserve_stack_map_entry(inst);
-                self.uses.add_unsorted_use(
-                    UsePosition::at_use(inst),
-                    value,
-                    UseKind::StackMap { class },
-                );
-            }
-
-            // If StackMap uses were added then we need to rebuild the use list
-            // for this value.
-            if first_extra_use != self.uses.next_unsorted_use() {
-                // Append the original uses to the StackMap uses we just created
-                // and then sort them into the proper order.
-                self.uses.copy_list(segment.use_list);
-                let mut new_list = UseList::new(first_extra_use, self.uses.next_unsorted_use());
-                new_list.set_livein(segment.use_list.has_livein());
-                new_list.set_liveout(segment.use_list.has_liveout());
-                self.uses.sort_use_list(new_list);
-                segment.use_list = new_list;
-            }
-        }
     }
 }

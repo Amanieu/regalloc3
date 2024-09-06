@@ -84,12 +84,10 @@ fn parse_entity_list<T: EntityRef>(pair: Pair<'_, Rule>) -> Result<Vec<T>> {
 fn parse_value_declaration(
     pair: Pair<'_, Rule>,
     values: &mut PrimaryMap<Value, ValueData>,
-    reftype_values: &mut Vec<Value>,
 ) -> Result<()> {
     let span = pair.as_span();
     let mut bank = None;
     let mut remat = None;
-    let mut is_reftype = false;
     for pair in pair.into_inner() {
         match pair.as_rule() {
             Rule::value => {
@@ -114,22 +112,13 @@ fn parse_value_declaration(
                 let class = parse_entity(class)?;
                 remat = Some((cost, class));
             }
-            Rule::reftype => {
-                if is_reftype {
-                    Err(custom_error(pair.as_span(), "duplicate attribute"))?;
-                }
-                is_reftype = true;
-            }
             _ => unreachable!(),
         }
     }
     let Some(bank) = bank else {
         Err(custom_error(span, "missing bank attribute"))?
     };
-    let value = values.push(ValueData { bank, remat });
-    if is_reftype {
-        reftype_values.push(value);
-    }
+    values.push(ValueData { bank, remat });
     Ok(())
 }
 
@@ -183,18 +172,8 @@ fn parse_opcode(
     Ok(())
 }
 
-fn parse_attribute(
-    pair: Pair<'_, Rule>,
-    is_pure: &mut bool,
-    is_safepoint: &mut bool,
-) -> Result<()> {
+fn parse_attribute(pair: Pair<'_, Rule>, is_pure: &mut bool) -> Result<()> {
     match pair.as_str() {
-        "safepoint" => {
-            if *is_safepoint {
-                Err(custom_error(pair.as_span(), "duplicate attribute"))?;
-            }
-            *is_safepoint = true;
-        }
         "pure" => {
             if *is_pure {
                 Err(custom_error(pair.as_span(), "duplicate attribute"))?;
@@ -249,7 +228,6 @@ fn parse_instruction(
     blocks: &mut PrimaryMap<Block, BlockData>,
     insts: &mut PrimaryMap<Inst, InstData>,
     groups: &mut PrimaryMap<ValueGroup, Vec<Value>>,
-    safepoints: &mut Vec<Inst>,
 ) -> Result<()> {
     let Some((block, block_data)) = blocks.last_mut() else {
         Err(custom_error(
@@ -264,14 +242,13 @@ fn parse_instruction(
         is_terminator: false,
         is_pure: false,
     };
-    let mut is_safepoint = false;
     for pair in pair.into_inner() {
         match pair.as_rule() {
             Rule::inst_label => {
                 // We specifically ignore instruction labels to make it easier to edit code.
             }
             Rule::opcode => parse_opcode(pair, &mut data, block_data)?,
-            Rule::attribute => parse_attribute(pair, &mut data.is_pure, &mut is_safepoint)?,
+            Rule::attribute => parse_attribute(pair, &mut data.is_pure)?,
             Rule::normal_operand => data.operands.push(parse_operand(pair, groups)?),
             Rule::nonallocatable_operand => {
                 let [physreg] = extract(pair, [Rule::physreg]);
@@ -285,10 +262,7 @@ fn parse_instruction(
             _ => unreachable!(),
         }
     }
-    let inst = insts.push(data);
-    if is_safepoint {
-        safepoints.push(inst);
-    }
+    insts.push(data);
     block_data.insts.to = insts.next_key();
     Ok(())
 }
@@ -326,22 +300,16 @@ impl GenericFunction {
         let mut insts = PrimaryMap::new();
         let mut values = PrimaryMap::new();
         let mut value_groups = PrimaryMap::new();
-        let mut safepoints = vec![];
-        let mut reftype_values = vec![];
 
         for pair in parse_result {
             match pair.as_rule() {
                 Rule::value_declaration => {
-                    parse_value_declaration(pair, &mut values, &mut reftype_values)?;
+                    parse_value_declaration(pair, &mut values)?;
                 }
                 Rule::block_label => parse_block_label(pair, &mut blocks, &mut insts)?,
-                Rule::instruction => parse_instruction(
-                    pair,
-                    &mut blocks,
-                    &mut insts,
-                    &mut value_groups,
-                    &mut safepoints,
-                )?,
+                Rule::instruction => {
+                    parse_instruction(pair, &mut blocks, &mut insts, &mut value_groups)?;
+                }
                 Rule::EOI => {}
                 _ => unreachable!(),
             }
@@ -352,8 +320,6 @@ impl GenericFunction {
             insts,
             values,
             value_groups,
-            safepoints,
-            reftype_values,
         };
 
         // Compute block predecessors and immediate dominators since they are

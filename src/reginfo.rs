@@ -591,23 +591,4 @@ pub trait RegInfo {
     /// This can only be called for register classes with a group size greater
     /// than 1.
     fn group_for_reg(&self, reg: PhysReg, group_index: usize, class: RegClass) -> Option<RegGroup>;
-
-    // ----
-    // Misc
-    // ----
-
-    /// Register class to use for values in [`Function::reftype_values`] at
-    /// safepoints.
-    ///
-    /// Usually this will be a register class which only allows spillslots, but
-    /// depending on the GC implementation this may allow fixed stack slots or
-    /// even registers.
-    ///
-    /// This can be `None` if safepoints are not used or if there are no
-    /// reftype values in this register class.
-    ///
-    /// The returned class must not be a register group class.
-    ///
-    /// [`Function::reftype_values`]: super::Function::reftype_values
-    fn reftype_class(&self, bank: RegBank) -> Option<RegClass>;
 }

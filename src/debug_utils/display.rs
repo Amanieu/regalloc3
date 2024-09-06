@@ -69,9 +69,6 @@ impl<F: Function> fmt::Display for DisplayFunction<'_, F> {
                 };
                 write!(f, " remat({cost}, {class})")?;
             }
-            if self.0.reftype_values().binary_search(&value).is_ok() {
-                write!(f, " reftype")?;
-            }
             writeln!(f)?;
         }
 
@@ -107,9 +104,6 @@ impl<F: Function> fmt::Display for DisplayFunction<'_, F> {
                 };
 
                 // Attributes
-                if self.0.safepoint_insts().binary_search(&inst).is_ok() {
-                    write!(f, " safepoint")?;
-                }
                 if self.0.can_eliminate_dead_inst(inst) {
                     write!(f, " pure")?;
                 }
@@ -240,9 +234,6 @@ impl<R: RegInfo> fmt::Display for DisplayRegInfo<'_, R> {
                 "    stack_to_stack_class = {}",
                 self.0.stack_to_stack_class(bank)
             )?;
-            if let Some(reftype_class) = self.0.reftype_class(bank) {
-                writeln!(f, "    reftype_class = {reftype_class}")?;
-            }
             writeln!(f, "    spillslot_size = {}", self.0.spillslot_size(bank))?;
 
             // Register classes in the bank
@@ -383,7 +374,6 @@ impl<F: Function, R: RegInfo> fmt::Display for DisplayOutputInst<'_, F, R> {
             OutputInst::Inst {
                 inst,
                 operand_allocs,
-                stack_map,
             } => {
                 // Base opcode. For terminators this also encodes the list of block
                 // successors.
@@ -400,14 +390,11 @@ impl<F: Function, R: RegInfo> fmt::Display for DisplayOutputInst<'_, F, R> {
                 };
 
                 // Attributes
-                if func.safepoint_insts().binary_search(&inst).is_ok() {
-                    write!(f, " safepoint")?;
-                }
                 if func.can_eliminate_dead_inst(inst) {
                     write!(f, " pure")?;
                 }
 
-                // Operands, clobbers and stack map
+                // Operands and clobbers
                 for (&operand, &alloc) in func.inst_operands(inst).iter().zip(operand_allocs) {
                     f.write_str(" ")?;
                     let dump_group = |f: &mut fmt::Formatter<'_>,
@@ -464,9 +451,6 @@ impl<F: Function, R: RegInfo> fmt::Display for DisplayOutputInst<'_, F, R> {
                 }
                 for &unit in func.inst_clobbers(inst) {
                     write!(f, " Clobber:{unit}")?;
-                }
-                for &alloc in stack_map {
-                    write!(f, " StackMap:{alloc}")?;
                 }
             }
             OutputInst::Rematerialize { value, to } => {

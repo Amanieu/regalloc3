@@ -56,7 +56,6 @@ impl CostModel {
                     OutputInst::Inst {
                         inst,
                         operand_allocs,
-                        stack_map: _,
                     } => {
                         // Penalize instruction operands that are assigned to
                         // memory instead of registers.
