@@ -519,6 +519,16 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     .is_infinite()
                 {
                     trace!("Allocation failed: could not allocate unspillable {vreg}");
+
+                    if trace_enabled!() {
+                        self.virt_regs.dump(self.uses, |vreg| {
+                            !matches!(self.allocator.assignments[vreg], Assignment::Dead)
+                        });
+                        trace!("Virtual register assignments:");
+                        for (vreg, reg) in self.allocator.assignments() {
+                            trace!("  {vreg} -> {reg}");
+                        }
+                    }
                     return Err(RegAllocError::TooManyLiveRegs);
                 }
 
