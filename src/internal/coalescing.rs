@@ -14,12 +14,13 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::mem;
+use smallvec::SmallVec;
 
 use cranelift_entity::packed_option::PackedOption;
 use cranelift_entity::{EntityRef, SecondaryMap};
 
 use super::uses::Uses;
-use super::value_live_ranges::ValueLiveRanges;
+use super::value_live_ranges::{ValueLiveRanges, ValueSegment};
 use crate::function::{Block, Function, OperandConstraint, OperandKind, Value, ValueGroup};
 use crate::internal::value_live_ranges::ValueSet;
 use crate::union_find::UnionFind;
@@ -163,7 +164,8 @@ impl Coalescing {
                             OperandKind::Use(use_value),
                         ) => {
                             trace!("Reused operand: {use_value} -> {def_value}");
-                            if self.coalesce_values(use_value, def_value, value_live_ranges) {
+                            if self.coalesce_values(use_value, def_value, value_live_ranges, stats)
+                            {
                                 stat!(stats, coalesced_tied);
                             } else {
                                 stat!(stats, coalesced_failed_tied);
@@ -180,7 +182,12 @@ impl Coalescing {
                                 .zip(func.value_group_members(use_value_group))
                             {
                                 trace!("Reused group operand: {use_value} -> {def_value}");
-                                if self.coalesce_values(use_value, def_value, value_live_ranges) {
+                                if self.coalesce_values(
+                                    use_value,
+                                    def_value,
+                                    value_live_ranges,
+                                    stats,
+                                ) {
                                     stat!(stats, coalesced_tied_group);
                                 } else {
                                     stat!(stats, coalesced_failed_tied_group);
@@ -214,7 +221,12 @@ impl Coalescing {
                                         "Merging {prev_group}[{idx}]:{prev_value} and \
                                          {value_group}[{idx}]:{value}"
                                     );
-                                    if self.coalesce_values(value, prev_value, value_live_ranges) {
+                                    if self.coalesce_values(
+                                        value,
+                                        prev_value,
+                                        value_live_ranges,
+                                        stats,
+                                    ) {
                                         stat!(stats, coalesced_group);
                                     } else {
                                         stat!(stats, coalesced_failed_group);
@@ -236,7 +248,7 @@ impl Coalescing {
                 .zip(func.block_params(succ))
             {
                 trace!("Block parameter: {blockparam_out} -> {blockparam_in}");
-                if self.coalesce_values(blockparam_out, blockparam_in, value_live_ranges) {
+                if self.coalesce_values(blockparam_out, blockparam_in, value_live_ranges, stats) {
                     stat!(stats, coalesced_blockparam);
                 } else {
                     stat!(stats, coalesced_failed_blockparam);
@@ -253,6 +265,7 @@ impl Coalescing {
         a: Value,
         b: Value,
         value_live_ranges: &mut ValueLiveRanges,
+        stats: &mut Stats,
     ) -> bool {
         trace!("Trying to merge {a} and {b} into the same value set...");
 
@@ -261,12 +274,33 @@ impl Coalescing {
             let set_a = ValueSet::new(set_a.index());
             let set_b = ValueSet::new(set_b.index());
 
-            // Check if any of the segments in both sets overlap. Since the
-            // segments are sorted we can just iterate through both in lockstep.
+            // Check if any of the segments in both sets overlap. This can be
+            // done efficiently since the segments are always sorted.
             let mut segments_a = &value_live_ranges[set_a][..];
             let mut segments_b = &value_live_ranges[set_b][..];
             debug_assert!(!segments_a.is_empty());
             debug_assert!(!segments_b.is_empty());
+
+            // Fast path if one set of segments are all before/after the other.
+            if segments_a[0].live_range.from >= segments_b.last().unwrap().live_range.to {
+                trace!("-> fast-path merging {set_b} into {set_a}");
+                stat!(stats, coalesce_fast_path);
+                let mut segments = mem::take(&mut value_live_ranges[set_b]);
+                segments.extend_from_slice(&value_live_ranges[set_a]);
+                value_live_ranges[set_a] = segments;
+                merged = true;
+                return true;
+            } else if segments_b[0].live_range.from >= segments_a.last().unwrap().live_range.to {
+                trace!("-> fast-path merging {set_b} into {set_a}");
+                stat!(stats, coalesce_fast_path);
+                let segments = mem::take(&mut value_live_ranges[set_b]);
+                value_live_ranges[set_a].extend_from_slice(&segments[..]);
+                merged = true;
+                return true;
+            }
+
+            // Otherwise iterate through the segments in lockstep to figure out
+            // if any segments overlap.
             while let (Some(seg_a), Some(seg_b)) = (segments_a.first(), segments_b.first()) {
                 if seg_a.live_range.from >= seg_b.live_range.to {
                     segments_b = &segments_b[1..];
@@ -284,19 +318,50 @@ impl Coalescing {
 
             // Move all segments to the unified ValueSet.
             trace!("-> merging {set_b} into {set_a}");
-            let segments = mem::take(&mut value_live_ranges[set_b]);
-            value_live_ranges[set_a].extend_from_slice(&segments[..]);
-            value_live_ranges[set_a].sort_unstable_by(|a, b| {
-                // We need to look at both from and to because of empty segments
-                // which are adjacent to another segment.
-                a.live_range
-                    .from
-                    .cmp(&b.live_range.from)
-                    .then(a.live_range.to.cmp(&b.live_range.to))
-            });
+            stat!(stats, coalesce_slow_path);
+            let segments = merge(&value_live_ranges[set_a], &value_live_ranges[set_b]);
+            value_live_ranges[set_a] = segments;
+            value_live_ranges[set_b].clear();
             merged = true;
             true
         });
         merged
     }
+}
+
+/// Merges 2 sorted value segment lists into a new list.
+fn merge(mut a: &[ValueSegment], mut b: &[ValueSegment]) -> SmallVec<[ValueSegment; 4]> {
+    let mut out = SmallVec::with_capacity(a.len() + b.len());
+    loop {
+        match (a, b) {
+            (&[seg_a, ref rest_a @ ..], &[seg_b, ref rest_b @ ..]) => {
+                // We need to look at both from and to because of empty segments
+                // which are adjacent to another segment.
+                let key_a =
+                    seg_a.live_range.from.bits as u64 | (seg_a.live_range.to.bits as u64) << 32;
+                let key_b =
+                    seg_b.live_range.from.bits as u64 | (seg_b.live_range.to.bits as u64) << 32;
+                let seg = if key_a <= key_b {
+                    a = rest_a;
+                    seg_a
+                } else {
+                    b = rest_b;
+                    seg_b
+                };
+                out.push(seg);
+            }
+            (&[], &[_, ..]) => {
+                out.extend_from_slice(b);
+                break;
+            }
+            (&[_, ..], &[]) => {
+                out.extend_from_slice(a);
+                break;
+            }
+            (&[], &[]) => break,
+        }
+    }
+    debug_assert!(out.is_sorted_by_key(|seg: &ValueSegment| seg.live_range.from));
+    debug_assert!(out.is_sorted_by_key(|seg: &ValueSegment| seg.live_range.to));
+    out
 }

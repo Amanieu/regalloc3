@@ -415,6 +415,8 @@ pub struct Stats {
     coalesced_failed_tied_group: usize,
     coalesced_failed_blockparam: usize,
     coalesced_failed_group: usize,
+    coalesce_fast_path: usize,
+    coalesce_slow_path: usize,
 
     // Stats from virtual register building.
     vreg_conflicts: usize,
