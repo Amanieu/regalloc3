@@ -320,7 +320,9 @@ impl fmt::Display for OperandConstraint {
     }
 }
 
-/// An `Operand` encodes everything about a mention of a register in an
+/// Information about an operand in an instruction.
+///
+/// `Operand` encodes everything about a mention of a register in an
 /// instruction: the associated SSA value, how it is used by the instruction
 /// (read, write), and any constraints on the `Allocation` that will be
 /// selected for the operand.
