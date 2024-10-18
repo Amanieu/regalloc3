@@ -90,7 +90,10 @@ impl SpillAllocator {
     }
 
     pub fn clear(&mut self) {
+        // We don't need to clear self.sets, entries are initialized by
+        // set_range and the uninitialized entries can be ignored.
         self.spilled_segments.clear();
+        self.sets_to_allocate.clear();
     }
 
     /// Records the total live range of a `ValueSet` and its required spillslot
@@ -122,8 +125,11 @@ impl SpillAllocator {
             segment.value,
             segment.live_range
         );
-        self.sets[set].spilled = true;
         self.spilled_segments.push((set, segment));
+        if !self.sets[set].spilled {
+            self.sets[set].spilled = true;
+            self.sets_to_allocate.push(set);
+        }
     }
 
     /// Returns all segments that have been spilled along with the `SpillSlot`
@@ -171,7 +177,6 @@ impl SpillAllocator {
     pub fn allocate(&mut self, stats: &mut Stats) -> Result<(), RegAllocError> {
         self.stack_layout.slots.clear();
         self.stack_layout.spillslot_area_size = 0;
-        self.sets_to_allocate.clear();
         self.active_sets.clear();
         self.available_slots.clear();
 
@@ -179,12 +184,6 @@ impl SpillAllocator {
 
         // Gather the value sets that need to be allocated and sort them by
         // spill slot size first, and then by start position.
-        self.sets_to_allocate.extend(
-            self.sets
-                .iter()
-                .filter(|(_, data)| data.spilled)
-                .map(|(set, _)| set),
-        );
         stat!(stats, spilled_sets, self.sets_to_allocate.len());
         stat!(stats, spill_segments, self.spilled_segments.len());
         self.sets_to_allocate.sort_unstable_by_key(|&set| {
