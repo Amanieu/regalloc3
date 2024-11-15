@@ -59,16 +59,16 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         group_index: _,
                     } = u.kind
                     {
-                        let value_group =
-                            match self.func.inst_operands(u.pos())[slot as usize].kind() {
-                                OperandKind::DefGroup(group)
-                                | OperandKind::UseGroup(group)
-                                | OperandKind::EarlyDefGroup(group) => group,
-                                OperandKind::Def(_)
-                                | OperandKind::Use(_)
-                                | OperandKind::EarlyDef(_)
-                                | OperandKind::NonAllocatable => unreachable!(),
-                            };
+                        let value_group = match self.func.inst_operands(u.pos)[slot as usize].kind()
+                        {
+                            OperandKind::DefGroup(group)
+                            | OperandKind::UseGroup(group)
+                            | OperandKind::EarlyDefGroup(group) => group,
+                            OperandKind::Def(_)
+                            | OperandKind::Use(_)
+                            | OperandKind::EarlyDef(_)
+                            | OperandKind::NonAllocatable => unreachable!(),
+                        };
                         self.virt_reg_builder
                             .invalidate_value_group_mapping(value_group);
                     }
@@ -144,20 +144,25 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             | UseKind::BlockparamOut { .. } => true,
                         };
                         if can_spill {
-                            trace!("Spillable use of {} at {}: {}", u.value, u.pos(), u.kind);
+                            trace!(
+                                "Spillable use of {} at {}: {}",
+                                segment.value,
+                                u.pos,
+                                u.kind
+                            );
                             continue;
                         }
 
-                        trace!("Splitting around unspillable use {}: {}", u.pos(), u.kind);
+                        trace!("Splitting around unspillable use {}: {}", u.pos, u.kind);
 
                         // If there is a live range segment with no uses before
                         // this use, spill that segment.
-                        if u.pos() != start_pos.round_to_prev_inst().inst() {
-                            let (before, after) = use_list.split_at_inst(u.pos(), self.uses);
+                        if u.pos != start_pos.round_to_prev_inst().inst() {
+                            let (before, after) = use_list.split_at_inst(u.pos, self.uses);
                             let segment = ValueSegment {
                                 live_range: LiveRangeSegment::new(
                                     start_pos,
-                                    u.pos().slot(Slot::Boundary),
+                                    u.pos.slot(Slot::Boundary),
                                 ),
                                 use_list: before,
                                 value: segment.value,
@@ -174,10 +179,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 self.allocator.remat_segments.push(segment);
                             }
                             use_list = after;
-                            start_pos = u.pos().slot(Slot::Boundary);
+                            start_pos = u.pos.slot(Slot::Boundary);
                         }
 
-                        if u.pos().next() == segment.live_range.to.round_to_next_inst().inst() {
+                        if u.pos.next() == segment.live_range.to.round_to_next_inst().inst() {
                             // If this use is on the last instruction of the segment
                             // then split off the rest of the segment into a
                             // minimal segment.
@@ -198,11 +203,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             // instruction boundary after the use. The first
                             // half is split as a minimal segment and continue
                             // processing the remaining half.
-                            let (before, after) = use_list.split_at_inst(u.pos().next(), self.uses);
+                            let (before, after) = use_list.split_at_inst(u.pos.next(), self.uses);
                             let segment = ValueSegment {
                                 live_range: LiveRangeSegment::new(
                                     start_pos,
-                                    u.pos().next().slot(Slot::Boundary),
+                                    u.pos.next().slot(Slot::Boundary),
                                 ),
                                 use_list: before,
                                 value: segment.value,
@@ -214,7 +219,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             );
                             self.allocator.spiller.minimal_segments.push(segment);
                             use_list = after;
-                            start_pos = u.pos().next().slot(Slot::Boundary);
+                            start_pos = u.pos.next().slot(Slot::Boundary);
                             continue 'outer;
                         }
                     }

@@ -24,7 +24,7 @@ use core::cmp::Ordering;
 
 use crate::entity::packed_option::{PackedOption, ReservedValue};
 use crate::entity::{CompactList, SecondaryMap};
-use crate::function::{Function, Inst, OperandKind, ValueGroup};
+use crate::function::{Function, Inst, OperandKind, Value, ValueGroup};
 use crate::internal::coalescing::Coalescing;
 use crate::internal::live_range::{LiveRangeSegment, Slot};
 use crate::internal::split_placement::SplitPlacement;
@@ -42,7 +42,7 @@ pub struct VirtRegBuilder {
     /// `Use`s that could not be merged into the current virtual register due to
     /// a conflicting `Use` at the same instruction. These must be processed
     /// separately after normal uses are processed.
-    conflicting_uses: Vec<Use>,
+    conflicting_uses: Vec<(Value, Use)>,
 }
 
 impl VirtRegBuilder {
@@ -217,7 +217,7 @@ impl VirtRegBuilderConstraints {
                 // Retrieve the `ValueGroup` that for this operand. This can be
                 // used as a unique identifier because each `ValueGroup` can
                 // only be used once.
-                let value_group = match func.inst_operands(u.pos())[slot as usize].kind() {
+                let value_group = match func.inst_operands(u.pos)[slot as usize].kind() {
                     OperandKind::DefGroup(group)
                     | OperandKind::UseGroup(group)
                     | OperandKind::EarlyDefGroup(group) => group,
@@ -383,7 +383,7 @@ struct Context<'a, F, R> {
     stats: &'a mut Stats,
     empty_segments: &'a mut Vec<ValueSegment>,
     value_group_mapping: &'a mut SecondaryMap<ValueGroup, PackedOption<VirtRegGroup>>,
-    conflicting_uses: &'a mut Vec<Use>,
+    conflicting_uses: &'a mut Vec<(Value, Use)>,
     new_vregs: Option<&'a mut Vec<VirtReg>>,
 
     /// Top-level class, used by `reset_constraints`.
@@ -467,6 +467,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
             // Iterate over all the uses in our segments.
             for seg_idx in 0..segments.len() {
+                let value = segments[seg_idx].value;
                 let use_list = segments[seg_idx].use_list;
                 for idx in 0..use_list.len() {
                     // Attempt to adjust our constraints to include the use.
@@ -475,7 +476,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     // ourselves to a sub-class. If no common sub-class exists
                     // then we need to split the vreg.
                     let u = self.uses[use_list.index(idx)];
-                    trace!("Processing use of {} at {}: {}", u.value, u.pos(), u.kind);
+                    trace!("Processing use of {} at {}: {}", value, u.pos, u.kind);
                     if self.constraints.merge_use(
                         u,
                         self.virt_regs,
@@ -508,9 +509,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         // previous use with which this new use conflicts.
                         let end_use_idx = use_list.index(idx);
                         let end_class = self.constraints.class;
-                        let end_pos = self.uses[end_use_idx].pos();
-                        let start_use_idx = self.find_conflict_start_point(segments, seg_idx, idx);
-                        let start_pos = self.uses[start_use_idx].pos();
+                        let end_pos = self.uses[end_use_idx].pos;
+                        let (start_use_idx, start_value) =
+                            self.find_conflict_start_point(segments, seg_idx, idx);
+                        let start_pos = self.uses[start_use_idx].pos;
                         let start_class = self.constraints.class;
 
                         if start_pos == end_pos {
@@ -533,17 +535,22 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             // groups: we need to attempt to merge a use with
                             // all other potentially conflicting uses in the
                             // same instruction.
-                            let conflict_idx = if !self.uses[end_use_idx].is_def() {
-                                end_use_idx
-                            } else {
-                                start_use_idx
-                            };
+                            //
+                            // The 2 conflicting uses may have different values
+                            // if the conflict is from 2 tied operands with
+                            // incompatible register classes.
+                            let (conflict_idx, conflict_value) =
+                                if !self.uses[end_use_idx].kind.is_def() {
+                                    (end_use_idx, value)
+                                } else {
+                                    (start_use_idx, start_value)
+                                };
                             let conflict_use = self.uses[conflict_idx];
-                            debug_assert!(!conflict_use.is_def());
+                            debug_assert!(!conflict_use.kind.is_def());
 
                             // Remove the `Use` from the segment and split it
                             // off into a separate virtual register.
-                            self.conflicting_uses.push(conflict_use);
+                            self.conflicting_uses.push((conflict_value, conflict_use));
                             self.uses[conflict_idx].kind = UseKind::ConstraintConflict {};
                         } else {
                             // Prefer to align the split close to the use that
@@ -597,14 +604,13 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // to attempt to merge each pair of uses so that group uses at the same
         // index for the same group are assigned to the same vreg.
         let mut conflicting_uses = core::mem::take(self.conflicting_uses);
-        for uses in conflicting_uses.chunk_by_mut(|a, b| a.pos() == b.pos()) {
+        for uses in conflicting_uses.chunk_by_mut(|a, b| a.1.pos == b.1.pos) {
             // Conflicts can only happen due to multiple uses of the same value
             // at the same instruction. It's impossible to have conflicts with
             // multiple values since the values would not have been coalesced >
             // that case.
-            let pos = uses[0].pos();
-            let value = uses[0].value;
-            debug_assert!(uses.iter().all(|&u| u.value == value));
+            let (value, Use { pos, kind: _ }) = uses[0];
+            debug_assert!(uses.iter().all(|&u| u.0 == value));
 
             trace!("Processing conflicting uses of {value} at {pos}");
 
@@ -616,9 +622,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 let mut conflict_start = uses.len();
                 self.reset_constraints();
                 while vreg_end != conflict_start {
-                    trace!("Attempting to merge use: {}", uses[vreg_end].kind);
+                    trace!("Attempting to merge use: {}", uses[vreg_end].1.kind);
                     let merged = self.constraints.merge_use(
-                        uses[vreg_end],
+                        uses[vreg_end].1,
                         self.virt_regs,
                         self.value_group_mapping,
                         self.coalescing,
@@ -638,7 +644,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 // Add an implicit live-in to the new segment.
                 let mut use_list = self
                     .uses
-                    .add_use_list(uses[vreg_start..vreg_end].iter().copied());
+                    .add_use_list(uses[vreg_start..vreg_end].iter().map(|&(_value, u)| u));
                 use_list.set_livein(true);
 
                 // Emit a vreg with the uses we managed to merge.
@@ -671,7 +677,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         segments: &[ValueSegment],
         end_seg_idx: usize,
         end_idx: usize,
-    ) -> UseIndex {
+    ) -> (UseIndex, Value) {
         trace!("Finding conflict start point...");
         let mut constraints = VirtRegBuilderConstraints::new(self.top_level_class);
 
@@ -686,7 +692,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 self.func,
                 self.reginfo,
             ) {
-                return use_list.index(idx);
+                return (use_list.index(idx), segments[end_seg_idx].value);
             }
         }
 
@@ -701,7 +707,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     self.func,
                     self.reginfo,
                 ) {
-                    return idx;
+                    return (idx, segments[seg_idx].value);
                 }
             }
         }
@@ -738,13 +744,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         .iter()
                         .map(|u| {
                             let spill_cost = u.spill_cost(self.reginfo);
-                            let block_freq =
-                                self.func.block_frequency(self.func.inst_block(u.pos()));
+                            let block_freq = self.func.block_frequency(self.func.inst_block(u.pos));
                             trace!(
                                 "Use of {} at {} ({}) has spill cost {} ({spill_cost} * \
                                  {block_freq})",
-                                u.value,
-                                u.pos(),
+                                seg.value,
+                                u.pos,
                                 u.kind,
                                 spill_cost * block_freq
                             );
@@ -933,7 +938,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 | UseKind::BlockparamOut { .. } => continue,
                             };
                             let value_group =
-                                match self.func.inst_operands(u.pos())[slot as usize].kind() {
+                                match self.func.inst_operands(u.pos)[slot as usize].kind() {
                                     OperandKind::DefGroup(group)
                                     | OperandKind::UseGroup(group)
                                     | OperandKind::EarlyDefGroup(group) => group,

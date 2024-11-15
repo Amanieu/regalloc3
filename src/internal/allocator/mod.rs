@@ -365,21 +365,21 @@ impl Allocator {
             for segment in &self.empty_segments {
                 trace!("  {} ({})", segment.live_range, segment.value);
                 for u in &uses[segment.use_list] {
-                    trace!("  - {}: {}", u.pos(), u.kind);
+                    trace!("  - {}: {}", u.pos, u.kind);
                 }
             }
             trace!("Rematerialized segments:");
             for segment in &self.remat_segments {
                 trace!("  {} ({})", segment.live_range, segment.value);
                 for u in &uses[segment.use_list] {
-                    trace!("  - {}: {}", u.pos(), u.kind);
+                    trace!("  - {}: {}", u.pos, u.kind);
                 }
             }
             trace!("Spilled segments:");
             for (_, segment) in spill_allocator.spilled_segments() {
                 trace!("  {} ({})", segment.live_range, segment.value);
                 for u in &uses[segment.use_list] {
-                    trace!("  - {}: {}", u.pos(), u.kind);
+                    trace!("  - {}: {}", u.pos, u.kind);
                 }
             }
         }

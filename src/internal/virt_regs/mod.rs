@@ -254,7 +254,7 @@ impl VirtRegs {
                 }
                 let uses = &uses[segment.use_list];
                 for u in uses {
-                    trace!("    - {}: {}", u.pos(), u.kind);
+                    trace!("    - {}: {}", u.pos, u.kind);
                 }
                 if segment.use_list.has_liveout() {
                     trace!("    - liveout");

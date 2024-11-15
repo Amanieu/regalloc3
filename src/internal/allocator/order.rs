@@ -272,7 +272,7 @@ impl AllocationOrder {
                 };
 
                 // Weigh each preference based on its use frequency.
-                let weight = func.block_frequency(func.inst_block(u.pos()));
+                let weight = func.block_frequency(func.inst_block(u.pos));
                 *self.candidates.entry(reg_group).or_default() += weight;
             }
         }

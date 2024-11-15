@@ -4,48 +4,8 @@ use core::fmt;
 use core::ops::{Index, IndexMut, Range};
 
 use super::live_range::{LiveRangePoint, Slot};
-use crate::function::{Inst, Value};
+use crate::function::Inst;
 use crate::reginfo::{PhysReg, RegClass, RegInfo};
-
-/// Position of a use in the function.
-///
-/// This is more fine-grained than just the instruction at which the use occurs
-/// because we want to sort uses so that blockparam defintions always appear
-/// first within each instruction. Move resolution relies on this property.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct UsePosition {
-    /// Bit-pack in 32 bits.
-    ///
-    /// inst:31 pos:1
-    bits: u32,
-}
-
-impl fmt::Display for UsePosition {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.inst().fmt(f)
-    }
-}
-
-impl UsePosition {
-    /// A use that represents the definition of a value.
-    pub fn at_def(inst: Inst) -> Self {
-        Self {
-            bits: (inst.index() as u32) << 1,
-        }
-    }
-
-    /// A use that represents the use of a value
-    pub fn at_use(inst: Inst) -> Self {
-        Self {
-            bits: ((inst.index() as u32) << 1) | 1,
-        }
-    }
-
-    /// Instruction at which the use occurs.
-    pub fn inst(self) -> Inst {
-        Inst::new((self.bits >> 1) as usize)
-    }
-}
 
 /// A `Use` describes the way a value is used in a live range.
 ///
@@ -59,16 +19,7 @@ impl UsePosition {
 #[derive(Debug, Clone, Copy)]
 pub struct Use {
     /// The position of the use in the function.
-    pub use_pos: UsePosition,
-
-    /// The value that is being manipulated.
-    ///
-    /// This is only needed during live range calculation and while building
-    /// virtual registers, and is otherwise redundant since this value is
-    /// already available in [`ValueSegment::value`].
-    ///
-    /// [`ValueSegment::value`]: super::virt_regs::ValueSegment::value
-    pub value: Value,
+    pub pos: Inst,
 
     /// How the value is used in the instruction.
     pub kind: UseKind,
@@ -81,21 +32,6 @@ pub const SPILL_RELOAD_COST: f32 = 1.0;
 pub const MOVE_COST: f32 = 0.5;
 
 impl Use {
-    /// Returns the instruction at which the use occurs.
-    pub fn pos(self) -> Inst {
-        self.use_pos.inst()
-    }
-
-    /// Whether this `Use` represents the definition of a `Value`.
-    pub fn is_def(self) -> bool {
-        self.use_pos.bits & 1 == 0
-    }
-
-    /// Whether this `Use` represents the use of a `Value`.
-    pub fn is_use(self) -> bool {
-        self.use_pos.bits & 1 == 1
-    }
-
     /// Spill cost for this use.
     ///
     /// This is calculated as the cost to be paid if the virtual register
@@ -147,7 +83,7 @@ impl Use {
     ///
     /// For a definition, this is the next instruction boundary.
     pub fn end_point(self) -> LiveRangePoint {
-        let inst = self.pos();
+        let inst = self.pos;
         match self.kind {
             UseKind::FixedDef { .. } => inst.next().slot(Slot::Boundary),
             UseKind::FixedUse { .. } => inst.slot(Slot::Boundary),
@@ -315,6 +251,23 @@ pub enum UseKind {
     /// instruction.
     BlockparamOut {},
 }
+impl UseKind {
+    /// Whether this `UseKind` represents the definition of a `Value`.
+    pub fn is_def(self) -> bool {
+        match self {
+            UseKind::FixedDef { .. }
+            | UseKind::ClassDef { .. }
+            | UseKind::GroupClassDef { .. }
+            | UseKind::BlockparamIn { .. } => true,
+            UseKind::FixedUse { .. }
+            | UseKind::TiedUse { .. }
+            | UseKind::ConstraintConflict { .. }
+            | UseKind::ClassUse { .. }
+            | UseKind::GroupClassUse { .. }
+            | UseKind::BlockparamOut { .. } => false,
+        }
+    }
+}
 
 impl fmt::Display for UseKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -386,18 +339,6 @@ pub struct UseList {
 const USE_LIST_EXTRA_BIT: u32 = 1 << 31;
 
 impl UseList {
-    /// Constructs a new `UseList` holding the given index range.
-    ///
-    /// The live-in/live-out flags are not set.
-    pub fn new(from: UseIndex, to: UseIndex) -> Self {
-        debug_assert!(from.0 < USE_LIST_EXTRA_BIT);
-        debug_assert!(to.0 < USE_LIST_EXTRA_BIT);
-        Self {
-            from: from.0,
-            to: to.0,
-        }
-    }
-
     /// Returns an empty use list which doesn't contain any uses.
     pub fn empty() -> Self {
         Self { from: 0, to: 0 }
@@ -462,7 +403,7 @@ impl UseList {
     /// and all uses at or after the given instruction are returned in the
     /// second list.
     pub fn split_at_inst(self, split_at: Inst, uses: &Uses) -> (Self, Self) {
-        let split_index = uses[self].partition_point(|u| u.pos() < split_at);
+        let split_index = uses[self].partition_point(|u| u.pos < split_at);
         let mid = UseIndex((self.from & !USE_LIST_EXTRA_BIT) + split_index as u32);
         let (mut first, mut second) = self.split_at_index(mid);
 
@@ -489,88 +430,25 @@ impl UseList {
 }
 
 pub struct Uses {
-    /// List of `Use`s ordered by value and position.
+    /// Backing array of `Use`s for `UseList`.
     uses: Vec<Use>,
-
-    /// Portion of the `uses` vector that has been sorted with `sort_uses`.
-    ///
-    /// This portion has been sorted by `value` and then `pos`, which allows
-    /// using `resolve_use_list` to retrieve a continuous slice of `Use`s for a
-    /// `UseList`.
-    sorted_until: usize,
 }
 
 impl Uses {
     pub fn new() -> Uses {
-        Self {
-            uses: vec![],
-            sorted_until: 0,
-        }
+        Self { uses: vec![] }
     }
 
     pub fn clear(&mut self) {
         self.uses.clear();
-        self.sorted_until = 0;
     }
 
-    /// Returns the `UseIndex` for the next use that will be inserted with
-    /// `add_unsorted_use`.
-    pub fn next_unsorted_use(&self) -> UseIndex {
-        UseIndex(self.uses.len() as u32)
-    }
-
-    /// Adds an unsorted `Use` to the vector.
-    pub fn add_unsorted_use(
-        &mut self,
-        use_pos: UsePosition,
-        value: Value,
-        kind: UseKind,
-    ) -> UseIndex {
-        trace!("Adding use of {value} at {}: {kind}", use_pos.inst());
-        let idx = self.next_unsorted_use();
-        self.uses.push(Use {
-            use_pos,
-            value,
-            kind,
-        });
-        idx
-    }
-
-    /// Adds a new `UseList` after the uses have been sorted.
-    ///
-    /// `resolve_use_list` can no longer be called after this is used.
-    pub fn add_use_list(&mut self, u: impl IntoIterator<Item = Use>) -> UseList {
+    /// Adds a new `UseList` from an iterator.
+    pub fn add_use_list(&mut self, iter: impl IntoIterator<Item = Use>) -> UseList {
         let from = self.uses.len() as u32;
-        self.uses.extend(u);
+        self.uses.extend(iter);
         let to = self.uses.len() as u32;
         UseList { from, to }
-    }
-
-    /// Sorts the list of uses by `value` and then `pos`, which allows using
-    /// `resolve_use_list` to retrieve a continuous slice of `Use`s for a
-    /// `UseList`.
-    ///
-    /// This invalidates all current `UseList`s and `UseIndex`es.
-    ///
-    /// Returns a `UseIndex` pointing to the start of the use list for the
-    /// first value (%0).
-    pub fn sort_uses(&mut self) -> UseIndex {
-        self.uses.sort_unstable_by_key(|u| {
-            // Sort by value first, then by use position.
-            (u.value.index() as u64) << 32 | u.use_pos.bits as u64
-        });
-        self.sorted_until = self.uses.len();
-
-        UseIndex(0)
-    }
-
-    /// Returns a `UseList` which covers all the uses of `value`.
-    ///
-    /// This can only be called after `sort_uses` has been called.
-    pub fn resolve_use_list(&self, value: Value, start: UseIndex) -> (UseList, UseIndex) {
-        let end =
-            UseIndex(self.uses[..self.sorted_until].partition_point(|u| u.value <= value) as u32);
-        (UseList::new(start, end), end)
     }
 }
 

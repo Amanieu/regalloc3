@@ -2,9 +2,11 @@
 //!
 //! This takes place in 2 stages:
 //! - First, we collect all of the places where a [`Value`] is used or defined
-//!   and sort them into a single array (held in [`Uses`]). The sorting allows
-//!   us to retrieve all of the locations where a value is used in a slice.
-//! - Second, for each [`Value`] we perform liveness propagation to determine
+//!   into a linked list of [`Use`] for each value.
+//! - Then, for each [`Value`], the linked list of [`Use`] is turned into a
+//!   array (held in [`Uses`]). This ends up being faster than collecting all
+//!   the uses into an array directly and sorting them.
+//! - Finally, for each [`Value`] we perform liveness propagation to determine
 //!   which blocks it is live-in and live-out of. We then use this to produce
 //!   a set of continuous segments ([`ValueSegment`]) of a value's live range.
 //!
@@ -17,6 +19,7 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+use core::iter;
 use core::ops::{Index, IndexMut};
 
 use smallvec::SmallVec;
@@ -24,12 +27,12 @@ use smallvec::SmallVec;
 use super::allocations::Allocations;
 use super::live_range::{LiveRangeSegment, Slot};
 use super::reg_matrix::RegMatrix;
-use super::uses::{UseIndex, UseKind, Uses};
-use crate::entity::{EntitySet, SecondaryMap};
+use super::uses::{Use, UseKind, Uses};
+use crate::entity::{EntitySet, PackedOption, PrimaryMap, SecondaryMap};
 use crate::function::{
     Block, Function, Inst, Operand, OperandConstraint, OperandKind, Value, ValueGroup,
 };
-use crate::internal::uses::{UseList, UsePosition};
+use crate::internal::uses::UseList;
 use crate::output::Allocation;
 use crate::reginfo::{RegClass, RegInfo};
 use crate::Stats;
@@ -105,6 +108,42 @@ struct ReusedValue {
     is_early_def: bool,
 }
 
+entity_def! {
+    /// A reference to a `UseListEntry`.
+    ///
+    /// This is only used as temporary memory for building the use lists.
+    entity UseListIndex(u32);
+}
+
+/// Entry in the linked list of uses for each `Value`.
+struct UseListEntry {
+    u: Use,
+    next: PackedOption<UseListIndex>,
+}
+
+/// Information about a `Value`.
+struct ValueInfo {
+    /// The live range that a value definition covers.
+    def_range: LiveRangeSegment,
+
+    /// Head of the linked list of uses in `ValueLiveRanges::use_list_entries`.
+    use_list_head: UseListIndex,
+
+    /// Tail of the linked list of uses in `ValueLiveRanges::use_list_entries`.
+    use_list_tail: UseListIndex,
+}
+
+impl Default for ValueInfo {
+    fn default() -> Self {
+        let zero_point = Inst::new(0).slot(Slot::Boundary);
+        Self {
+            def_range: LiveRangeSegment::new(zero_point, zero_point),
+            use_list_head: UseListIndex::new(0),
+            use_list_tail: UseListIndex::new(0),
+        }
+    }
+}
+
 /// Value live range calculation pass.
 pub struct ValueLiveRanges {
     /// `ValueSegment`s for each `ValueSet`.
@@ -115,8 +154,8 @@ pub struct ValueLiveRanges {
     /// Any sets with an empty segment list should be ignored.
     value_sets: SecondaryMap<ValueSet, ValueSetData>,
 
-    /// The live range that a value definition covers.
-    def_range: SecondaryMap<Value, LiveRangeSegment>,
+    /// Information about a value collected while walking the IR.
+    value_info: SecondaryMap<Value, ValueInfo>,
 
     /// Set of blocks into which a value is known to be live-in, used by
     /// `build_segments`.
@@ -133,6 +172,9 @@ pub struct ValueLiveRanges {
     /// Input values to an instruction whose register is reused by an output
     /// operand.
     reused_values: Vec<ReusedValue>,
+
+    /// Linked list of uses for each value.
+    use_list_entries: PrimaryMap<UseListIndex, UseListEntry>,
 }
 
 impl Index<ValueSet> for ValueLiveRanges {
@@ -153,11 +195,12 @@ impl ValueLiveRanges {
     pub fn new() -> Self {
         Self {
             value_sets: SecondaryMap::new(),
-            def_range: SecondaryMap::new(),
+            value_info: SecondaryMap::new(),
             live_in: EntitySet::new(),
             live_out: EntitySet::new(),
             worklist: vec![],
             reused_values: vec![],
+            use_list_entries: PrimaryMap::new(),
         }
     }
 
@@ -195,11 +238,13 @@ impl ValueLiveRanges {
     ) {
         uses.clear();
         reg_matrix.clear();
-        self.def_range.clear_and_resize_with(func.num_values(), || {
-            let zero_point = Inst::new(0).slot(Slot::Boundary);
-            LiveRangeSegment::new(zero_point, zero_point)
-        });
         self.value_sets.clear_and_resize(func.num_values());
+        self.use_list_entries.clear();
+
+        // We don't need to clear value_info: it is initialized on the
+        // definition of a value, which is guaranteed to appear before any other
+        // uses of that value.
+        self.value_info.grow_to(func.num_values());
 
         let mut ctx = Context {
             func,
@@ -215,12 +260,9 @@ impl ValueLiveRanges {
         // operands.
         ctx.collect_uses();
 
-        // All uses have been added at this point, we can sort the use vector.
-        let mut use_list_end = ctx.uses.sort_uses();
-
         // Builds `ValueSegment`s for each value from the collected uses.
         for value in func.values() {
-            ctx.build_segments(value, &mut use_list_end);
+            ctx.build_segments(value);
         }
 
         self.dump(uses);
@@ -241,7 +283,7 @@ impl ValueLiveRanges {
                     trace!("    - livein");
                 }
                 for u in &uses[segment.use_list] {
-                    trace!("    - {}: {}", u.pos(), u.kind);
+                    trace!("    - {}: {}", u.pos, u.kind);
                 }
                 if segment.use_list.has_liveout() {
                     trace!("    - liveout");
@@ -722,21 +764,39 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // Save the range of the defining instruction. This is needed when
         // generating live ranges since `ClassDef` doesn't record at which
         // point the def started.
-        self.value_live_ranges.def_range[value] = live_range;
+        self.value_live_ranges.value_info[value] = ValueInfo {
+            def_range: live_range,
+            use_list_head: self.value_live_ranges.use_list_entries.next_key(),
+            use_list_tail: self.value_live_ranges.use_list_entries.next_key(),
+        };
 
-        // Add the use to the list of uses. This will later be sorted by value
-        // and position so that we can get a linear range of all uses for each
-        // live range segment.
-        self.uses
-            .add_unsorted_use(UsePosition::at_def(inst), value, use_kind);
+        // Add the use to the linked list of uses for this value.
+        self.value_live_ranges.use_list_entries.push(UseListEntry {
+            u: Use {
+                pos: inst,
+                kind: use_kind,
+            },
+            next: None.into(),
+        });
     }
 
     /// Visits a use of a value.
     fn value_use(&mut self, value: Value, inst: Inst, use_kind: UseKind) {
         trace!("{value} use at {inst} with {use_kind}");
 
-        self.uses
-            .add_unsorted_use(UsePosition::at_use(inst), value, use_kind);
+        // Add the use to the linked list of uses for this value.
+        let next = self.value_live_ranges.use_list_entries.push(UseListEntry {
+            u: Use {
+                pos: inst,
+                kind: use_kind,
+            },
+            next: None.into(),
+        });
+        let tail = &mut self.value_live_ranges.value_info[value].use_list_tail;
+        let prev = &mut self.value_live_ranges.use_list_entries[*tail];
+        debug_assert!(prev.next.is_none());
+        prev.next = Some(next).into();
+        *tail = next;
     }
 
     /// Calculates the live-in/live-out bitsets for each block of the value's
@@ -754,7 +814,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // until a block that is already live-in is reached.
         let mut last_block = def_block;
         for &u in self.uses[use_list].iter().skip(1).rev() {
-            let block = self.func.inst_block(u.pos());
+            let block = self.func.inst_block(u.pos);
             if !self.value_live_ranges.live_in.contains(block) {
                 self.value_live_ranges.worklist.push(block);
                 while let Some(block) = self.value_live_ranges.worklist.pop() {
@@ -788,7 +848,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     }
 
     /// Computes the live range for the given value.
-    fn build_segments(&mut self, value: Value, prev_use_list_end: &mut UseIndex) {
+    fn build_segments(&mut self, value: Value) {
         trace!("Building live range segments for {value}");
 
         self.value_live_ranges
@@ -798,14 +858,20 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             .live_out
             .clear_and_resize(self.func.num_blocks());
 
-        // Get the sorted list of all uses for this value.
-        let (full_use_list, use_list_end) = self.uses.resolve_use_list(value, *prev_use_list_end);
-        *prev_use_list_end = use_list_end;
+        // Get the sorted list of all uses for this value by walking the linked
+        // list that we previously built.
+        let mut head = Some(self.value_live_ranges.value_info[value].use_list_head);
+        let iter = iter::from_fn(|| {
+            let entry = &self.value_live_ranges.use_list_entries[head?];
+            head = entry.next.expand();
+            Some(entry.u)
+        });
+        let full_use_list = self.uses.add_use_list(iter);
 
         // The first use in the list is always the one which defines the value.
         let def = &self.uses[full_use_list][0];
-        debug_assert!(def.is_def());
-        let def_block = self.func.inst_block(def.pos());
+        debug_assert!(def.kind.is_def());
+        let def_block = self.func.inst_block(def.pos);
 
         // Calculate the set of blocks in which the value is live-in or
         // live-out.
@@ -813,7 +879,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         // Start with an initial segment containing just the definition.
         let mut segment = ValueSegment {
-            live_range: self.value_live_ranges.def_range[value],
+            live_range: self.value_live_ranges.value_info[value].def_range,
             use_list: full_use_list,
             value,
         };
@@ -828,8 +894,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             .next_absent_from(def_block.next());
         for use_idx in full_use_list.iter().skip(1) {
             let u = self.uses[use_idx];
-            debug_assert!(u.is_use());
-            let use_block = self.func.inst_block(u.pos());
+            debug_assert!(!u.kind.is_def());
+            let use_block = self.func.inst_block(u.pos);
             debug_assert!(use_block <= last_block);
 
             // If there is a live range gap until this use then we need to split

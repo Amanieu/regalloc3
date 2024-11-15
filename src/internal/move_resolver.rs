@@ -425,12 +425,12 @@ impl MoveResolver {
         );
 
         for &u in &uses[segment.use_list] {
-            trace!("-> {} {}", u.pos(), u.kind);
+            trace!("-> {} {}", u.pos, u.kind);
             match u.kind {
                 UseKind::FixedUse { reg } => {
                     self.emit_dest_half_move(
-                        MovePosition::early(u.pos()),
-                        u.value,
+                        MovePosition::early(u.pos),
+                        segment.value,
                         Allocation::reg(reg),
                     );
                 }
@@ -444,7 +444,7 @@ impl MoveResolver {
                     // this for the first member of a group.
                     if group_index == 0 {
                         self.tied_operands.push(TiedOperands {
-                            inst: u.pos(),
+                            inst: u.pos,
                             def_slot,
                             use_slot,
                         });
@@ -452,9 +452,9 @@ impl MoveResolver {
 
                     // Rematerialize the value into the def slot.
                     self.tied_moves.push(TiedMove {
-                        move_pos: MovePosition::early(u.pos()),
-                        inst: u.pos(),
-                        value: u.value,
+                        move_pos: MovePosition::early(u.pos),
+                        inst: u.pos,
+                        value: segment.value,
                         def_slot,
                         class,
                         group_index,
@@ -770,27 +770,30 @@ impl<F: Function> Context<'_, F> {
                 // Record that, at the next instruction boundary, the
                 // incoming value is from a fixed definition rather than the
                 // normal allocation for this segment.
-                self.fixed_def = Some((u.pos().next(), Allocation::reg(reg)));
+                self.fixed_def = Some((u.pos.next(), Allocation::reg(reg)));
 
                 // Nothing to do here if the segment ends right after
                 // this definition or if this fixed def is on a
                 // terminator instruction: the terminator will take care of
                 // connecting the fixed register to successors.
-                if !self.func.inst_is_terminator(u.pos())
-                    && segment.live_range.to != u.pos().next().slot(Slot::Boundary)
+                if !self.func.inst_is_terminator(u.pos)
+                    && segment.live_range.to != u.pos.next().slot(Slot::Boundary)
                 {
                     // If the segment isn't a single fixed def, then it must
                     // have a non-empty live range, which means it must have
                     // an allocation.
-                    let pos = MovePosition::early(u.pos().next());
-                    self.move_resolver
-                        .emit_source_half_move(pos, u.value, Allocation::reg(reg));
+                    let pos = MovePosition::early(u.pos.next());
+                    self.move_resolver.emit_source_half_move(
+                        pos,
+                        segment.value,
+                        Allocation::reg(reg),
+                    );
                     if alloc != Some(Allocation::reg(reg)) {
                         // Nothing to do if this segment is already assigned
                         // to the desired register.
                         self.move_resolver.emit_dest_half_move(
                             pos,
-                            u.value,
+                            segment.value,
                             alloc.expect("missing allocation for fixed def"),
                         );
                     }
@@ -799,7 +802,7 @@ impl<F: Function> Context<'_, F> {
                     // the next instruction boundary since it provides
                     // a source half-move.
                     self.live_in = Some((
-                        u.pos().next(),
+                        u.pos.next(),
                         LiveInKind::Single {
                             from_same_segment: false,
                         },
@@ -808,7 +811,7 @@ impl<F: Function> Context<'_, F> {
             }
             UseKind::FixedUse { reg } => {
                 self.for_each_move_source(
-                    u.pos(),
+                    u.pos,
                     segment,
                     alloc,
                     |self_, src_value, move_pos, src_alloc, is_blockparam| {
@@ -831,10 +834,10 @@ impl<F: Function> Context<'_, F> {
                         if is_blockparam {
                             // Tell the move optimizer that the fixed register
                             // now holds the blockparam value.
-                            let block = self.func.inst_block(u.pos());
+                            let block = self.func.inst_block(u.pos);
                             self_.move_resolver.blockparam_allocs.push((
                                 block,
-                                u.value,
+                                segment.value,
                                 Allocation::reg(reg),
                             ));
                         }
@@ -851,14 +854,14 @@ impl<F: Function> Context<'_, F> {
                 // this for the first member of a group.
                 if group_index == 0 {
                     self.move_resolver.tied_operands.push(TiedOperands {
-                        inst: u.pos(),
+                        inst: u.pos,
                         def_slot,
                         use_slot,
                     });
                 }
 
                 self.for_each_move_source(
-                    u.pos(),
+                    u.pos,
                     segment,
                     alloc,
                     |self_, src_value, move_pos, src_alloc, is_blockparam| {
@@ -873,7 +876,7 @@ impl<F: Function> Context<'_, F> {
                         // allocation for def_slot may not have been filled in yet.
                         self_.move_resolver.tied_moves.push(TiedMove {
                             move_pos,
-                            inst: u.pos(),
+                            inst: u.pos,
                             value: src_value,
                             def_slot,
                             class,
@@ -886,7 +889,7 @@ impl<F: Function> Context<'_, F> {
             UseKind::ConstraintConflict {} => {
                 // Ensure that a source half-move exists for this value.
                 self.for_each_move_source(
-                    u.pos(),
+                    u.pos,
                     segment,
                     alloc,
                     |self_, src_value, move_pos, src_alloc, _is_blockparam| {
@@ -906,7 +909,7 @@ impl<F: Function> Context<'_, F> {
                 // them. We just need to record the allocation assigned to
                 // the operand slot.
                 self.allocations.set_allocation(
-                    u.pos(),
+                    u.pos,
                     slot,
                     alloc.expect("missing allocation for class use"),
                 );
@@ -925,7 +928,7 @@ impl<F: Function> Context<'_, F> {
                 // first group member.
                 if group_index == 0 {
                     self.allocations.set_allocation(
-                        u.pos(),
+                        u.pos,
                         slot,
                         alloc.expect("missing allocation for group class use"),
                     );
@@ -934,8 +937,8 @@ impl<F: Function> Context<'_, F> {
             UseKind::BlockparamOut {} => {
                 // Treat this like a block live-out for a jump terminator.
                 self.move_resolver.emit_source_half_move(
-                    MovePosition::late(u.pos()),
-                    u.value,
+                    MovePosition::late(u.pos),
+                    segment.value,
                     // Values are live through the entire jump instruction,
                     // so this cannot be an empty segment.
                     alloc.expect("missing allocation for jump terminator"),
@@ -946,7 +949,7 @@ impl<F: Function> Context<'_, F> {
                 // dead blockparam or it is followed by just a single fixed/tied
                 // use. That use will take care of inserting the corresponding
                 // half-move.
-                if segment.live_range.to != u.pos().slot(Slot::Boundary) {
+                if segment.live_range.to != u.pos.slot(Slot::Boundary) {
                     // We have an incoming value from multiple predecessor
                     // blocks, emit a destination half-move before the jump
                     // instruction in the predecessor blocks.
@@ -954,7 +957,7 @@ impl<F: Function> Context<'_, F> {
                     // We use the value of the corresponding outgoing blockparam
                     // so that rematerializations are properly handled.
                     let alloc = alloc.expect("missing allocation for blockparam live-in");
-                    for &pred in self.func.block_preds(self.func.inst_block(u.pos())) {
+                    for &pred in self.func.block_preds(self.func.inst_block(u.pos)) {
                         let value = self.func.jump_blockparams(pred)[blockparam_idx as usize];
                         self.move_resolver.emit_dest_half_move(
                             MovePosition::late(self.func.block_insts(pred).last()),
@@ -965,17 +968,17 @@ impl<F: Function> Context<'_, F> {
 
                     // Record the allocation assigned to the block parameter for
                     // the move optimizer.
-                    let block = self.func.inst_block(u.pos());
+                    let block = self.func.inst_block(u.pos);
                     self.move_resolver
                         .blockparam_allocs
-                        .push((block, u.value, alloc));
+                        .push((block, segment.value, alloc));
                 }
 
                 // Indicate that fixed uses on the first instruction
                 // should emit half-moves in predecessor blocks instead of
                 // at the start of this block.
                 self.live_in = Some((
-                    u.pos(),
+                    u.pos,
                     LiveInKind::Multi {
                         blockparam_idx: Some(blockparam_idx),
                     },
@@ -1026,14 +1029,14 @@ impl<F: Function> Context<'_, F> {
         } else {
             // A segment with no live-in must start with a definition.
             self.live_in = None;
-            current_block = self.func.inst_block(self.uses[segment.use_list][0].pos());
+            current_block = self.func.inst_block(self.uses[segment.use_list][0].pos);
         }
 
         self.fixed_def = None;
         for u in &self.uses[segment.use_list] {
             // Handle any block boundaries between the previous use and the new
             // one. We need to emit half-moves
-            let block = self.func.inst_block(u.pos());
+            let block = self.func.inst_block(u.pos);
             while current_block != block {
                 trace!(
                     "Segment crosses block bounary between {current_block} and {}",
@@ -1045,7 +1048,7 @@ impl<F: Function> Context<'_, F> {
                 self.handle_block_live_in(terminator.next(), current_block, segment, alloc);
             }
 
-            trace!("-> {} {}", u.pos(), u.kind);
+            trace!("-> {} {}", u.pos, u.kind);
             self.handle_use(u, segment, alloc);
         }
 
