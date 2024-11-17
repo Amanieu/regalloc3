@@ -12,7 +12,7 @@ fuzz_target!(|ts: [TestCase; 4]| {
 
     let mut regalloc = RegisterAllocator::new();
     for t in ts {
-        if let Ok(output) = regalloc.allocate_registers(&t.func, t.reginfo(), &Default::default()) {
+        if let Ok(output) = regalloc.allocate_registers(&t.func, t.reginfo(), &t.options) {
             debug_utils::check_output(&output).unwrap();
         }
     }

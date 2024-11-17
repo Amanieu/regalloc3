@@ -2,7 +2,10 @@ use std::fmt;
 use std::sync::OnceLock;
 
 use arbitrary::{Arbitrary, Result, Unstructured};
-use regalloc3::debug_utils::{self, GenericFunction, GenericRegInfo};
+use regalloc3::{
+    debug_utils::{self, GenericFunction, GenericRegInfo},
+    Options,
+};
 
 /// Example register descriptions that are parsed and validated once.
 static EXAMPLE_REGINFOS: OnceLock<Vec<(&'static str, GenericRegInfo)>> = OnceLock::new();
@@ -30,6 +33,7 @@ impl TestCaseRegInfo {
 pub struct TestCase {
     reginfo: TestCaseRegInfo,
     pub func: GenericFunction,
+    pub options: Options,
 }
 
 impl TestCase {
@@ -66,7 +70,12 @@ impl Arbitrary<'_> for TestCase {
             TestCaseRegInfo::Arbitrary { reginfo }
         };
         let func = GenericFunction::arbitrary_with_config(reginfo.get(), u, Default::default())?;
-        Ok(TestCase { reginfo, func })
+        let options = u.arbitrary()?;
+        Ok(TestCase {
+            reginfo,
+            func,
+            options,
+        })
     }
 }
 

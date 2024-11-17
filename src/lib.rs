@@ -335,6 +335,23 @@ pub struct Options {
     pub move_optimization: MoveOptimizationLevel,
 }
 
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for MoveOptimizationLevel {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        u.choose(&[Self::Off, Self::Local, Self::Forward, Self::Global])
+            .copied()
+    }
+}
+
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for Options {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(Self {
+            move_optimization: u.arbitrary()?,
+        })
+    }
+}
+
 /// Error returned by the register allocator if allocation is impossible.
 ///
 /// This does not cover errors which are returned by the register info and
