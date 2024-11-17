@@ -3,8 +3,8 @@
 use core::fmt;
 
 use anyhow::{bail, ensure, Result};
-use cranelift_entity::{EntityRef as _, SecondaryMap};
 
+use crate::entity::SecondaryMap;
 use crate::reginfo::{
     AllocationOrderSet, PhysReg, PhysRegSet, RegBank, RegClass, RegGroup, RegInfo, RegOrRegGroup,
     RegUnit, RegUnitSet, MAX_GROUP_SIZE, MAX_PHYSREGS, MAX_REG_BANKS, MAX_REG_CLASSES,
@@ -16,7 +16,7 @@ use crate::reginfo::{
 pub fn validate_reginfo(reginfo: &impl RegInfo) -> Result<()> {
     let mut ctx = Context {
         reginfo,
-        bank_units: SecondaryMap::new(),
+        bank_units: SecondaryMap::with_max_index(reginfo.num_banks()),
     };
     ctx.check_reginfo()?;
     Ok(())

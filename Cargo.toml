@@ -16,9 +16,7 @@ exclude = [".github"]
 anyhow = { version = "1.0.75", default-features = false }
 arbitrary = { version = "1.3.2", optional = true }
 bitflags = "2.4.2"
-cranelift-entity = "0.110.1"
 hashbrown = "0.14.3"
-indexmap = { version = "2.2.6", default-features = false }
 smallvec = { version = "1.11.2", features = ["union"] }
 log = { version = "0.4.20", default-features = false }
 ordered-float = { version = "4.2.0", default-features = false }
@@ -26,7 +24,7 @@ pest = { version = "2.7.5", optional = true }
 pest_derive = { version = "2.7.5", optional = true, default-features = false }
 rustc-hash = { version = "2.0.0", default-features = false }
 serde = { version = "1.0.193", optional = true, default-features = false, features = [
-    "derive",
+    "derive", "alloc"
 ] }
 cranelift-bitset = "0.110.1"
 
@@ -36,7 +34,7 @@ cranelift-bitset = "0.110.1"
 parse = ["dep:pest", "dep:pest_derive", "anyhow/std"]
 
 # Support for serializing and de-serializing all public types.
-serde = ["dep:serde", "cranelift-entity/enable-serde"]
+serde = ["dep:serde"]
 
 # Support for generating randomized functions for testing.
 arbitrary = ["dep:arbitrary"]

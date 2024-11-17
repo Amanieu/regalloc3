@@ -3,8 +3,6 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::ops::{Index, IndexMut, Range};
 
-use cranelift_entity::EntityRef;
-
 use super::live_range::{LiveRangePoint, Slot};
 use crate::function::{Inst, Value};
 use crate::reginfo::{PhysReg, RegClass, RegInfo};

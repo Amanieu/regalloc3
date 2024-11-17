@@ -187,7 +187,7 @@ fn superclasses(class: RegClass, reginfo: &impl RegInfo) -> RegClassSet {
     // superclass then it is redundant.
     let mut direct_superclasses = superclasses;
     for superclass in &superclasses {
-        if (reginfo.sub_classes(superclass) & superclasses).len() > 1 {
+        if (reginfo.sub_classes(superclass) & superclasses).count() > 1 {
             direct_superclasses.remove(superclass);
         }
     }

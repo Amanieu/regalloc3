@@ -1,111 +1,9 @@
-//! Helper types for working with entities from `cranelift-entity`.
+//! Densely numbered entity references as set keys.
 
 use core::marker::PhantomData;
 use core::{array, fmt, ops};
 
-use crate::entity::EntityRef;
-
-/// Variant of cranelift-entity's `entity_impl` which supports non-u32 types.
-macro_rules! entity_impl {
-    // Basic traits.
-    ($entity:ident($int:ident)) => {
-        impl cranelift_entity::EntityRef for $entity {
-            #[inline]
-            fn new(index: usize) -> Self {
-                debug_assert!(index < ($int::MAX as usize));
-                $entity(index as $int)
-            }
-
-            #[inline]
-            fn index(self) -> usize {
-                self.0 as usize
-            }
-        }
-
-        impl cranelift_entity::packed_option::ReservedValue for $entity {
-            #[inline]
-            fn reserved_value() -> $entity {
-                $entity($int::MAX)
-            }
-
-            #[inline]
-            fn is_reserved_value(&self) -> bool {
-                self.0 == $int::MAX
-            }
-        }
-    };
-
-    // Include basic `Display` impl using the given display prefix.
-    // Display a `Block` reference as "block12".
-    ($entity:ident($int:ident), $display_prefix:expr) => {
-        entity_impl!($entity($int));
-
-        impl core::fmt::Display for $entity {
-            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                write!(f, concat!($display_prefix, "{}"), self.0)
-            }
-        }
-
-        impl core::fmt::Debug for $entity {
-            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                core::fmt::Display::fmt(self, f)
-            }
-        }
-    };
-}
-
-/// A sequential range of entities.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct EntityRange<T: EntityRef> {
-    /// Inclusive lower bound of the range.
-    pub from: T,
-
-    /// Exclusive upper bound of the range.
-    pub to: T,
-}
-
-impl<T: EntityRef + fmt::Display> fmt::Display for EntityRange<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}..{}", self.from, self.to)
-    }
-}
-
-impl<T: EntityRef> EntityRange<T> {
-    /// Creates a new range.
-    #[inline]
-    pub fn new(from: T, to: T) -> Self {
-        debug_assert!(from.index() <= to.index());
-        Self { from, to }
-    }
-
-    /// Returns the index of the last element in the range.
-    ///
-    /// Panics if the range is empty.
-    #[inline]
-    pub fn last(self) -> T {
-        debug_assert!(!self.is_empty());
-        T::new(self.to.index() - 1)
-    }
-
-    /// Returns whether the range is empty.
-    #[inline]
-    pub fn is_empty(self) -> bool {
-        self.to.index() <= self.from.index()
-    }
-
-    /// Number of elements in the range.
-    #[inline]
-    pub fn len(self) -> usize {
-        self.to.index() - self.from.index()
-    }
-
-    /// Iterator over the elements in the range.
-    #[inline]
-    pub fn iter(self) -> impl DoubleEndedIterator<Item = T> + ExactSizeIterator {
-        (self.from.index()..self.to.index()).map(|i| T::new(i))
-    }
-}
+use super::EntityRef;
 
 /// Abstraction over an integer that can be used as a word in a [`SmallEntitySet`].
 #[allow(missing_docs)]
@@ -115,10 +13,13 @@ pub trait SmallSetWord:
     + ops::BitAndAssign
     + ops::BitOr<Output = Self>
     + ops::BitOrAssign
+    + ops::Sub<Output = Self>
+    + ops::SubAssign
     + ops::Not<Output = Self>
     + Eq
 {
     const ZERO: Self;
+    const ONE: Self;
     const BITS: usize;
     fn bit(index: usize) -> Self;
     fn count_ones(self) -> usize;
@@ -127,6 +28,7 @@ pub trait SmallSetWord:
 
 impl SmallSetWord for u64 {
     const ZERO: Self = 0;
+    const ONE: Self = 1;
 
     const BITS: usize = 64;
 
@@ -148,6 +50,7 @@ impl SmallSetWord for u64 {
 
 impl SmallSetWord for u32 {
     const ZERO: Self = 0;
+    const ONE: Self = 1;
 
     const BITS: usize = 32;
 
@@ -172,7 +75,11 @@ impl SmallSetWord for u32 {
 /// This should be sized according to the implementation limits for the
 /// particular entity type.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SmallEntitySet<T, W, const N: usize> {
+pub struct SmallEntitySet<T, W, const N: usize>
+where
+    T: EntityRef,
+    W: SmallSetWord,
+{
     storage: [W; N],
     marker: PhantomData<T>,
 }
@@ -236,7 +143,7 @@ where
     /// Removes all elements from the set.
     #[inline]
     pub fn clear(&mut self) {
-        self.storage.iter_mut().for_each(|word| *word = W::ZERO);
+        self.storage.fill(W::ZERO);
     }
 
     /// Returns whether the set contains no elements.
@@ -247,15 +154,15 @@ where
 
     /// Returns the number of elements in the set.
     #[inline]
-    pub fn len(&self) -> usize {
+    pub fn count(&self) -> usize {
         self.storage.iter().map(|word| word.count_ones()).sum()
     }
 
     /// Returns an iterator over all the elements in the set, starting from the
     /// lowest index.
     #[inline]
-    pub fn iter(&self) -> SmallEntitySetIter<'_, T, W, N> {
-        SmallEntitySetIter {
+    pub fn iter(&self) -> Iter<'_, T, W, N> {
+        Iter {
             current_word: W::ZERO,
             next_index: 0,
             set: self,
@@ -270,7 +177,7 @@ where
 {
     type Item = T;
 
-    type IntoIter = SmallEntitySetIter<'a, T, W, N>;
+    type IntoIter = Iter<'a, T, W, N>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
@@ -399,16 +306,6 @@ where
     }
 }
 
-impl<T, W, const N: usize> fmt::Display for SmallEntitySet<T, W, N>
-where
-    T: EntityRef + fmt::Debug,
-    W: SmallSetWord,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_set().entries(self.iter()).finish()
-    }
-}
-
 #[cfg(feature = "serde")]
 impl<T, W, const N: usize> serde::Serialize for SmallEntitySet<T, W, N>
 where
@@ -434,7 +331,11 @@ where
     where
         D: serde::Deserializer<'de>,
     {
-        struct SeqVisitor<T, W, const N: usize> {
+        struct SeqVisitor<T, W, const N: usize>
+        where
+            T: EntityRef,
+            W: SmallSetWord,
+        {
             marker: PhantomData<SmallEntitySet<T, W, N>>,
         }
 
@@ -472,13 +373,17 @@ where
 }
 
 /// Iterator over the elements in a [`SmallEntitySet`].
-pub struct SmallEntitySetIter<'a, T, W, const N: usize> {
+pub struct Iter<'a, T, W, const N: usize>
+where
+    T: EntityRef,
+    W: SmallSetWord,
+{
     current_word: W,
     next_index: usize,
     set: &'a SmallEntitySet<T, W, N>,
 }
 
-impl<T, W, const N: usize> Iterator for SmallEntitySetIter<'_, T, W, N>
+impl<T, W, const N: usize> Iterator for Iter<'_, T, W, N>
 where
     T: EntityRef,
     W: SmallSetWord,
@@ -493,7 +398,7 @@ where
         }
 
         let low_bit = self.current_word.trailing_zeros();
-        self.current_word &= !W::bit(low_bit % W::BITS);
+        self.current_word &= self.current_word - W::ONE;
         let bit = (self.next_index - 1) * W::BITS + low_bit;
         Some(T::new(bit))
     }

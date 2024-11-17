@@ -1,4 +1,5 @@
-//! Checks that dumping a function and then re-parsing it is lossless.
+//! Checks that dumping a register description and then re-parsing it is
+//! lossless.
 
 #![no_main]
 

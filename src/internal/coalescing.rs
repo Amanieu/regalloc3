@@ -14,13 +14,13 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::mem;
-use smallvec::SmallVec;
 
-use cranelift_entity::packed_option::PackedOption;
-use cranelift_entity::{EntityRef, SecondaryMap};
+use smallvec::SmallVec;
 
 use super::uses::Uses;
 use super::value_live_ranges::{ValueLiveRanges, ValueSegment};
+use crate::entity::packed_option::PackedOption;
+use crate::entity::SecondaryMap;
 use crate::function::{Block, Function, OperandConstraint, OperandKind, Value, ValueGroup};
 use crate::internal::value_live_ranges::ValueSet;
 use crate::union_find::UnionFind;
@@ -75,7 +75,8 @@ impl Coalescing {
         stats: &mut Stats,
     ) {
         self.set_for_value.reset(func.num_values());
-        self.last_group_for_value.clear();
+        self.last_group_for_value
+            .clear_and_resize(func.num_values());
 
         self.compute_block_order(func);
 

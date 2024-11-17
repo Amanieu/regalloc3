@@ -6,9 +6,9 @@ use core::fmt;
 use std::sync::OnceLock;
 
 use arbitrary::{Arbitrary, Result, Unstructured};
-use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 use libfuzzer_sys::fuzz_target;
 use regalloc3::debug_utils::{self, GenericRegInfo};
+use regalloc3::entity::{PrimaryMap, SecondaryMap};
 use regalloc3::function::{
     Block, Function, Inst, InstRange, Operand, RematCost, Value, ValueGroup,
 };
@@ -16,6 +16,7 @@ use regalloc3::output::{Allocation, AllocationKind, SpillSlot};
 use regalloc3::parallel_moves::ParallelMoves;
 use regalloc3::reginfo::{
     PhysReg, RegBank, RegClass, RegInfo, RegOrRegGroup, RegUnit, RegUnitSet, SpillSlotSize,
+    MAX_REG_UNITS,
 };
 
 /// Alternate between a  simple register description with 2 banks that overlap,
@@ -121,7 +122,8 @@ impl Arbitrary<'_> for TestCase {
         let mut src_used_mask = RegUnitSet::new();
         let mut spillslots = PrimaryMap::new();
         let mut values = PrimaryMap::new();
-        let mut slots_per_bank: SecondaryMap<RegBank, Vec<SpillSlot>> = SecondaryMap::new();
+        let mut slots_per_bank: SecondaryMap<RegBank, Vec<SpillSlot>> =
+            SecondaryMap::with_max_index(reginfo.num_banks());
         for _ in 0..u.int_in_range(1..=20)? {
             let mut gen_alloc = || {
                 // Try to get a register if it doesn't overlap an existing one.
@@ -290,7 +292,7 @@ impl Function for TestCase {
     }
 
     fn num_values(&self) -> usize {
-        unreachable!()
+        self.values.len()
     }
 
     fn value_bank(&self, value: Value) -> RegBank {
@@ -360,6 +362,7 @@ fuzz_target!(|t: TestCase| {
 
     // Resolve the parallel moves into sequential moves.
     let mut parallel_moves = ParallelMoves::new();
+    parallel_moves.prepare(&t, t.spillslots.len());
     parallel_moves.new_parallel_move();
     for &(src, dest, value) in &t.moves {
         if let Some(src) = src {
@@ -392,8 +395,8 @@ fuzz_target!(|t: TestCase| {
     }
 
     // Prepare the initial state of all register units and spill slots.
-    let mut unit_values = SecondaryMap::new();
-    let mut spillslot_values = SecondaryMap::new();
+    let mut unit_values = SecondaryMap::with_max_index(MAX_REG_UNITS);
+    let mut spillslot_values = SecondaryMap::with_max_index(t.spillslots.len());
     for (
         value,
         &ValueData {

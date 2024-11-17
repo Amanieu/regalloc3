@@ -1,5 +1,4 @@
-//! Checks that `GenericFunction::arbitrary` produces functions that pass
-//! validation.
+//! Checks that register allocation produces correct results.
 
 #![no_main]
 

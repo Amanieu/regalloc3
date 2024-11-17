@@ -4,17 +4,18 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use cranelift_entity::packed_option::{PackedOption, ReservedValue};
-use cranelift_entity::{PrimaryMap, SecondaryMap};
 use smallvec::{smallvec, SmallVec};
 
 use super::move_resolver::Edit;
-use crate::allocation_unit::AllocationUnitMap;
+use crate::allocation_unit::AllocationUnit;
+use crate::entity::packed_option::ReservedValue;
+use crate::entity::{PrimaryMap, SecondaryMap, SparseMap};
 use crate::function::{Function, RematCost, Value};
 use crate::internal::allocator::combined_allocation_order;
 use crate::output::{Allocation, AllocationKind, SpillSlot};
 use crate::reginfo::{
     PhysReg, RegBank, RegClass, RegInfo, RegOrRegGroup, RegUnit, RegUnitSet, SpillSlotSize,
+    MAX_REG_UNITS,
 };
 
 /// Cache for reusing emergency spill slots.
@@ -56,10 +57,10 @@ impl EmergencySpillSlotCache {
     }
 }
 
-/// An index into the set of parallel moves that is currently being considered.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-struct MoveIndex(u32);
-entity_impl!(MoveIndex(u32), "move");
+entity_def! {
+    /// An index into the set of parallel moves that is currently being considered.
+    entity MoveIndex(u32);
+}
 
 /// Information about a parallel move.
 struct Move {
@@ -164,8 +165,15 @@ impl ScratchAllocator {
     fn clear(&mut self) {
         self.available.clear();
         self.probed.clear();
-        self.diverted.clear();
         self.evicted_reg = None;
+
+        // Clearing the diversion list is expensive, but it's not needed since
+        // all diversions should end up with a reference count of 0 at the end
+        // of parallel move processing.
+        debug_assert!(self
+            .diverted
+            .values()
+            .all(|diversion| diversion.ref_count == 0));
     }
 
     /// Makes the given register available for use as a scratch register.
@@ -553,7 +561,7 @@ pub struct ParallelMoves {
 
     /// For each allocation unit that is written to by a move, this holds the
     /// index of the move writing to it.
-    writes_to_unit: AllocationUnitMap<PackedOption<MoveIndex>>,
+    writes_to_unit: SparseMap<AllocationUnit, MoveIndex>,
 
     /// Allocator for scratch registers that may be needed to resolve cycles and
     /// memory-to-memory moves.
@@ -577,14 +585,16 @@ impl ParallelMoves {
             moves: PrimaryMap::new(),
             remat: vec![],
             remat_with_scratch: vec![],
-            writes_to_unit: AllocationUnitMap::new(),
+            writes_to_unit: SparseMap::new(),
             scratch: ScratchAllocator::new(),
             stack: vec![],
         }
     }
 
-    pub fn clear(&mut self) {
+    pub fn prepare(&mut self, func: &impl Function, num_spill_slots: usize) {
         self.scratch.emergency_spillslot_cache.clear();
+        self.scratch.diverted.clear_and_resize(func.num_values());
+        self.writes_to_unit.grow_to(num_spill_slots + MAX_REG_UNITS);
     }
 
     pub fn new_parallel_move(&mut self) {
@@ -649,7 +659,7 @@ impl ParallelMoves {
 
         // Ignore duplicate moves where the source and destination are the same.
         let unit = dest.units(reginfo).next().unwrap();
-        if let Some(index) = self.writes_to_unit[unit].into() {
+        if let Some(&index) = self.writes_to_unit.get(unit) {
             debug_assert_eq!(self.moves[index].source, source);
             debug_assert_eq!(self.moves[index].dest, dest);
             debug_assert_eq!(self.moves[index].value, value);
@@ -668,8 +678,8 @@ impl ParallelMoves {
         // Track which moves writes to which register unit. This is needed to
         // correctly order moves and resolve cycles.
         for unit in dest.units(reginfo) {
-            debug_assert!(self.writes_to_unit[unit].is_none());
-            self.writes_to_unit[unit] = Some(index).into();
+            let prev = self.writes_to_unit.insert(unit, index);
+            debug_assert!(prev.is_none());
         }
     }
 
@@ -838,7 +848,7 @@ impl ParallelMoves {
                             self.stack.push((Visit::Last, m));
                             for m2 in source
                                 .units(reginfo)
-                                .filter_map(|unit| self.writes_to_unit[unit].expand())
+                                .filter_map(|unit| self.writes_to_unit.get(unit).copied())
                             {
                                 if self.moves[m2].state == State::New {
                                     self.stack.push((Visit::First, m2));
@@ -855,7 +865,7 @@ impl ParallelMoves {
                             // be overwritten by a prior move on the stack.
                             let cycle = source
                                 .units(reginfo)
-                                .filter_map(|unit| self.writes_to_unit[unit].expand())
+                                .filter_map(|unit| self.writes_to_unit.get(unit).copied())
                                 .any(|m2| self.moves[m2].state == State::Pending);
 
                             let adjusted_source = if cycle {
@@ -875,7 +885,7 @@ impl ParallelMoves {
                                 let mut count = 0;
                                 for m2 in source
                                     .units(reginfo)
-                                    .filter_map(|unit| self.writes_to_unit[unit].expand())
+                                    .filter_map(|unit| self.writes_to_unit.get(unit).copied())
                                 {
                                     if self.moves[m2].state == State::Pending {
                                         if !self.moves[m2].diverted_values.contains(&value) {

@@ -116,10 +116,9 @@
 
 use core::fmt;
 
-use cranelift_entity::packed_option::ReservedValue as _;
-use cranelift_entity::{EntityRef as _, Keys};
-
-use crate::entity_utils::EntityRange;
+use crate::entity::iter::Keys;
+use crate::entity::packed_option::ReservedValue as _;
+use crate::entity::EntityRange;
 use crate::reginfo::{PhysReg, RegBank, RegClass, RegUnit, MAX_PHYSREGS};
 
 /// Maximum number of basic blocks.
@@ -137,15 +136,37 @@ pub const MAX_INST_OPERANDS: usize = 1 << 10;
 /// Maximum number of basic block parameters.
 pub const MAX_BLOCK_PARAMS: usize = 1 << 28;
 
-/// An opaque reference to a basic block in the input function.
-///
-/// The register allocator will work correctly with arbitrary block orderings,
-/// however it performs best if blocks are arranged in reverse post-order, and
-/// with loop back-edges ordered before loop exits.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Block(u32);
-entity_impl!(Block(u32), "block");
+entity_def! {
+    /// An opaque reference to a basic block in the input function.
+    ///
+    /// The register allocator will work correctly with arbitrary block orderings,
+    /// however it performs best if blocks are arranged in reverse post-order, and
+    /// with loop back-edges ordered before loop exits.
+    pub entity Block(u32, "block");
+
+
+    /// An instruction index in the input function.
+    ///
+    /// An instruction is opaque: it only interacts with the register allocator
+    /// through the constraints defined on its operands.
+    ///
+    /// Instruction indices must be continuous and ordered according to the block
+    /// they are in. This means that the last instruction for block N must be
+    /// immediately followed by the first instruction in block N+1.
+    ///
+    /// Where an `Inst` represents a point between 2 instructions rather than an
+    /// instruction, this always refers to the point *before* the given instruction.
+    pub entity Inst(u32, "inst");
+
+    /// An opaque reference to an SSA value in the input function.
+    pub entity Value(u32, "%");
+
+    /// A reference to a list of [`Value`]s.
+    ///
+    /// Each `ValueGroup` must only be used in a single [`Operand`] in a function,
+    /// even if the same set of value is used multiple times.
+    pub entity ValueGroup(u32, "group");
+}
 
 impl Block {
     /// The entry block is always block 0 since it dominates all other blocks.
@@ -168,22 +189,6 @@ impl Block {
     }
 }
 
-/// An instruction index in the input function.
-///
-/// An instruction is opaque: it only interacts with the register allocator
-/// through the constraints defined on its operands.
-///
-/// Instruction indices must be continuous and ordered according to the block
-/// they are in. This means that the last instruction for block N must be
-/// immediately followed by the first instruction in block N+1.
-///
-/// Where an `Inst` represents a point between 2 instructions rather than an
-/// instruction, this always refers to the point *before* the given instruction.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Inst(u32);
-entity_impl!(Inst(u32), "inst");
-
 impl Inst {
     /// Returns an index pointing to the next instruction.
     #[inline]
@@ -201,21 +206,6 @@ impl Inst {
         Self(self.0 - 1)
     }
 }
-
-/// An opaque reference to an SSA value in the input function.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Value(u32);
-entity_impl!(Value(u32), "%");
-
-/// A reference to a list of [`Value`]s.
-///
-/// Each `ValueGroup` must only be used in a single [`Operand`] in a function,
-/// even if the same set of value is used multiple times.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ValueGroup(u32);
-entity_impl!(ValueGroup(u32), "group");
 
 /// A range of instructions in the input function.
 pub type InstRange = EntityRange<Inst>;

@@ -5,7 +5,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use cranelift_entity::EntityRef;
+use crate::entity::EntityRef;
 
 /// A node in the union-find data structure.
 struct UnionFindEntry<K> {

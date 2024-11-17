@@ -19,13 +19,13 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::{Index, IndexMut};
 
-use cranelift_entity::{EntityRef, EntitySet, SecondaryMap};
 use smallvec::SmallVec;
 
 use super::allocations::Allocations;
 use super::live_range::{LiveRangeSegment, Slot};
 use super::reg_matrix::RegMatrix;
 use super::uses::{UseIndex, UseKind, Uses};
+use crate::entity::{EntitySet, SecondaryMap};
 use crate::function::{
     Block, Function, Inst, Operand, OperandConstraint, OperandKind, Value, ValueGroup,
 };
@@ -50,11 +50,11 @@ pub struct ValueSegment {
     pub value: Value,
 }
 
-/// A value set corresponds to a set of [`Value`]s whose live range do not
-/// overlap.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub struct ValueSet(u32);
-entity_impl!(ValueSet(u32), "valueset");
+entity_def! {
+    /// A value set corresponds to a set of [`Value`]s whose live range do not
+    /// overlap.
+    pub entity ValueSet(u32, "valueset");
+}
 
 impl ValueSet {
     /// Returns the initial `ValueSet` for the given `Value`.
@@ -151,10 +151,9 @@ impl IndexMut<ValueSet> for ValueLiveRanges {
 
 impl ValueLiveRanges {
     pub fn new() -> Self {
-        let zero_point = Inst::new(0).slot(Slot::Boundary);
         Self {
             value_sets: SecondaryMap::new(),
-            def_range: SecondaryMap::with_default(LiveRangeSegment::new(zero_point, zero_point)),
+            def_range: SecondaryMap::new(),
             live_in: EntitySet::new(),
             live_out: EntitySet::new(),
             worklist: vec![],
@@ -196,8 +195,11 @@ impl ValueLiveRanges {
     ) {
         uses.clear();
         reg_matrix.clear();
-        self.def_range.clear();
-        self.value_sets.clear();
+        self.def_range.clear_and_resize_with(func.num_values(), || {
+            let zero_point = Inst::new(0).slot(Slot::Boundary);
+            LiveRangeSegment::new(zero_point, zero_point)
+        });
+        self.value_sets.clear_and_resize(func.num_values());
 
         let mut ctx = Context {
             func,
@@ -756,19 +758,19 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             if !self.value_live_ranges.live_in.contains(block) {
                 self.value_live_ranges.worklist.push(block);
                 while let Some(block) = self.value_live_ranges.worklist.pop() {
-                    if !self.value_live_ranges.live_in.insert(block) {
+                    if self.value_live_ranges.live_in.contains(block) {
                         continue;
                     }
 
-                    trace!("Live-in in {block}");
+                    self.value_live_ranges.live_in.insert(block);
 
                     if block > last_block {
                         last_block = block;
                     }
 
                     for &pred in self.func.block_preds(block) {
-                        if self.value_live_ranges.live_out.insert(pred) {
-                            trace!("Live-out in {pred}");
+                        if !self.value_live_ranges.live_out.contains(pred) {
+                            self.value_live_ranges.live_out.insert(pred);
                             self.value_live_ranges.worklist.push(pred);
                         }
                     }
@@ -788,8 +790,15 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// Computes the live range for the given value.
     fn build_segments(&mut self, value: Value, prev_use_list_end: &mut UseIndex) {
         trace!("Building live range segments for {value}");
-        self.value_live_ranges.live_in.clear();
-        self.value_live_ranges.live_out.clear();
+
+        // We add 1 trailing block so that we can detect that the block after
+        // the last is not live-in.
+        self.value_live_ranges
+            .live_in
+            .clear_and_resize(self.func.num_blocks() + 1);
+        self.value_live_ranges
+            .live_out
+            .clear_and_resize(self.func.num_blocks());
 
         // Get the sorted list of all uses for this value.
         let (full_use_list, use_list_end) = self.uses.resolve_use_list(value, *prev_use_list_end);

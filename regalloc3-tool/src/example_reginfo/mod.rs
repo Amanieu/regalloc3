@@ -2,7 +2,7 @@ use core::fmt;
 
 use anyhow::Result;
 use clap::ValueEnum;
-use cranelift_entity::PrimaryMap;
+use regalloc3::entity::PrimaryMap;
 use regalloc3::reginfo::{PhysReg, RegBank, RegClass, RegGroup, RegUnit};
 
 mod aarch64;

@@ -3,13 +3,13 @@ use alloc::vec::Vec;
 use core::str::FromStr;
 
 use anyhow::Result;
-use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 use pest::error::{Error, ErrorVariant};
 use pest::iterators::Pair;
 use pest::{Parser, Span};
 use pest_derive::Parser;
 
 use super::{GenericRegInfo, PhysRegData, RegBankData, RegClassData, RegGroupData};
+use crate::entity::{EntityRef, PrimaryMap, SecondaryMap};
 use crate::reginfo::{
     PhysReg, RegBank, RegClass, RegClassSet, RegGroup, RegOrRegGroup, RegOrRegGroupSet,
     SpillSlotSize,
@@ -172,6 +172,7 @@ fn parse_class_def(
             Rule::superclasses => {
                 let [class_list] = extract(pair, [Rule::class_list]);
                 let list = parse_entity_list(class_list)?;
+                superclasses.grow_to(classes.len() + 1);
                 superclasses[classes.next_key()].extend(list);
             }
             Rule::group_size => {

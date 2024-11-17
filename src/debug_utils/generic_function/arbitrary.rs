@@ -3,14 +3,14 @@ use alloc::vec::Vec;
 use core::ops::RangeInclusive;
 
 use arbitrary::{Result, Unstructured};
-use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 
 use super::{BlockData, GenericFunction, InstData};
 use crate::debug_utils::dominator_tree::DominatorTree;
 use crate::debug_utils::generic_function::ValueData;
 use crate::debug_utils::postorder::PostOrder;
+use crate::entity::{PrimaryMap, SecondaryMap};
 use crate::function::{
-    Block, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost, Value,
+    Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost, Value,
 };
 use crate::reginfo::{
     AllocationOrderSet, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet, MAX_REG_UNITS,
@@ -74,6 +74,8 @@ impl GenericFunction {
     ) -> Result<Self> {
         let mut builder = FunctionBuilder::new(u, reginfo, config);
         builder.gen_cfg_skeleton()?;
+        builder.block_insts.grow_to(builder.func.num_blocks());
+        builder.defs_by_blocks.grow_to(builder.func.num_blocks());
 
         let postorder = PostOrder::for_function(&builder.func);
         builder.domtree.compute(&builder.func, &postorder);
@@ -155,9 +157,12 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             value_groups: PrimaryMap::new(),
         };
 
-        let mut class_per_bank: SecondaryMap<RegBank, Vec<RegClass>> = SecondaryMap::new();
-        let mut remat_class_per_bank: SecondaryMap<RegBank, Vec<RegClass>> = SecondaryMap::new();
-        let mut reg_per_bank: SecondaryMap<RegBank, Vec<PhysReg>> = SecondaryMap::new();
+        let mut class_per_bank: SecondaryMap<RegBank, Vec<RegClass>> =
+            SecondaryMap::with_max_index(reginfo.num_banks());
+        let mut remat_class_per_bank: SecondaryMap<RegBank, Vec<RegClass>> =
+            SecondaryMap::with_max_index(reginfo.num_banks());
+        let mut reg_per_bank: SecondaryMap<RegBank, Vec<PhysReg>> =
+            SecondaryMap::with_max_index(reginfo.num_banks());
         let mut non_allocatable_regs = vec![];
         for class in reginfo.classes() {
             class_per_bank[reginfo.bank_for_class(class)].push(class);

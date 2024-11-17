@@ -3,9 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use cranelift_entity::packed_option::ReservedValue;
-use cranelift_entity::EntityRef;
-
+use crate::entity::packed_option::ReservedValue;
 use crate::function::{Function, Inst};
 use crate::output::Allocation;
 use crate::{RegAllocError, Stats};

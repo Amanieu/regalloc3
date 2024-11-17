@@ -6,17 +6,16 @@ use alloc::vec::Vec;
 use core::fmt;
 
 use anyhow::{bail, ensure, Result};
-use cranelift_entity::{EntityRef, SecondaryMap};
-use hashbrown::hash_map::DefaultHashBuilder;
-use hashbrown::HashMap;
-use indexmap::IndexSet;
 use smallvec::SmallVec;
 
-use crate::allocation_unit::{AllocationUnit, AllocationUnitSet};
+use crate::allocation_unit::AllocationUnit;
 use crate::debug_utils::DisplayOutputInst;
+use crate::entity::{EntitySet, SecondaryMap, SparseMap};
 use crate::function::{Block, Function, Inst, Operand, OperandConstraint, OperandKind, Value};
 use crate::output::{Allocation, AllocationKind, Output, OutputInst, SpillSlot};
-use crate::reginfo::{PhysReg, RegBank, RegClass, RegGroup, RegInfo, RegOrRegGroup, RegUnitSet};
+use crate::reginfo::{
+    PhysReg, RegBank, RegClass, RegGroup, RegInfo, RegOrRegGroup, RegUnitSet, MAX_REG_UNITS,
+};
 
 /// Type representing a set of values. A `SmallVec` is used instead of a
 /// `HashSet` for efficiency since sets tend to be small (1-2 elements).
@@ -41,17 +40,25 @@ type CheckerValueSet = SmallVec<[Value; 3]>;
 /// conflicting source values and only keeping the destination value.
 ///
 /// [regalloc2 checker]: https://github.com/bytecodealliance/regalloc2/blob/main/src/checker.rs
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct CheckerState {
     /// This is internally represented by a set of values for each
     /// `AllocationUnit`.
     ///
-    /// A vacant entry in the `HashMap` is logically equivalent to a present
+    /// A vacant entry in the `SparseMap` is logically equivalent to a present
     /// entry with an empty value set.
-    unit_values: HashMap<AllocationUnit, CheckerValueSet>,
+    unit_values: SparseMap<AllocationUnit, CheckerValueSet>,
 }
 
 impl CheckerState {
+    fn new(output: &Output<'_, impl Function, impl RegInfo>) -> Self {
+        Self {
+            unit_values: SparseMap::with_max_index(
+                output.stack_layout().num_spillslots() + MAX_REG_UNITS,
+            ),
+        }
+    }
+
     /// Lattice meet operation when merging initial block states from multiple
     /// predecessors. This only keeps the common subset of values between the
     /// two incoming states.
@@ -59,8 +66,8 @@ impl CheckerState {
     /// This also records whether any changes occurs, which helps determine when
     /// a fixed point has been reached.
     fn meet(&mut self, other: &Self, changed: &mut bool) {
-        self.unit_values.retain(|&unit, values| {
-            if let Some(other_values) = other.unit_values.get(&unit) {
+        self.unit_values.retain(|unit, values| {
+            if let Some(other_values) = other.unit_values.get(unit) {
                 values.retain(|&mut value| {
                     if !other_values.contains(&value) {
                         *changed = true;
@@ -104,7 +111,7 @@ impl CheckerState {
 
     /// Checks whether an `AllocationUnit` contains the given value.
     fn unit_contains(&self, unit: AllocationUnit, value: Value) -> bool {
-        if let Some(values) = self.unit_values.get(&unit) {
+        if let Some(values) = self.unit_values.get(unit) {
             values.contains(&value)
         } else {
             false
@@ -117,19 +124,19 @@ impl CheckerState {
         self.unit_values
             .iter()
             .filter(move |(_, values)| values.contains(&value))
-            .map(|(&unit, _)| unit)
+            .map(|&(unit, _)| unit)
     }
 
     /// Updates the state of an `AllocationUnit` to indicate it no longer holds
     /// a value.
     fn clobber_unit(&mut self, unit: AllocationUnit) {
-        self.unit_values.remove(&unit);
+        self.unit_values.remove(unit);
     }
 
     /// Saves the set of values held in an `AllocationUnit` in a way that can be
     /// losslessly restored later.
     fn save_values(&self, unit: AllocationUnit) -> CheckerValueSet {
-        self.unit_values.get(&unit).cloned().unwrap_or_default()
+        self.unit_values.get(unit).cloned().unwrap_or_default()
     }
 
     /// Restores the set of values held in an `AllocationUnit` that were
@@ -142,8 +149,8 @@ impl CheckerState {
 impl fmt::Display for CheckerState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut unit_values: Vec<_> = self.unit_values.iter().collect();
-        unit_values.sort_unstable_by_key(|&(&unit, _)| unit);
-        for (&unit, values) in &unit_values {
+        unit_values.sort_unstable_by_key(|&(unit, _)| unit);
+        for (unit, values) in &unit_values {
             write!(f, "{unit}: {values:?} ")?;
         }
         Ok(())
@@ -168,12 +175,12 @@ struct EvictedReg {
 
 struct Context<'a, F, R> {
     output: &'a Output<'a, F, R>,
-    blocks_to_check: IndexSet<Block, DefaultHashBuilder>,
+    blocks_to_check: SparseMap<Block, ()>,
     block_entry_state: SecondaryMap<Block, Option<CheckerState>>,
     state: CheckerState,
-    evicted: HashMap<SpillSlot, EvictedReg>,
+    evicted: SparseMap<SpillSlot, EvictedReg>,
     blockparams_to_insert: Vec<(AllocationUnit, Value)>,
-    def_units: AllocationUnitSet,
+    def_units: EntitySet<AllocationUnit>,
     fixed_def_units: RegUnitSet,
     early_reused_operands: Vec<usize>,
     next_inst: Inst,
@@ -195,9 +202,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // block can only get smaller so this will eventually settle to a fixed
         // point at which point checking is complete.
         self.blocks_to_check.clear();
-        self.blocks_to_check.insert(Block::ENTRY_BLOCK);
-        self.block_entry_state[Block::ENTRY_BLOCK] = Some(CheckerState::default());
-        while let Some(block) = self.blocks_to_check.pop() {
+        self.blocks_to_check.insert(Block::ENTRY_BLOCK, ());
+        self.block_entry_state[Block::ENTRY_BLOCK] = Some(CheckerState::new(self.output));
+        while let Some((block, ())) = self.blocks_to_check.pop() {
             self.check_block(block)?;
         }
 
@@ -299,7 +306,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             }
             if changed {
                 trace!("Propagation changed state in {succ}");
-                self.blocks_to_check.insert(succ);
+                self.blocks_to_check.insert(succ, ());
             }
         }
 
@@ -375,7 +382,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
                 // Process instruction operands in order. We also track which
                 // units are written to detect conflicting outputs.
-                self.def_units.clear();
+                self.def_units
+                    .clear_and_resize(self.output.stack_layout().num_spillslots() + MAX_REG_UNITS);
                 self.fixed_def_units.clear();
                 self.early_reused_operands.clear();
                 for pass in [Pass::EarlyDef, Pass::Use, Pass::Def] {
@@ -388,7 +396,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 // been written to by a fixed def.
                 for &clobber in func.inst_clobbers(inst) {
                     if !self.fixed_def_units.contains(clobber) {
-                        let unit = AllocationUnit::Reg(clobber);
+                        let unit = AllocationUnit::reg(clobber);
                         ensure!(
                             !self.def_units.contains(unit),
                             "Def operand conflicts with clobber {unit}"
@@ -407,7 +415,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     self.state.set_value(unit, value);
                 }
                 if let AllocationKind::SpillSlot(slot) = to.kind() {
-                    self.evicted.remove(&slot);
+                    self.evicted.remove(slot);
                 }
             }
             OutputInst::Move { from, to, value } => {
@@ -429,7 +437,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         self.state.set_value(unit, value);
                     }
                     if let AllocationKind::SpillSlot(slot) = to.kind() {
-                        self.evicted.remove(&slot);
+                        self.evicted.remove(slot);
                     }
                 } else {
                     // Register evictions (used when the parallel move resolver
@@ -465,7 +473,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             match to.kind() {
                                 AllocationKind::PhysReg(_) => {
                                     // Restore a previously evicted register.
-                                    let Some(evicted) = self.evicted.get(&slot) else {
+                                    let Some(evicted) = self.evicted.get(slot) else {
                                         bail!(
                                             "Emergency eviction slot {slot} doesn't contain an \
                                              evicted register"
@@ -491,7 +499,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                         .map(|unit| self.state.save_values(unit))
                                         .collect();
                                     self.evicted.insert(slot, EvictedReg { reg, saved_values });
-                                    self.state.clobber_unit(AllocationUnit::Slot(slot));
+                                    self.state.clobber_unit(AllocationUnit::spillslot(slot));
                                 }
                             }
                         }
@@ -664,7 +672,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     self.state.set_value(unit, value);
                 }
                 if let AllocationKind::SpillSlot(slot) = alloc.kind() {
-                    self.evicted.remove(&slot);
+                    self.evicted.remove(slot);
                 }
             }
             OperandKind::Use(value) => {
@@ -783,14 +791,14 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 pub fn check_output(output: &Output<'_, impl Function, impl RegInfo>) -> Result<()> {
     let mut context = Context {
         output,
-        blocks_to_check: IndexSet::with_hasher(DefaultHashBuilder::default()),
-        block_entry_state: SecondaryMap::new(),
-        state: CheckerState::default(),
-        evicted: HashMap::new(),
+        blocks_to_check: SparseMap::with_max_index(output.func.num_blocks()),
+        block_entry_state: SecondaryMap::with_max_index(output.func.num_blocks()),
+        state: CheckerState::new(output),
+        evicted: SparseMap::with_max_index(output.stack_layout().num_spillslots()),
         blockparams_to_insert: vec![],
         next_inst: Inst::new(0),
         early_reused_operands: vec![],
-        def_units: AllocationUnitSet::new(),
+        def_units: EntitySet::new(),
         fixed_def_units: RegUnitSet::new(),
         terminated: false,
         can_have_move: false,

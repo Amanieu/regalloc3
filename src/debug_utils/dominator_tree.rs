@@ -8,10 +8,9 @@ use alloc::vec::Vec;
 use core::cmp::{self, Ordering};
 use core::mem;
 
-use cranelift_entity::packed_option::PackedOption;
-use cranelift_entity::SecondaryMap;
-
 use super::postorder::PostOrder;
+use crate::entity::packed_option::PackedOption;
+use crate::entity::SecondaryMap;
 use crate::function::{Block, Function};
 
 #[derive(Default, Clone)]
@@ -52,7 +51,7 @@ impl DominatorTree {
     /// Computes the dominator tree.
     pub fn compute(&mut self, func: &impl Function, po: &PostOrder) {
         // Reset all immediate dominators to None.
-        self.nodes.clear();
+        self.nodes.clear_and_resize(func.num_blocks());
 
         // 1. Compute immediate dominators for each basic block.
         self.compute_idoms(func, po);

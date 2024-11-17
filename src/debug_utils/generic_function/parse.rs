@@ -3,7 +3,6 @@ use alloc::vec::Vec;
 use core::str::FromStr;
 
 use anyhow::Result;
-use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 use pest::error::{Error, ErrorVariant};
 use pest::iterators::Pair;
 use pest::{Parser, Span};
@@ -12,8 +11,10 @@ use pest_derive::Parser;
 use super::{BlockData, GenericFunction, InstData, ValueData};
 use crate::debug_utils::dominator_tree::DominatorTree;
 use crate::debug_utils::postorder::PostOrder;
+use crate::entity::{EntityRef, PrimaryMap, SecondaryMap};
 use crate::function::{
-    Block, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost, Value, ValueGroup,
+    Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost, Value,
+    ValueGroup,
 };
 
 #[derive(Parser)]
@@ -268,7 +269,7 @@ fn parse_instruction(
 }
 
 fn compute_preds_and_dominators(func: &mut GenericFunction) {
-    let mut preds = SecondaryMap::with_default(vec![]);
+    let mut preds = SecondaryMap::<Block, Vec<Block>>::with_max_index(func.num_blocks());
     for (block, data) in &func.blocks {
         for &succ in &data.succs {
             preds[succ].push(block);

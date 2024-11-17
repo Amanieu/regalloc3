@@ -30,8 +30,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::{fmt, iter};
 
-use cranelift_entity::packed_option::PackedOption;
-use cranelift_entity::SecondaryMap;
 pub use order::combined_allocation_order;
 
 use self::order::{AllocationOrder, CandidateReg};
@@ -44,6 +42,8 @@ use super::uses::Uses;
 use super::value_live_ranges::ValueSegment;
 use super::virt_regs::builder::VirtRegBuilder;
 use super::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
+use crate::entity::packed_option::PackedOption;
+use crate::entity::SecondaryMap;
 use crate::function::Function;
 use crate::internal::reg_matrix::InterferenceKind;
 use crate::reginfo::{PhysReg, RegInfo, RegOrRegGroup};
@@ -182,6 +182,15 @@ enum Assignment {
     Dead,
 }
 
+impl Default for Assignment {
+    fn default() -> Self {
+        Assignment::Unassigned {
+            evicted_for_preference: false,
+            hint: None.into(),
+        }
+    }
+}
+
 impl Assignment {
     /// Whether this virtual register has evicted another virtual register
     /// with a higher spill weight to steal a physical register for which it
@@ -295,10 +304,7 @@ impl Allocator {
         Self {
             queue: AllocationQueue::new(),
             allocation_order: AllocationOrder::new(),
-            assignments: SecondaryMap::with_default(Assignment::Unassigned {
-                evicted_for_preference: false,
-                hint: None.into(),
-            }),
+            assignments: SecondaryMap::new(),
             interfering_vregs: vec![],
             candidate_interfering_vregs: vec![],
             spiller: Spiller::new(),
@@ -321,8 +327,9 @@ impl Allocator {
         func: &impl Function,
         reginfo: &impl RegInfo,
     ) -> Result<(), RegAllocError> {
-        self.assignments.clear();
+        self.assignments.clear_and_resize(virt_regs.num_virt_regs());
         self.remat_segments.clear();
+        self.allocation_order.prepare(reginfo);
         let mut context = Context {
             func,
             reginfo,

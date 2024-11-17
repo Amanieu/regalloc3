@@ -268,6 +268,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 );
             });
 
+        // Initialize assignments for the new virtual registers.
+        self.allocator
+            .assignments
+            .grow_to(self.virt_regs.num_virt_regs());
+
         // Then queue the newly created virtual registers. This needs to be done
         // after all spill products are created so that virtual register groups
         // are complete.

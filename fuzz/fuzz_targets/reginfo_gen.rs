@@ -1,5 +1,5 @@
-//! Checks that `GenericFunction::arbitrary` produces functions that pass
-//! validation.
+//! Checks that `GenericRegInfo::arbitrary` produces register descriptions that
+//! pass validation.
 
 #![no_main]
 

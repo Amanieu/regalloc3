@@ -128,7 +128,7 @@ macro_rules! stat {
 }
 
 #[macro_use]
-pub mod entity_utils;
+pub mod entity;
 
 pub mod debug_utils;
 pub mod function;
@@ -136,7 +136,6 @@ pub mod output;
 pub mod reginfo;
 
 mod allocation_unit;
-mod compact_list;
 mod internal;
 mod union_find;
 

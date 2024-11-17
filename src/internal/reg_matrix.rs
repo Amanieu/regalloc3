@@ -5,14 +5,13 @@ use core::cmp::Ordering;
 use core::mem;
 use core::ops::Bound;
 
-use cranelift_entity::packed_option::PackedOption;
-use cranelift_entity::SecondaryMap;
-
 use super::live_range::{LiveRangePoint, LiveRangeSegment, Slot};
 use super::value_live_ranges::ValueSegment;
 use super::virt_regs::{VirtReg, VirtRegs};
+use crate::entity::packed_option::PackedOption;
+use crate::entity::SecondaryMap;
 use crate::function::Value;
-use crate::reginfo::{PhysReg, RegInfo, RegUnit};
+use crate::reginfo::{PhysReg, RegInfo, RegUnit, MAX_REG_UNITS};
 
 /// The kind of interference detected.
 #[derive(Debug, Clone, Copy)]
@@ -187,7 +186,7 @@ pub struct RegMatrix {
 impl RegMatrix {
     pub fn new() -> Self {
         Self {
-            reservations: SecondaryMap::new(),
+            reservations: SecondaryMap::with_max_index(MAX_REG_UNITS),
         }
     }
 

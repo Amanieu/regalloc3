@@ -21,22 +21,18 @@
 //! chance of successfully allocating with as few probes as possible. This helps
 //! improve allocation times.
 
-use alloc::vec;
-use alloc::vec::Vec;
 use core::cmp::Reverse;
 use core::fmt;
 
-use cranelift_entity::{EntityRef, SparseMap, SparseMapValue};
 use ordered_float::OrderedFloat;
 
 use super::AbstractVirtRegGroup;
+use crate::entity::SparseMap;
 use crate::function::Function;
 use crate::internal::reg_matrix::RegMatrix;
 use crate::internal::uses::{UseKind, Uses};
 use crate::internal::virt_regs::{VirtReg, VirtRegs};
-use crate::reginfo::{
-    AllocationOrderSet, PhysReg, RegClass, RegInfo, RegOrRegGroup, RegOrRegGroupSet,
-};
+use crate::reginfo::{AllocationOrderSet, PhysReg, RegClass, RegInfo, RegOrRegGroup};
 
 /// Returns a single allocation order from [`RegInfo::allocation_order`] which
 /// combines all [`AllocationOrderSet`]s.
@@ -99,32 +95,24 @@ impl fmt::Display for CandidateReg {
     }
 }
 
-impl SparseMapValue<RegOrRegGroup> for CandidateReg {
-    fn key(&self) -> RegOrRegGroup {
-        self.reg
-    }
-}
-
 pub struct AllocationOrder {
-    /// Fixed-register perferences for the current virtual register.
-    fixed_preferences: SparseMap<RegOrRegGroup, CandidateReg>,
-
-    /// Physical register candidates for the current virtual register, sorted by
-    /// preference weight.
-    candidates: Vec<CandidateReg>,
-
-    /// Bitmask to avoid including the same register twice in the allocation
-    /// order.
-    duplicate_mask: RegOrRegGroupSet,
+    /// Physical register candidates for the current virtual register, with
+    /// associated preference weight.
+    ///
+    /// Entries are sorted by preference weight.
+    candidates: SparseMap<RegOrRegGroup, f32>,
 }
 
 impl AllocationOrder {
     pub fn new() -> Self {
         Self {
-            fixed_preferences: SparseMap::new(),
-            candidates: vec![],
-            duplicate_mask: RegOrRegGroupSet::new(),
+            candidates: SparseMap::new(),
         }
+    }
+
+    pub fn prepare(&mut self, reginfo: &impl RegInfo) {
+        self.candidates.grow_to(reginfo.num_regs());
+        self.candidates.grow_to(reginfo.num_reg_groups());
     }
 
     /// Computes the allocation order for the given virtual register.
@@ -139,7 +127,6 @@ impl AllocationOrder {
         hint: Option<PhysReg>,
     ) {
         self.candidates.clear();
-        self.fixed_preferences.clear();
         let class = virt_regs[vreg.first_vreg(virt_regs)].class;
 
         // If this virtual register has fixed-register constraints, collect them
@@ -159,41 +146,24 @@ impl AllocationOrder {
             }
         }
 
-        // Add the preferred registers to the allocation order.
-        match self.fixed_preferences.as_slice() {
-            // In most cases there are no fixed preferences.
-            &[] => {}
-            // Fast path for the common case where there is only a single
-            // preference.
-            &[cand] => self.candidates.push(cand),
-            // If there are multiple candidates, they need to be sorted in order
-            // of decreasing weight.
-            cands => {
-                self.candidates.extend_from_slice(cands);
-                self.candidates
-                    .sort_unstable_by_key(|&cand| Reverse(OrderedFloat(cand.preference_weight)));
-            }
+        // If there are multiple candidates, they need to be sorted in order
+        // of decreasing weight.
+        if self.candidates.len() > 1 {
+            self.candidates
+                .as_mut_slice()
+                .sort_unstable_by_key(|&(_, preference_weight)| {
+                    Reverse(OrderedFloat(preference_weight))
+                });
+            self.candidates.rebuild_mapping();
         }
-
-        // Preferences and hints may cause duplicate entries to appear in the
-        // order. Filter those out to avoid redundant interference checks.
-        self.duplicate_mask.clear();
-        self.duplicate_mask
-            .extend(self.candidates.iter().map(|cand| cand.reg));
 
         // If a previous split or eviction produced a hint when this register
         // was pushed back onto the allocation queue, use that.
         if let Some(hint) = hint {
             if !vreg.is_group() {
                 let hint = RegOrRegGroup::single(hint);
-                if !self.duplicate_mask.contains(hint)
-                    && reginfo.class_members(class).contains(hint)
-                {
-                    self.duplicate_mask.insert(hint);
-                    self.candidates.push(CandidateReg {
-                        reg: hint,
-                        preference_weight: 0.0,
-                    });
+                if reginfo.class_members(class).contains(hint) {
+                    self.candidates.entry(hint).or_insert(0.0);
                 }
             }
         }
@@ -208,33 +178,34 @@ impl AllocationOrder {
             .index()
             + vreg.first_vreg(virt_regs).index();
 
-        // Add the remaining candidates from the register class' allocation
+        // Add the remaining candidates from the register class's allocation
         // order.
-        self.candidates.extend(
-            combined_allocation_order(reginfo, class, random_seed, |reg| {
-                if vreg.is_group() {
-                    // For groups, check whether *all* regs are already in use
-                    // so that using this group doesn't require any new
-                    // callee-saved registers to be preserved.
-                    reginfo
-                        .reg_group_members(reg.as_multi())
-                        .iter()
-                        .all(|&reg| reg_matrix.is_reg_used(reg, reginfo))
-                } else {
-                    reg_matrix.is_reg_used(reg.as_single(), reginfo)
-                }
-            })
-            .filter(|&reg| !self.duplicate_mask.contains(reg))
-            .map(|reg| CandidateReg {
-                reg,
-                preference_weight: 0.0,
-            }),
-        );
+        for reg in combined_allocation_order(reginfo, class, random_seed, |reg| {
+            if vreg.is_group() {
+                // For groups, check whether *all* regs are already in use
+                // so that using this group doesn't require any new
+                // callee-saved registers to be preserved.
+                reginfo
+                    .reg_group_members(reg.as_multi())
+                    .iter()
+                    .all(|&reg| reg_matrix.is_reg_used(reg, reginfo))
+            } else {
+                reg_matrix.is_reg_used(reg.as_single(), reginfo)
+            }
+        }) {
+            // Insert remaining candidates with a preference weight of 0.
+            self.candidates.entry(reg).or_insert(0.0);
+        }
     }
 
     /// Returns an iterator over all the registers in the allocation order.
     pub fn order(&mut self) -> impl Iterator<Item = CandidateReg> + '_ {
-        self.candidates.iter().copied()
+        self.candidates
+            .iter()
+            .map(|&(reg, preference_weight)| CandidateReg {
+                reg,
+                preference_weight,
+            })
     }
 
     /// Indicates whether the allocation order is empty and the virtual register
@@ -246,8 +217,9 @@ impl AllocationOrder {
     /// Returns the highest preferrence weight in the available candidates.
     pub fn highest_preferrence_weight(&self) -> f32 {
         self.candidates
+            .as_slice()
             .first()
-            .map_or(0.0, |cand| cand.preference_weight)
+            .map_or(0.0, |&(_reg, preference_weight)| preference_weight)
     }
 
     /// Scans the uses of the given virtual register to find any preferences for
@@ -301,14 +273,7 @@ impl AllocationOrder {
 
                 // Weigh each preference based on its use frequency.
                 let weight = func.block_frequency(func.inst_block(u.pos()));
-                if let Some(cand) = self.fixed_preferences.get_mut(reg_group) {
-                    cand.preference_weight += weight;
-                } else {
-                    self.fixed_preferences.insert(CandidateReg {
-                        reg: reg_group,
-                        preference_weight: weight,
-                    });
-                }
+                *self.candidates.entry(reg_group).or_default() += weight;
             }
         }
     }

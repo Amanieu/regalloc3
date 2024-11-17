@@ -1,25 +1,104 @@
-//! `AllocationUnit` and `AllocationUnitMap`/`AllocationUnitSet` helper types.
+//! `AllocationUnit` helper type.
 
-use core::ops::{Index, IndexMut};
 use core::{fmt, iter};
 
-use cranelift_entity::{EntitySet, SecondaryMap};
-
+use crate::entity::{EntityRef, ReservedValue};
 use crate::output::{Allocation, AllocationKind, SpillSlot};
-use crate::reginfo::{RegInfo, RegUnit, RegUnitSet};
+use crate::reginfo::{RegInfo, RegUnit, MAX_REG_UNITS};
 
-/// Helper type which abstracts over a register unit or spill slot.
+/// Entity type which can represent either a [`RegUnit`] or a [`SpillSlot`].
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct AllocationUnit {
+    /// Indices below `MAX_REG_UNITS` indicate a `RegUnit`. Otherwise
+    /// this indicates a `SpillSlot` with index `index - MAX_REG_UNITS`.
+    index: u32,
+}
+
+impl EntityRef for AllocationUnit {
+    #[inline]
+    fn new(index: usize) -> Self {
+        debug_assert!(index < (u32::MAX as usize));
+        Self {
+            index: index as u32,
+        }
+    }
+
+    #[inline]
+    fn index(self) -> usize {
+        self.index as usize
+    }
+}
+
+impl ReservedValue for AllocationUnit {
+    #[inline]
+    fn reserved_value() -> Self {
+        Self { index: u32::MAX }
+    }
+
+    #[inline]
+    fn is_reserved_value(&self) -> bool {
+        self.index == u32::MAX
+    }
+}
+
+impl AllocationUnit {
+    /// Constructs a new `AllocationUnit`.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(kind: AllocationUnitKind) -> Self {
+        let index = match kind {
+            AllocationUnitKind::SpillSlot(spillslot) => spillslot.index() + MAX_REG_UNITS,
+            AllocationUnitKind::Reg(unit) => unit.index(),
+        };
+        Self {
+            index: index as u32,
+        }
+    }
+
+    /// Creates an allocation into a `PhysReg`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn reg(unit: RegUnit) -> AllocationUnit {
+        AllocationUnit::new(AllocationUnitKind::Reg(unit))
+    }
+
+    /// Creates an allocation into a `SpillSlot`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn spillslot(spillslot: SpillSlot) -> AllocationUnit {
+        AllocationUnit::new(AllocationUnitKind::SpillSlot(spillslot))
+    }
+
+    /// Expands the `AllocationKind` into an enum that can be matched on.
+    #[inline]
+    #[must_use]
+    pub fn kind(self) -> AllocationUnitKind {
+        if self.index() < MAX_REG_UNITS {
+            AllocationUnitKind::Reg(RegUnit::new(self.index()))
+        } else {
+            AllocationUnitKind::SpillSlot(SpillSlot::new(self.index() - MAX_REG_UNITS))
+        }
+    }
+}
+
+/// Expanded form of `AllocationUnit` as an enum.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum AllocationUnit {
+pub(crate) enum AllocationUnitKind {
     Reg(RegUnit),
-    Slot(SpillSlot),
+    SpillSlot(SpillSlot),
+}
+
+impl fmt::Debug for AllocationUnit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 impl fmt::Display for AllocationUnit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            AllocationUnit::Reg(unit) => unit.fmt(f),
-            AllocationUnit::Slot(slot) => slot.fmt(f),
+        match self.kind() {
+            AllocationUnitKind::Reg(unit) => unit.fmt(f),
+            AllocationUnitKind::SpillSlot(slot) => slot.fmt(f),
         }
     }
 }
@@ -51,95 +130,10 @@ impl Allocation {
                 reginfo
                     .reg_units(reg)
                     .iter()
-                    .map(|&unit| AllocationUnit::Reg(unit)),
+                    .map(|&unit| AllocationUnit::reg(unit)),
             ),
             AllocationKind::SpillSlot(slot) => {
-                EitherIter::B(iter::once(AllocationUnit::Slot(slot)))
-            }
-        }
-    }
-}
-
-/// A wrapper around [`SecondaryMap`] which takes an `AllocationUnit` as an
-/// index.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct AllocationUnitMap<T: Clone> {
-    unit: SecondaryMap<RegUnit, T>,
-    slot: SecondaryMap<SpillSlot, T>,
-}
-
-impl<T: Clone> AllocationUnitMap<T> {
-    pub(crate) fn new() -> Self
-    where
-        T: Default,
-    {
-        Self {
-            unit: SecondaryMap::new(),
-            slot: SecondaryMap::new(),
-        }
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.unit.clear();
-        self.slot.clear();
-    }
-}
-
-impl<T: Clone> Index<AllocationUnit> for AllocationUnitMap<T> {
-    type Output = T;
-
-    fn index(&self, index: AllocationUnit) -> &Self::Output {
-        match index {
-            AllocationUnit::Reg(unit) => &self.unit[unit],
-            AllocationUnit::Slot(slot) => &self.slot[slot],
-        }
-    }
-}
-
-impl<T: Clone> IndexMut<AllocationUnit> for AllocationUnitMap<T> {
-    fn index_mut(&mut self, index: AllocationUnit) -> &mut Self::Output {
-        match index {
-            AllocationUnit::Reg(unit) => &mut self.unit[unit],
-            AllocationUnit::Slot(slot) => &mut self.slot[slot],
-        }
-    }
-}
-
-/// A wrapper around [`EntitySet`] which takes an `AllocationUnit` as an
-/// index.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct AllocationUnitSet {
-    unit: RegUnitSet,
-    slot: EntitySet<SpillSlot>,
-}
-
-impl AllocationUnitSet {
-    pub(crate) fn new() -> Self {
-        Self {
-            unit: RegUnitSet::new(),
-            slot: EntitySet::new(),
-        }
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.unit.clear();
-        self.slot.clear();
-    }
-
-    pub(crate) fn contains(&self, unit: AllocationUnit) -> bool {
-        match unit {
-            AllocationUnit::Reg(unit) => self.unit.contains(unit),
-            AllocationUnit::Slot(slot) => self.slot.contains(slot),
-        }
-    }
-
-    pub(crate) fn insert(&mut self, unit: AllocationUnit) {
-        match unit {
-            AllocationUnit::Reg(unit) => {
-                self.unit.insert(unit);
-            }
-            AllocationUnit::Slot(slot) => {
-                self.slot.insert(slot);
+                EitherIter::B(iter::once(AllocationUnit::spillslot(slot)))
             }
         }
     }

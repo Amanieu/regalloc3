@@ -1,8 +1,6 @@
-use crate::{
-    function::{Function, OperandConstraint, OperandKind, RematCost},
-    output::{Output, OutputInst},
-    reginfo::RegInfo,
-};
+use crate::function::{Function, OperandConstraint, OperandKind, RematCost};
+use crate::output::{Output, OutputInst};
+use crate::reginfo::RegInfo;
 
 /// Cost model to evaluate and compare the quality of different register
 /// allocation algorithms.

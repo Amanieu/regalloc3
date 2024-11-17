@@ -3,9 +3,9 @@ use alloc::vec::Vec;
 use core::ops::RangeInclusive;
 
 use arbitrary::{Arbitrary, Result, Unstructured};
-use cranelift_entity::{EntityRef, PrimaryMap};
 
 use super::{GenericRegInfo, PhysRegData, RegBankData, RegClassData, RegGroupData};
+use crate::entity::PrimaryMap;
 use crate::reginfo::{
     PhysReg, RegBank, RegClass, RegClassSet, RegInfo, RegOrRegGroup, RegUnit, SpillSlotSize,
     MAX_GROUP_SIZE, MAX_REG_UNITS,

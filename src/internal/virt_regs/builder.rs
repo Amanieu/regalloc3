@@ -22,10 +22,8 @@ use alloc::vec::Vec;
 use core::array;
 use core::cmp::Ordering;
 
-use cranelift_entity::packed_option::{PackedOption, ReservedValue};
-use cranelift_entity::SecondaryMap;
-
-use crate::compact_list::CompactList;
+use crate::entity::packed_option::{PackedOption, ReservedValue};
+use crate::entity::{CompactList, SecondaryMap};
 use crate::function::{Function, Inst, OperandKind, ValueGroup};
 use crate::internal::coalescing::Coalescing;
 use crate::internal::live_range::{LiveRangeSegment, Slot};
@@ -55,8 +53,9 @@ impl VirtRegBuilder {
         }
     }
 
-    pub fn clear(&mut self) {
-        self.value_group_mapping.clear();
+    pub fn clear(&mut self, func: &impl Function) {
+        self.value_group_mapping
+            .clear_and_resize(func.num_value_groups());
     }
 
     /// Invalidates a `ValueGroup` to `VirtRegGroup` mapping.

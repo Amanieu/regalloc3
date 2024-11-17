@@ -4,13 +4,11 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::Reverse;
 
-use cranelift_entity::packed_option::ReservedValue;
-use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
-
 use super::coalescing::Coalescing;
 use super::live_range::{LiveRangeSegment, Slot};
 use super::value_live_ranges::{ValueSegment, ValueSet};
-use crate::function::{Inst, Value};
+use crate::entity::{PrimaryMap, SecondaryMap};
+use crate::function::{Function, Inst, Value};
 use crate::output::{SpillSlot, StackLayout};
 use crate::reginfo::SpillSlotSize;
 use crate::{RegAllocError, Stats};
@@ -68,16 +66,8 @@ pub struct SpillAllocator {
 
 impl SpillAllocator {
     pub fn new() -> Self {
-        let zero_point = Inst::new(0).slot(Slot::Boundary);
         Self {
-            sets: SecondaryMap::with_default(SpillData {
-                // The size and live range for the set are initialized by
-                // `set_range`.
-                size: SpillSlotSize::from_log2_bytes(0),
-                live_range_union: LiveRangeSegment::new(zero_point, zero_point),
-                slot: SpillSlot::reserved_value(),
-                spilled: false,
-            }),
+            sets: SecondaryMap::new(),
             stack_layout: StackLayout {
                 slots: PrimaryMap::new(),
                 spillslot_area_size: 0,
@@ -89,9 +79,18 @@ impl SpillAllocator {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self, func: &impl Function) {
         // We don't need to clear self.sets, entries are initialized by
         // set_range and the uninitialized entries can be ignored.
+        self.sets.grow_to_with(func.num_values(), || {
+            let zero_point = Inst::new(0).slot(Slot::Boundary);
+            SpillData {
+                size: SpillSlotSize::from_log2_bytes(0),
+                live_range_union: LiveRangeSegment::new(zero_point, zero_point),
+                slot: SpillSlot::new(0),
+                spilled: false,
+            }
+        });
         self.spilled_segments.clear();
         self.sets_to_allocate.clear();
     }

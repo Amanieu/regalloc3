@@ -5,10 +5,10 @@ use alloc::vec::Vec;
 use core::{fmt, slice};
 
 use anyhow::{bail, ensure, Result};
-use cranelift_entity::{EntityRef as _, EntitySet, SecondaryMap};
 
 use crate::debug_utils::dominator_tree::DominatorTree;
 use crate::debug_utils::postorder::PostOrder;
+use crate::entity::{EntitySet, SecondaryMap};
 use crate::function::{
     Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, Value, ValueGroup,
     MAX_BLOCKS, MAX_BLOCK_PARAMS, MAX_INSTS, MAX_INST_OPERANDS, MAX_VALUES,
@@ -31,10 +31,10 @@ pub fn validate_function(func: &impl Function, reginfo: &impl RegInfo) -> Result
     let mut ctx = Context {
         func,
         reginfo,
-        value_defs: SecondaryMap::new(),
+        value_defs: SecondaryMap::with_max_index(func.num_values()),
         early_fixed: RegUnitSet::new(),
         late_fixed: RegUnitSet::new(),
-        used_value_groups: EntitySet::new(),
+        used_value_groups: EntitySet::with_max_index(func.num_value_groups()),
         reuse_targets: vec![],
         domtree: DominatorTree::new(),
     };
@@ -106,9 +106,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             Entity::Value(x) => (x.index(), self.func.num_values()),
             Entity::ValueGroup(x) => {
                 ensure!(
-                    self.used_value_groups.insert(x),
+                    !self.used_value_groups.contains(x),
                     "{x} cannot be used multiple times in a function"
                 );
+                self.used_value_groups.insert(x);
                 (x.index(), self.func.num_value_groups())
             }
             Entity::Inst(x) => (x.index(), self.func.num_insts()),

@@ -7,8 +7,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 
-use cranelift_entity::SecondaryMap;
-
+use crate::entity::SecondaryMap;
 use crate::function::{Block, Function};
 
 /// Post-order traversal of the control flow graph.
@@ -93,8 +92,7 @@ impl PostOrder {
         self.stack.clear();
         self.postorder.clear();
         self.postorder.reserve(func.num_blocks());
-        self.po_number.clear();
-        self.po_number.resize(func.num_blocks());
+        self.po_number.clear_and_resize(func.num_blocks());
 
         // This algorithm is a depth first traversal (DFT) of the control flow graph, computing a
         // post-order of the blocks that are reachable from the entry block. A DFT post-order is not

@@ -3,10 +3,9 @@
 
 use alloc::vec::Vec;
 use core::fmt;
-use cranelift_entity::packed_option::PackedOption;
 
-use cranelift_entity::PrimaryMap;
-
+use crate::entity::packed_option::PackedOption;
+use crate::entity::PrimaryMap;
 use crate::function::{Block, Function, Inst, InstRange, Operand, RematCost, Value, ValueGroup};
 use crate::reginfo::{RegBank, RegClass, RegUnit};
 

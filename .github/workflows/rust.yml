@@ -47,7 +47,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fuzz_target: [func_gen, func_parse, reginfo_gen, reginfo_parse, parallel_moves, compile]
+        fuzz_target: [func_gen, func_parse, reginfo_gen, reginfo_parse, parallel_moves, compile, compile_reuse]
     env:
       RUSTFLAGS: -D warnings
     steps:

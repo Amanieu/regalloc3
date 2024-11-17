@@ -141,9 +141,8 @@
 
 use core::fmt;
 
-use cranelift_entity::{EntityRef, Keys};
-
-use crate::entity_utils::SmallEntitySet;
+use crate::entity::iter::Keys;
+use crate::entity::SmallEntitySet;
 
 /// Maximum number of register units.
 pub const MAX_REG_UNITS: usize = 512;
@@ -166,55 +165,52 @@ pub const MAX_UNITS_PER_REG: usize = 8;
 /// Maximum size of a register group.
 pub const MAX_GROUP_SIZE: usize = 8;
 
-/// A subset of a register which cannot be further split.
-///
-/// For simple cases, a [`PhysReg`] will directly map to a single register unit.
-/// However some ISAs have registers which overlap with others: this can be
-/// modeled by having that register cover more than one register unit.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct RegUnit(u16);
-entity_impl!(RegUnit(u16), "unit");
+entity_def! {
+    /// A subset of a register which cannot be further split.
+    ///
+    /// For simple cases, a [`PhysReg`] will directly map to a single register unit.
+    /// However some ISAs have registers which overlap with others: this can be
+    /// modeled by having that register cover more than one register unit.
+    pub entity RegUnit(u16, "unit");
 
-/// A location to which a value can be mapped to.
-///
-/// Note that despite the name, this doesn't have to be a machine register. A
-/// fixed stack slot (typically used for function arguments and return values)
-/// can also be represented as a `PhysReg`.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct PhysReg(u16);
-entity_impl!(PhysReg(u16), "r");
+    /// A location to which a value can be mapped to.
+    ///
+    /// Note that despite the name, this doesn't have to be a machine register. A
+    /// fixed stack slot (typically used for function arguments and return values)
+    /// can also be represented as a `PhysReg`.
+    pub entity PhysReg(u16, "r");
 
-/// A sequence of multiple registers which are assigned together for a single
-/// operand.
-///
-/// This type is only used for groups with more than one register. When only a
-/// single register is used, [`PhysReg`] is used directly.
-///
-/// In most cases these only consist of a single [`PhysReg`], but some
-/// instruction operands require a sequence of registers from a specific set.
-/// An example of this is an AArch64 SIMD structured load which only encodes the
-/// first register of the sequence in the instruction.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct RegGroup(u16);
-entity_impl!(RegGroup(u16), "rg");
+    /// A sequence of multiple registers which are assigned together for a single
+    /// operand.
+    ///
+    /// This type is only used for groups with more than one register. When only a
+    /// single register is used, [`PhysReg`] is used directly.
+    ///
+    /// In most cases these only consist of a single [`PhysReg`], but some
+    /// instruction operands require a sequence of registers from a specific set.
+    /// An example of this is an AArch64 SIMD structured load which only encodes the
+    /// first register of the sequence in the instruction.
+    pub entity RegGroup(u16, "rg");
 
-/// A sequence of registers which are assigned together for a single operand.
-///
-/// In most cases these only consist of a single [`PhysReg`], but some
-/// instruction operands require a sequence of registers from a specific set.
-/// An example of this is an AArch64 SIMD structured load which only encodes the
-/// first register of the sequence in the instruction.
-///
-/// This type represents either a [`PhysReg`] for groups of size 1 or a
-/// [`RegGroup`] for larger group sizes. The group size is not encoded in
-/// this type itself: it must instead be inferred from context.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct RegOrRegGroup(u16);
-entity_impl!(RegOrRegGroup(u16), "r/rg");
+    /// A sequence of registers which are assigned together for a single operand.
+    ///
+    /// In most cases these only consist of a single [`PhysReg`], but some
+    /// instruction operands require a sequence of registers from a specific set.
+    /// An example of this is an AArch64 SIMD structured load which only encodes the
+    /// first register of the sequence in the instruction.
+    ///
+    /// This type represents either a [`PhysReg`] for groups of size 1 or a
+    /// [`RegGroup`] for larger group sizes. The group size is not encoded in
+    /// this type itself: it must instead be inferred from context.
+    pub entity RegOrRegGroup(u16, "r/rg");
+
+    /// A set of [`PhysReg`] or [`RegGroup`] which can be allocated for an operand.
+    pub entity RegClass(u8, "class");
+
+    /// A set of registers between which values can be copied with move
+    /// instructions.
+    pub entity RegBank(u8, "bank");
+}
 
 impl RegOrRegGroup {
     /// Creates a [`RegOrRegGroup`] representing a single [`PhysReg`].
@@ -253,19 +249,6 @@ impl RegOrRegGroup {
         RegGroup::new(self.index())
     }
 }
-
-/// A set of [`PhysReg`] or [`RegGroup`] which can be allocated for an operand.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct RegClass(u8);
-entity_impl!(RegClass(u8), "class");
-
-/// A set of registers between which values can be copied with move
-/// instructions.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct RegBank(u8);
-entity_impl!(RegBank(u8), "bank");
 
 /// A set of [`RegUnit`] encoded as a fixed-size bit set.
 pub type RegUnitSet = SmallEntitySet<RegUnit, u64, { MAX_REG_UNITS / 64 }>;

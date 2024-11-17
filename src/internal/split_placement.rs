@@ -20,9 +20,8 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use cranelift_entity::packed_option::PackedOption;
-use cranelift_entity::SecondaryMap;
-
+use crate::entity::packed_option::PackedOption;
+use crate::entity::SecondaryMap;
 use crate::function::{Block, Function, Inst};
 
 /// Optimal placement of live range split points.
@@ -50,10 +49,8 @@ impl SplitPlacement {
 
     /// Prepares the metadata for split placement from the function CFG.
     pub fn prepare(&mut self, func: &impl Function) {
-        self.next_lower_freq.clear();
-        self.next_lower_freq.resize(func.num_blocks());
-        self.prev_lower_freq.clear();
-        self.prev_lower_freq.resize(func.num_blocks());
+        self.next_lower_freq.clear_and_resize(func.num_blocks());
+        self.prev_lower_freq.clear_and_resize(func.num_blocks());
 
         // Scan through the blocks in linear order.
         self.stack.clear();

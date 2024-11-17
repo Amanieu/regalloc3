@@ -31,39 +31,35 @@
 //! a single pass. Any blocks that have incoming back edges are simply assumed
 //! to not have any live values on entry.
 
-use core::{cmp::Reverse, fmt};
-
+use alloc::collections::binary_heap::BinaryHeap;
+use alloc::vec;
 use alloc::vec::Vec;
-use alloc::{collections::binary_heap::BinaryHeap, vec};
+use core::cmp::Reverse;
+use core::fmt;
+
 use cranelift_bitset::CompoundBitSet;
-use cranelift_entity::packed_option::ReservedValue;
-use cranelift_entity::EntityRef;
-use cranelift_entity::{packed_option::PackedOption, PrimaryMap, SecondaryMap};
-use hashbrown::{hash_map::Entry, HashMap};
-use rustc_hash::FxBuildHasher;
 use smallvec::{smallvec, SmallVec};
 
-use crate::reginfo::RegUnitSet;
-use crate::{
-    function::{Block, Function, Inst, Operand, OperandConstraint, OperandKind, Value, ValueGroup},
-    output::{Allocation, AllocationKind, SpillSlot},
-    reginfo::{PhysReg, PhysRegSet, RegInfo, RegUnit},
-    MoveOptimizationLevel, Stats,
+use super::allocations::Allocations;
+use super::coalescing::Coalescing;
+use super::move_resolver::{Edit, MoveResolver};
+use super::spill_allocator::SpillAllocator;
+use crate::entity::packed_option::{PackedOption, ReservedValue};
+use crate::entity::sparse::Entry;
+use crate::entity::{PrimaryMap, SecondaryMap, SparseMap};
+use crate::function::{
+    Block, Function, Inst, Operand, OperandConstraint, OperandKind, Value, ValueGroup,
 };
+use crate::output::{Allocation, AllocationKind, SpillSlot};
+use crate::reginfo::{PhysReg, PhysRegSet, RegInfo, RegUnit, RegUnitSet, MAX_REG_UNITS};
+use crate::{MoveOptimizationLevel, Stats};
 
-use super::{
-    allocations::Allocations,
-    coalescing::Coalescing,
-    move_resolver::{Edit, MoveResolver},
-    spill_allocator::SpillAllocator,
-};
-
-/// Multiple blocks may share the same entry state if they all have the same
-/// single predecessor block. We avoid duplication by adding one level of
-/// indirection.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-struct EntryState(u32);
-entity_impl!(EntryState(u32), "entry_state");
+entity_def! {
+    /// Multiple blocks may share the same entry state if they all have the same
+    /// single predecessor block. We avoid duplication by adding one level of
+    /// indirection.
+    entity EntryState(u32);
+}
 
 pub struct MoveOptimizer {
     /// State tracker used for processing blocks.
@@ -167,8 +163,7 @@ impl MoveOptimizer {
     /// Prepares the block entry states for forward-edge-only optimization.
     fn prepare_forward_pass(&mut self, func: &impl Function) {
         self.entry_states.clear();
-        self.block_entry_states.clear();
-        self.block_entry_states.resize(func.num_blocks());
+        self.block_entry_states.clear_and_resize(func.num_blocks());
 
         // Set the entry state of the entry block to empty.
         let initial_state = self.entry_states.push(smallvec![]);
@@ -196,9 +191,8 @@ impl MoveOptimizer {
         reginfo: &impl RegInfo,
     ) {
         self.entry_states.clear();
-        self.block_entry_states.clear();
+        self.block_entry_states.clear_and_resize(func.num_blocks());
         self.blocks_to_preprocess.clear();
-        self.block_entry_states.resize(func.num_blocks());
 
         // Initialize the state for the entry block and add it to the queue.
         let initial_state = self.entry_states.push(smallvec![]);
@@ -244,9 +238,8 @@ impl MoveOptimizer {
             Some(state) => {
                 // All of our successors must have the same EntryState.
                 for &succ in succs {
-                    debug_assert_eq!(
-                        self.block_entry_states[succ],
-                        self.block_entry_states[succs[0]]
+                    debug_assert!(
+                        self.block_entry_states[succ] == self.block_entry_states[succs[0]]
                     );
                 }
 
@@ -258,7 +251,7 @@ impl MoveOptimizer {
                 // existing state.
                 state.retain(|&mut (alloc, value)| match alloc.kind() {
                     AllocationKind::PhysReg(reg) => {
-                        if let Some(regs) = self.state_tracker.value_regs.get(&value) {
+                        if let Some(regs) = self.state_tracker.value_regs.get(value) {
                             if regs.contains(reg) {
                                 return true;
                             }
@@ -266,7 +259,7 @@ impl MoveOptimizer {
                         false
                     }
                     AllocationKind::SpillSlot(slot) => {
-                        if let Some(&slot_value) = self.state_tracker.spillslot_values.get(&slot) {
+                        if let Some(&slot_value) = self.state_tracker.spillslot_values.get(slot) {
                             if slot_value == value {
                                 return true;
                             }
@@ -296,7 +289,7 @@ impl MoveOptimizer {
                 // For the same reason, back-edges can only occur from blocks
                 // with a single predecessor so we only need to check those.
                 let mut state = smallvec![];
-                for (&value, &regs) in &self.state_tracker.value_regs {
+                for &(value, regs) in &self.state_tracker.value_regs {
                     if succs.len() == 1 && self.state_tracker.value_def_block[value] >= succs[0] {
                         continue;
                     }
@@ -304,7 +297,7 @@ impl MoveOptimizer {
                         state.push((Allocation::reg(reg), value));
                     }
                 }
-                for (&slot, &value) in &self.state_tracker.spillslot_values {
+                for &(slot, value) in &self.state_tracker.spillslot_values {
                     if succs.len() == 1 && self.state_tracker.value_def_block[value] >= succs[0] {
                         continue;
                     }
@@ -347,17 +340,17 @@ struct StateTracker {
     /// block that is being processed.
     ///
     /// Empty `PhysRegSet` are omitted from the map to keep the size down.
-    value_regs: HashMap<Value, PhysRegSet, FxBuildHasher>,
+    value_regs: SparseMap<Value, PhysRegSet>,
 
     /// The last `Value` that was written to a `RegUnit` and the `PhysReg` used
     /// for that write.
     ///
     /// This does not necessarily mean that `Value` is located in `PhysReg`
     /// since other units of the `PhysReg` may have been overwritten.
-    last_unit_write: SecondaryMap<RegUnit, Option<(PhysReg, Value)>>,
+    last_unit_write: SparseMap<RegUnit, (PhysReg, Value)>,
 
     /// `Value` currently held in each `SpillSlot`.
-    spillslot_values: HashMap<SpillSlot, Value>,
+    spillslot_values: SparseMap<SpillSlot, Value>,
 
     /// List of operands whose allocation is reused in the current instruction.
     reused_operands: Vec<usize>,
@@ -382,7 +375,7 @@ struct StateTracker {
 impl fmt::Display for StateTracker {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut alloc_values = vec![];
-        for (&value, &regs) in &self.value_regs {
+        for &(value, regs) in &self.value_regs {
             for reg in &regs {
                 alloc_values.push((Allocation::reg(reg), value));
             }
@@ -392,7 +385,7 @@ impl fmt::Display for StateTracker {
             write!(f, "{alloc}({value}) ")?;
         }
         alloc_values.clear();
-        for (&slot, &value) in &self.spillslot_values {
+        for &(slot, value) in &self.spillslot_values {
             alloc_values.push((Allocation::spillslot(slot), value));
         }
         alloc_values.sort_unstable_by_key(|&(alloc, _)| alloc);
@@ -407,10 +400,10 @@ impl StateTracker {
     fn new() -> Self {
         Self {
             slot_for_value: SecondaryMap::new(),
-            value_def_block: SecondaryMap::with_default(Block::reserved_value()),
-            value_regs: HashMap::default(),
-            last_unit_write: SecondaryMap::new(),
-            spillslot_values: HashMap::default(),
+            value_def_block: SecondaryMap::new(),
+            value_regs: SparseMap::new(),
+            last_unit_write: SparseMap::new(),
+            spillslot_values: SparseMap::new(),
             reused_operands: vec![],
             def_units: RegUnitSet::new(),
             emergency_spill: vec![],
@@ -425,11 +418,17 @@ impl StateTracker {
         coalescing: &mut Coalescing,
         func: &impl Function,
     ) {
-        self.value_def_block.resize(func.num_values());
+        self.value_def_block
+            .grow_to_with(func.num_values(), || Block::reserved_value());
+        self.slot_for_value.grow_to(func.num_values());
         for value in func.values() {
             self.slot_for_value[value] = spill_allocator.value_spillslot(value, coalescing).into();
         }
-        self.last_spilled_in.clear();
+        self.last_spilled_in.clear_and_resize(func.num_values());
+        self.value_regs.grow_to(func.num_values());
+        self.last_unit_write.grow_to(MAX_REG_UNITS);
+        self.spillslot_values
+            .grow_to(spill_allocator.stack_layout.num_spillslots());
     }
 
     /// Resets the state tracker to a clean slate with no live values.
@@ -441,7 +440,7 @@ impl StateTracker {
 
     /// Clobbers any existing value on a register that contains the given unit.
     fn clobber_unit(&mut self, unit: RegUnit) {
-        if let Some((reg, value)) = self.last_unit_write[unit] {
+        if let Some((reg, value)) = self.last_unit_write.remove(unit) {
             if let Entry::Occupied(mut e) = self.value_regs.entry(value) {
                 let set = e.get_mut();
                 set.remove(reg);
@@ -450,7 +449,6 @@ impl StateTracker {
                 }
             }
         }
-        self.last_unit_write[unit] = None;
     }
 
     /// Handles the definition of a value.
@@ -467,16 +465,16 @@ impl StateTracker {
                 for &unit in reginfo.reg_units(reg) {
                     self.def_units.insert(unit);
                     self.clobber_unit(unit);
-                    self.last_unit_write[unit] = Some((reg, value));
+                    self.last_unit_write.insert(unit, (reg, value));
                 }
                 let set = [reg].into_iter().collect();
                 self.value_regs.insert(value, set);
                 if let Some(slot) = self.slot_for_value[value].expand() {
-                    self.spillslot_values.remove(&slot);
+                    self.spillslot_values.remove(slot);
                 }
             }
             AllocationKind::SpillSlot(slot) => {
-                self.value_regs.remove(&value);
+                self.value_regs.remove(value);
                 if self.slot_for_value[value].expand() == Some(slot) {
                     self.spillslot_values.insert(slot, value);
                 }
@@ -488,18 +486,20 @@ impl StateTracker {
     /// entry state.
     ///
     /// This is always called on a clean state and therefore doesn't need to
-    /// worry about clobbering existing values.
+    /// worry about overlaps or clobbering existing values.
+    ///
+    /// However it does need to handle the case where a value is in multiple
+    /// allocations at once, which `def_value` doesn't need to.
     fn initial_value(&mut self, value: Value, alloc: Allocation, reginfo: &impl RegInfo) {
         match alloc.kind() {
             AllocationKind::PhysReg(reg) => {
                 for &unit in reginfo.reg_units(reg) {
-                    self.last_unit_write[unit] = Some((reg, value));
+                    self.last_unit_write.insert_unique(unit, (reg, value));
                 }
-                let set = [reg].into_iter().collect();
-                self.value_regs.insert(value, set);
+                self.value_regs.entry(value).or_default().insert(reg);
             }
             AllocationKind::SpillSlot(slot) => {
-                self.spillslot_values.insert(slot, value);
+                self.spillslot_values.insert_unique(slot, value);
             }
         }
     }
@@ -555,7 +555,7 @@ impl StateTracker {
                 AllocationKind::PhysReg(reg) => {
                     for &unit in reginfo.reg_units(reg) {
                         self.clobber_unit(unit);
-                        self.last_unit_write[unit] = Some((reg, value));
+                        self.last_unit_write.insert(unit, (reg, value));
                     }
                     self.value_regs.entry(value).or_default().insert(reg);
                 }
@@ -574,10 +574,10 @@ impl StateTracker {
                 // Also, emergency spill slots are not used to hold normal
                 // values and therefore don't need to be tracked.
                 (AllocationKind::PhysReg(reg), AllocationKind::SpillSlot(slot)) => {
-                    debug_assert!(!self.spillslot_values.contains_key(&slot));
+                    debug_assert!(!self.spillslot_values.contains_key(slot));
                     self.emergency_spill.clear();
                     for &unit in reginfo.reg_units(reg) {
-                        if let Some((reg, value)) = self.last_unit_write[unit] {
+                        if let Some(&(reg, value)) = self.last_unit_write.get(unit) {
                             self.emergency_spill.push((unit, reg, value));
                         }
                     }
@@ -590,14 +590,15 @@ impl StateTracker {
                         self.clobber_unit(unit);
                     }
                     for &(unit, reg, value) in &self.emergency_spill {
-                        self.last_unit_write[unit] = Some((reg, value));
+                        self.last_unit_write.insert(unit, (reg, value));
 
                         // Mark the value as being located in a register only if
                         // all units have the same value.
                         if reginfo.reg_units(reg).len() == 1
                             || reginfo.reg_units(reg).iter().all(|&unit| {
-                                self.last_unit_write[unit]
-                                    .is_some_and(|(_, value2)| value2 == value)
+                                self.last_unit_write
+                                    .get(unit)
+                                    .is_some_and(|&(_, value2)| value2 == value)
                             })
                         {
                             self.value_regs.entry(value).or_default().insert(reg);
@@ -694,7 +695,7 @@ impl StateTracker {
             // setting its destination to `None`.
             match edit.to.unwrap().kind() {
                 AllocationKind::PhysReg(reg) => {
-                    if let Some(set) = self.value_regs.get(&value) {
+                    if let Some(set) = self.value_regs.get(value) {
                         if set.contains(reg) {
                             match edit.from.expand() {
                                 Some(from) => match from.kind() {
@@ -714,7 +715,7 @@ impl StateTracker {
                     }
                 }
                 AllocationKind::SpillSlot(slot) => {
-                    if self.spillslot_values.get(&slot) == Some(&value) {
+                    if self.spillslot_values.get(slot) == Some(&value) {
                         stat!(stats, optimized_redundant_spill);
                         trace!("Eliminated redundant spill");
                         edit.to = None.into();
@@ -738,7 +739,10 @@ impl StateTracker {
                             if func.block_dominates(prev_block, block) {
                                 stat!(stats, optimized_redundant_spill);
                                 edit.to = None.into();
-                                trace!("Eliminated redundant spill: already spilled in dominating block");
+                                trace!(
+                                    "Eliminated redundant spill: already spilled in dominating \
+                                     block"
+                                );
                                 return;
                             }
                         }
@@ -752,7 +756,7 @@ impl StateTracker {
             // is already present in another register.
             if let Some(from) = edit.from.expand() {
                 if from.is_memory(reginfo) {
-                    if let Some(&regs_with_value) = self.value_regs.get(&value) {
+                    if let Some(&regs_with_value) = self.value_regs.get(value) {
                         if let Some(reg) =
                             regs_with_value.iter().find(|&reg| !reginfo.is_memory(reg))
                         {
@@ -840,7 +844,7 @@ impl StateTracker {
                         continue;
                     }
                     if let OperandConstraint::Class(class) = op.constraint() {
-                        if let Some(&regs_with_value) = self.value_regs.get(&value) {
+                        if let Some(&regs_with_value) = self.value_regs.get(value) {
                             let class_members = reginfo.class_members(class).map_index();
                             if let Some(reg) = (class_members & regs_with_value)
                                 .iter()

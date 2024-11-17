@@ -11,8 +11,6 @@
 
 use core::fmt;
 
-use cranelift_entity::EntityRef;
-
 use crate::function::Inst;
 
 /// A slot within an instruction at which a live range starts or end.

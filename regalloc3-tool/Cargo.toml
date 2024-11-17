@@ -14,4 +14,3 @@ clap = { version = "4.3.11", features = ["derive"] }
 pretty_env_logger = "0.5.0"
 rand = "0.8.5"
 regalloc3 = { path = "..", features = ["parse", "trace-log", "arbitrary"] }
-cranelift-entity = "0.110.1"

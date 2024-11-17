@@ -6,8 +6,6 @@
 use alloc::collections::BinaryHeap;
 use core::{fmt, mem};
 
-use cranelift_entity::EntityRef;
-
 use super::Stage;
 use crate::internal::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
 use crate::reginfo::MAX_GROUP_SIZE;

@@ -19,8 +19,6 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::hash::{Hash, Hasher};
 
-use cranelift_entity::packed_option::PackedOption;
-use cranelift_entity::EntityRef;
 use hashbrown::HashMap;
 use rustc_hash::FxBuildHasher;
 
@@ -33,6 +31,7 @@ use super::spill_allocator::SpillAllocator;
 use super::uses::{Use, UseKind, Uses};
 use super::value_live_ranges::ValueSegment;
 use super::virt_regs::VirtRegs;
+use crate::entity::packed_option::PackedOption;
 use crate::function::{Block, Function, Inst, Value};
 use crate::internal::live_range::LiveRangeSegment;
 use crate::output::{Allocation, AllocationKind};
@@ -332,7 +331,8 @@ impl MoveResolver {
         // Ensure that all allocations are filled in at this point.
         allocations.assert_all_assigned();
 
-        self.parallel_move_resolver.clear();
+        self.parallel_move_resolver
+            .prepare(func, spill_allocator.stack_layout.num_spillslots());
         self.dest_half_moves
             .sort_unstable_by_key(|&(pos, _, _)| pos);
         for half_moves in self.dest_half_moves.chunk_by(|a, b| a.0 == b.0) {

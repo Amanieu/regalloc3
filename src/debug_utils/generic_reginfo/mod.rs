@@ -4,8 +4,7 @@
 use alloc::vec::Vec;
 use core::fmt;
 
-use cranelift_entity::PrimaryMap;
-
+use crate::entity::PrimaryMap;
 use crate::reginfo::{
     AllocationOrderSet, PhysReg, RegBank, RegClass, RegClassSet, RegGroup, RegInfo, RegOrRegGroup,
     RegOrRegGroupSet, RegUnit, SpillSlotSize,

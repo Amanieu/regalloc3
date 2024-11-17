@@ -1,3 +1,5 @@
+//! Compact lists allocated from a shared pool.
+
 use alloc::vec;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -102,17 +104,18 @@ pub struct CompactListPool<T> {
 }
 
 impl<T> CompactListPool<T> {
-    /// Create a new list pool.
+    /// Creates a new list pool.
     pub const fn new() -> Self {
         Self { elems: vec![] }
     }
 
-    /// Clear the pool, forgetting about all lists that use it.
+    /// Clears the pool, forgetting about all lists that use it.
     ///
-    /// This invalidates any existing entity lists that used this pool to allocate memory.
+    /// This invalidates any existing entity lists that used this pool to
+    /// allocate memory.
     ///
-    /// The pool's memory is not released to the operating system, but kept around for faster
-    /// allocation in the future.
+    /// The pool's memory is not released to the operating system, but kept
+    /// around for faster allocation in the future.
     pub fn clear(&mut self) {
         self.elems.clear();
     }

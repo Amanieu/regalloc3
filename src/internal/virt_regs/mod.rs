@@ -6,9 +6,6 @@
 use alloc::vec::Vec;
 use core::ops::Index;
 
-use cranelift_entity::packed_option::PackedOption;
-use cranelift_entity::{Keys, PrimaryMap};
-
 use self::builder::VirtRegBuilder;
 use super::allocator::Allocator;
 use super::coalescing::Coalescing;
@@ -16,8 +13,10 @@ use super::spill_allocator::SpillAllocator;
 use super::split_placement::SplitPlacement;
 use super::uses::Uses;
 use super::value_live_ranges::{ValueLiveRanges, ValueSegment};
-use crate::compact_list::{CompactList, CompactListPool};
 use crate::debug_utils::display_iter;
+use crate::entity::iter::Keys;
+use crate::entity::packed_option::PackedOption;
+use crate::entity::{CompactList, CompactListPool, PrimaryMap};
 use crate::function::Function;
 use crate::internal::live_range::LiveRangeSegment;
 use crate::reginfo::{RegClass, RegInfo};
@@ -25,22 +24,20 @@ use crate::Stats;
 
 pub mod builder;
 
-/// An opaque reference to a virtual register.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub struct VirtReg(u32);
-entity_impl!(VirtReg(u32), "v");
+entity_def! {
+    /// An opaque reference to a virtual register.
+    pub entity VirtReg(u32, "v");
 
-/// An opaque reference to a group of virtual registers that must be allocated
-/// and evicted together.
-///
-/// All virtual registers in a group must have:
-/// - the same register class constraint, which points to a register class with
-///   a matching group size.
-/// - different `group_index` so that the virtual register cover the entire
-///   register group.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub struct VirtRegGroup(u32);
-entity_impl!(VirtRegGroup(u32), "vg");
+    /// An opaque reference to a group of virtual registers that must be allocated
+    /// and evicted together.
+    ///
+    /// All virtual registers in a group must have:
+    /// - the same register class constraint, which points to a register class with
+    ///   a matching group size.
+    /// - different `group_index` so that the virtual register cover the entire
+    ///   register group.
+    pub entity VirtRegGroup(u32, "vg");
+}
 
 pub struct VirtRegData {
     /// Sorted list of live range segments for this virtual register.
@@ -136,6 +133,11 @@ impl VirtRegs {
         self.virt_regs.keys()
     }
 
+    /// Number of virtual registers currently defined.
+    pub fn num_virt_regs(&self) -> usize {
+        self.virt_regs.len()
+    }
+
     /// Iterator over all virtual register groups.
     pub fn groups(&self) -> Keys<VirtRegGroup> {
         self.groups.keys()
@@ -190,8 +192,8 @@ impl VirtRegs {
         stats: &mut Stats,
     ) {
         self.clear();
-        virt_reg_builder.clear();
-        spill_allocator.clear();
+        virt_reg_builder.clear(func);
+        spill_allocator.clear(func);
         allocator.empty_segments.clear();
 
         for (set, mut segments) in value_live_ranges.take_all_value_sets() {

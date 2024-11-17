@@ -1,4 +1,4 @@
-use cranelift_entity::PrimaryMap;
+use regalloc3::entity::PrimaryMap;
 
 use super::{Arch, RegBankData, RegClassData, RegData, RegGroupData, RegGroupList, RegInfo};
 
