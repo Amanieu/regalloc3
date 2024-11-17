@@ -407,7 +407,7 @@ impl MoveResolver {
         let prev = self
             .source_half_moves
             .insert(HalfMoveKey { pos, value }, alloc);
-        debug_assert!(!prev.is_some_and(|prev| prev != alloc));
+        debug_assert!(prev.is_none_or(|prev| prev == alloc));
     }
 
     fn emit_dest_half_move(&mut self, pos: MovePosition, value: Value, alloc: Allocation) {

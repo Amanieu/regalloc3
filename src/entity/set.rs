@@ -42,6 +42,7 @@ where
 
     /// Create a new set large enough to hold entity references with an index
     /// below `max_index`.
+    #[must_use]
     pub fn with_max_index(max_index: usize) -> Self {
         let mut set = Self::new();
         set.grow_to(max_index);
@@ -95,18 +96,20 @@ where
     /// Any existing elements are not modified.
     #[inline]
     pub fn grow_to(&mut self, max_index: usize) {
-        let words = (max_index + Word::BITS as usize - 1) / Word::BITS as usize;
+        let words = max_index.div_ceil(Word::BITS as usize);
         self.storage.resize(words, 0);
     }
 
     /// Returns whether the set contains no elements.
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.storage.iter().all(|&word| word == 0)
     }
 
     /// Returns the number of elements in the set.
     #[inline]
+    #[must_use]
     pub fn count(&self) -> usize {
         self.storage
             .iter()
@@ -117,6 +120,7 @@ where
     /// Returns an iterator over all the elements in the set, starting from the
     /// lowest index.
     #[inline]
+    #[must_use]
     pub fn iter(&self) -> Iter<'_, T> {
         Iter {
             current_word: 0,

@@ -27,6 +27,7 @@ impl<T> Copy for CompactList<T> {}
 
 impl<T> CompactList<T> {
     /// Creates a new empty list.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             start: 0,
@@ -50,12 +51,20 @@ impl<T> CompactList<T> {
         }
     }
 
+    /// Returns whether the list is empty.
+    #[must_use]
+    pub fn is_empty(self) -> bool {
+        self.start == self.end
+    }
+
     /// Get the number of elements in the list.
+    #[must_use]
     pub fn len(self) -> usize {
         (self.end - self.start) as usize
     }
 
     /// Get the list as a slice.
+    #[must_use]
     pub fn as_slice(self, pool: &CompactListPool<T>) -> &[T] {
         &pool.elems[self.start as usize..self.end as usize]
     }
@@ -105,6 +114,7 @@ pub struct CompactListPool<T> {
 
 impl<T> CompactListPool<T> {
     /// Creates a new list pool.
+    #[must_use]
     pub const fn new() -> Self {
         Self { elems: vec![] }
     }

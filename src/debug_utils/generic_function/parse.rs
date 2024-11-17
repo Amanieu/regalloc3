@@ -275,7 +275,7 @@ fn compute_preds_and_dominators(func: &mut GenericFunction) {
             preds[succ].push(block);
         }
     }
-    for (block, preds) in preds.iter() {
+    for (block, preds) in &preds {
         func.blocks[block].preds = preds.clone();
     }
     let postorder = PostOrder::for_function(func);

@@ -379,7 +379,7 @@ impl RegMatrix {
     /// Dumps the entire register matrix to the log.
     pub fn dump(&self) {
         trace!("Register matrix:");
-        for (unit, reservations) in self.reservations.iter() {
+        for (unit, reservations) in &self.reservations {
             if reservations.vregs.is_empty() && reservations.fixed.is_empty() {
                 continue;
             }

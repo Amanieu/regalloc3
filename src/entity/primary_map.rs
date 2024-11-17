@@ -33,6 +33,7 @@ where
 {
     /// Create a new empty map.
     #[inline]
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             elems: Vec::new(),
@@ -42,6 +43,7 @@ where
 
     /// Create a new empty map with the given capacity.
     #[inline]
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             elems: Vec::with_capacity(capacity),
@@ -51,6 +53,7 @@ where
 
     /// Returns the number of elements the map can hold without reallocating.
     #[inline]
+    #[must_use]
     pub fn capacity(&self) -> usize {
         self.elems.capacity()
     }
@@ -72,18 +75,21 @@ where
 
     /// Is this map completely empty?
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.elems.is_empty()
     }
 
     /// Get the total number of entity references created.
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.elems.len()
     }
 
     /// Iterate over all the keys in this map.
     #[inline]
+    #[must_use]
     pub fn keys(&self) -> Keys<K> {
         Keys::with_len(self.elems.len())
     }
@@ -102,12 +108,14 @@ where
 
     /// Return an owning iterator over the values of the map.
     #[inline]
+    #[must_use]
     pub fn into_values(self) -> vec::IntoIter<V> {
         self.elems.into_iter()
     }
 
     /// Iterate over all the keys and values in this map.
     #[inline]
+    #[must_use]
     pub fn iter(&self) -> Iter<'_, K, V> {
         Iter::new(self.elems.iter())
     }
@@ -121,11 +129,12 @@ where
     /// Remove all entries from this map.
     #[inline]
     pub fn clear(&mut self) {
-        self.elems.clear()
+        self.elems.clear();
     }
 
     /// Get the key that will be assigned to the next pushed value.
     #[inline]
+    #[must_use]
     pub fn next_key(&self) -> K {
         K::new(self.elems.len())
     }
@@ -150,6 +159,7 @@ where
 
     /// Returns the last element that was inserted in the map.
     #[inline]
+    #[must_use]
     pub fn last(&self) -> Option<(K, &V)> {
         let len = self.elems.len();
         let last = self.elems.last()?;
@@ -167,19 +177,19 @@ where
     /// Reserves capacity for at least `additional` more elements to be inserted.
     #[inline]
     pub fn reserve(&mut self, additional: usize) {
-        self.elems.reserve(additional)
+        self.elems.reserve(additional);
     }
 
     /// Reserves the minimum capacity for exactly `additional` more elements to be inserted.
     #[inline]
     pub fn reserve_exact(&mut self, additional: usize) {
-        self.elems.reserve_exact(additional)
+        self.elems.reserve_exact(additional);
     }
 
     /// Shrinks the capacity of the `PrimaryMap` as much as possible.
     #[inline]
     pub fn shrink_to_fit(&mut self) {
-        self.elems.shrink_to_fit()
+        self.elems.shrink_to_fit();
     }
 }
 

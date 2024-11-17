@@ -419,7 +419,7 @@ impl StateTracker {
         func: &impl Function,
     ) {
         self.value_def_block
-            .grow_to_with(func.num_values(), || Block::reserved_value());
+            .grow_to_with(func.num_values(), Block::reserved_value);
         self.slot_for_value.grow_to(func.num_values());
         for value in func.values() {
             self.slot_for_value[value] = spill_allocator.value_spillslot(value, coalescing).into();

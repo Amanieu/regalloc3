@@ -89,6 +89,7 @@ macro_rules! entity_def {
                 /// Creates a new entity reference from a raw index.
                 #[inline]
                 #[allow(dead_code)]
+                #[must_use]
                 $vis const fn new(index: usize) -> Self {
                     debug_assert!(index < ($int::MAX as usize));
                     Self(index as $int)
@@ -97,6 +98,7 @@ macro_rules! entity_def {
                 /// Returns the index that was used to create this entity reference.
                 #[inline]
                 #[allow(dead_code)]
+                #[must_use]
                 $vis const fn index(self) -> usize {
                     self.0 as usize
                 }

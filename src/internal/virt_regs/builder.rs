@@ -393,7 +393,7 @@ struct Context<'a, F, R> {
     constraints: VirtRegBuilderConstraints,
 }
 
-impl<'a, F: Function, R: RegInfo> Context<'a, F, R> {
+impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// Resets the current constraints to their most generic form.
     fn reset_constraints(&mut self) {
         self.constraints = VirtRegBuilderConstraints::new(self.top_level_class);

@@ -134,7 +134,6 @@ impl From<VirtRegGroup> for VirtRegOrGroup {
 }
 
 /// Assignments for each virtual register produced by this pass.
-#[derive(Clone)]
 enum Assignment {
     /// The virtual register has been assigned to a physical register.
     Assigned {

@@ -19,7 +19,6 @@ use crate::{RegAllocError, Stats};
 ///
 /// Any spilled virtual registers in the same set will be assigned to the
 /// same spill slot, which helps avoid unnecessary stack-to-stack moves.
-#[derive(Clone)]
 struct SpillData {
     /// Size of the spill slot needed by this `ValueSet`.
     size: SpillSlotSize,

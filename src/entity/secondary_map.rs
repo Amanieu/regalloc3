@@ -36,6 +36,7 @@ where
     /// The map must be grown with [`SecondaryMap::grow_to`] or [`SecondaryMap::clear_and_resize`]
     /// before any elements can be inserted.
     #[inline]
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             elems: Vec::new(),
@@ -48,6 +49,7 @@ where
     ///
     /// All values are initialized with the [`Default`] trait.
     #[inline]
+    #[must_use]
     pub fn with_max_index(max_index: usize) -> Self
     where
         V: Default,
@@ -106,6 +108,7 @@ where
 
     /// Iterate over all the keys and values in this map.
     #[inline]
+    #[must_use]
     pub fn iter(&self) -> Iter<'_, K, V> {
         Iter::new(self.elems.iter())
     }
@@ -118,6 +121,7 @@ where
 
     /// Iterate over all the keys in this map.
     #[inline]
+    #[must_use]
     pub fn keys(&self) -> Keys<K> {
         Keys::with_len(self.elems.len())
     }
@@ -136,6 +140,7 @@ where
 
     /// Return an owning iterator over the values of the map.
     #[inline]
+    #[must_use]
     pub fn into_values(self) -> vec::IntoIter<V> {
         self.elems.into_iter()
     }

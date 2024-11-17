@@ -58,6 +58,7 @@ where
     /// The map must be grown with [`SecondaryMap::grow_to`] or [`SecondaryMap::clear_and_resize`]
     /// before any elements can be inserted.
     #[inline]
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             sparse: SecondaryMap::new(),
@@ -68,6 +69,7 @@ where
     /// Create a new map large enough to hold entity references with an index
     /// below `max_index`.
     #[inline]
+    #[must_use]
     pub fn with_max_index(max_index: usize) -> Self {
         let mut map = Self::new();
         map.grow_to(max_index);
@@ -83,12 +85,14 @@ where
 
     /// Returns the number of elements in the map.
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.dense.len()
     }
 
     /// Returns true if the map contains no elements.
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.dense.is_empty()
     }
@@ -210,6 +214,7 @@ where
 
     /// Get the values as a slice.
     #[inline]
+    #[must_use]
     pub fn as_slice(&self) -> &[(K, V)] {
         self.dense.as_slice()
     }
@@ -248,12 +253,14 @@ where
 
     /// Iterate over all the keys in this map.
     #[inline]
+    #[must_use]
     pub fn keys(&self) -> impl DoubleEndedIterator<Item = K> + ExactSizeIterator + '_ {
         self.dense.iter().map(|(k, _v)| *k)
     }
 
     /// Iterate over all the values in this map.
     #[inline]
+    #[must_use]
     pub fn values(&self) -> impl DoubleEndedIterator<Item = &V> + ExactSizeIterator + '_ {
         self.dense.iter().map(|(_k, v)| v)
     }
@@ -268,6 +275,7 @@ where
 
     /// Return an owning iterator over the values of the map.
     #[inline]
+    #[must_use]
     pub fn into_values(self) -> impl DoubleEndedIterator<Item = V> + ExactSizeIterator {
         self.dense.into_iter().map(|(_k, v)| v)
     }
@@ -475,18 +483,21 @@ where
 {
     /// Return the index of the key-value pair
     #[inline]
+    #[must_use]
     pub fn index(&self) -> usize {
         self.index
     }
 
     /// Gets the entry's key in the map.
     #[inline]
+    #[must_use]
     pub fn key(&self) -> K {
         self.map.dense[self.index].0
     }
 
     /// Gets a reference to the entry's value in the map.
     #[inline]
+    #[must_use]
     pub fn get(&self) -> &V {
         &self.map.dense[self.index].1
     }
@@ -503,6 +514,7 @@ where
     /// Converts into a mutable reference to the entry's value in the map,
     /// with a lifetime bound to the map itself.
     #[inline]
+    #[must_use]
     pub fn into_mut(self) -> &'a mut V {
         &mut self.map.dense[self.index].1
     }
@@ -518,6 +530,7 @@ where
     /// Like [`Vec::swap_remove`], the pair is removed by swapping it with
     /// the last element of the map and popping it off.
     #[inline]
+    #[allow(clippy::must_use_candidate)] // False positive
     pub fn remove(self) -> V {
         let back = self.map.dense.pop().unwrap();
 

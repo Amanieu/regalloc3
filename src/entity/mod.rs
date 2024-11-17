@@ -28,7 +28,7 @@
 //! The design of these types is based on the `cranelift-entity` crate.
 
 #[macro_use]
-pub mod entity;
+pub mod base;
 pub mod compact_list;
 pub mod iter;
 pub mod packed_option;
@@ -38,8 +38,8 @@ pub mod set;
 pub mod small_set;
 pub mod sparse;
 
+pub use base::{EntityRange, EntityRef};
 pub use compact_list::{CompactList, CompactListPool};
-pub use entity::{EntityRange, EntityRef};
 pub use packed_option::{PackedOption, ReservedValue};
 pub use primary_map::PrimaryMap;
 pub use secondary_map::SecondaryMap;
