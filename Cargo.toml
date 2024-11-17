@@ -26,7 +26,6 @@ rustc-hash = { version = "2.0.0", default-features = false }
 serde = { version = "1.0.193", optional = true, default-features = false, features = [
     "derive", "alloc"
 ] }
-cranelift-bitset = "0.110.1"
 
 [features]
 # Support for parsing a GenericFunction from a text representation.

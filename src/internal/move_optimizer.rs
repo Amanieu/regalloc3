@@ -37,7 +37,6 @@ use alloc::vec::Vec;
 use core::cmp::Reverse;
 use core::fmt;
 
-use cranelift_bitset::CompoundBitSet;
 use smallvec::{smallvec, SmallVec};
 
 use super::allocations::Allocations;
@@ -46,7 +45,7 @@ use super::move_resolver::{Edit, MoveResolver};
 use super::spill_allocator::SpillAllocator;
 use crate::entity::packed_option::{PackedOption, ReservedValue};
 use crate::entity::sparse::Entry;
-use crate::entity::{PrimaryMap, SecondaryMap, SparseMap};
+use crate::entity::{EntitySet, PrimaryMap, SecondaryMap, SparseMap};
 use crate::function::{
     Block, Function, Inst, Operand, OperandConstraint, OperandKind, Value, ValueGroup,
 };
@@ -84,7 +83,7 @@ pub struct MoveOptimizer {
     blocks_to_preprocess: BinaryHeap<Reverse<Block>>,
 
     /// Set of blocks in `blocks_to_process`.
-    blocks_in_queue: CompoundBitSet,
+    blocks_in_queue: EntitySet<Block>,
 }
 
 impl MoveOptimizer {
@@ -94,7 +93,7 @@ impl MoveOptimizer {
             entry_states: PrimaryMap::new(),
             block_entry_states: SecondaryMap::new(),
             blocks_to_preprocess: BinaryHeap::new(),
-            blocks_in_queue: CompoundBitSet::new(),
+            blocks_in_queue: EntitySet::new(),
         }
     }
 
@@ -193,12 +192,13 @@ impl MoveOptimizer {
         self.entry_states.clear();
         self.block_entry_states.clear_and_resize(func.num_blocks());
         self.blocks_to_preprocess.clear();
+        self.blocks_in_queue.clear_and_resize(func.num_blocks());
 
         // Initialize the state for the entry block and add it to the queue.
         let initial_state = self.entry_states.push(smallvec![]);
         self.block_entry_states[Block::ENTRY_BLOCK] = Some(initial_state).into();
         self.blocks_to_preprocess.push(Reverse(Block::ENTRY_BLOCK));
-        self.blocks_in_queue.insert(Block::ENTRY_BLOCK.index());
+        self.blocks_in_queue.insert(Block::ENTRY_BLOCK);
 
         while let Some(Reverse(block)) = self.blocks_to_preprocess.pop() {
             // Skip blocks with no successors, they don't have any state to
@@ -207,7 +207,7 @@ impl MoveOptimizer {
                 continue;
             }
             stat!(stats, blocks_preprocessed_for_optimizer);
-            self.blocks_in_queue.remove(block.index());
+            self.blocks_in_queue.remove(block);
             self.state_tracker.new_block();
 
             // Set the initial state for this block. This must have been
@@ -273,8 +273,10 @@ impl MoveOptimizer {
                 if use_queue && state.len() != prev_len {
                     for &succ in succs {
                         trace!("State changed, propagating to {succ}");
-                        self.blocks_to_preprocess.push(Reverse(succ));
-                        self.blocks_in_queue.insert(succ.index());
+                        if !self.blocks_in_queue.contains(succ) {
+                            self.blocks_to_preprocess.push(Reverse(succ));
+                            self.blocks_in_queue.insert(succ);
+                        }
                     }
                 }
             }
@@ -313,8 +315,10 @@ impl MoveOptimizer {
                     // And queue the successors for processing.
                     if use_queue {
                         trace!("Queuing fresh successor {succ}");
-                        self.blocks_to_preprocess.push(Reverse(succ));
-                        self.blocks_in_queue.insert(succ.index());
+                        if !self.blocks_in_queue.contains(succ) {
+                            self.blocks_to_preprocess.push(Reverse(succ));
+                            self.blocks_in_queue.insert(succ);
+                        }
                     }
                 }
             }
