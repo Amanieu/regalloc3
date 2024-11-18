@@ -396,7 +396,7 @@ fuzz_target!(|t: TestCase| {
 
     // Prepare the initial state of all register units and spill slots.
     let mut unit_values = SecondaryMap::with_max_index(MAX_REG_UNITS);
-    let mut spillslot_values = SecondaryMap::with_max_index(t.spillslots.len());
+    let mut spillslot_values = SecondaryMap::with_max_index(spillslots.len());
     for (
         value,
         &ValueData {
