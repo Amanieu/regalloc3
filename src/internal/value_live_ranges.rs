@@ -791,11 +791,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     fn build_segments(&mut self, value: Value, prev_use_list_end: &mut UseIndex) {
         trace!("Building live range segments for {value}");
 
-        // We add 1 trailing block so that we can detect that the block after
-        // the last is not live-in.
         self.value_live_ranges
             .live_in
-            .clear_and_resize(self.func.num_blocks() + 1);
+            .clear_and_resize(self.func.num_blocks());
         self.value_live_ranges
             .live_out
             .clear_and_resize(self.func.num_blocks());
@@ -824,49 +822,58 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         // Iterate over all uses and try to add them to the segment. Split up
         // segments where there is a gap in the live range.
-        // TODO(perf): Optimize iteration over bitsets to skip whole ranges
-        let mut block = def_block;
+        let mut next_dead_block = self
+            .value_live_ranges
+            .live_in
+            .next_absent_from(def_block.next());
         for use_idx in full_use_list.iter().skip(1) {
             let u = self.uses[use_idx];
             debug_assert!(u.is_use());
             let use_block = self.func.inst_block(u.pos());
+            debug_assert!(use_block <= last_block);
 
-            // If this use is in a different block than the last use, advance
-            // the current block until it reaches the one with the new use.
-            while block != use_block {
-                // Skip over any live blocks with no uses.
-                if self.value_live_ranges.live_in.contains(block.next()) {
-                    block = block.next();
-                    continue;
-                }
-
+            // If there is a live range gap until this use then we need to split
+            // the segment.
+            while use_block > next_dead_block {
                 // If we encounter a dead block then we need to end the current
-                // segment at the end of the current block. Any uses up to that
-                // point are added to the segment.
+                // segment. Any uses up to that point are added to the segment.
                 let (prev_list, next_list) = segment.use_list.split_at_index(use_idx);
                 segment.use_list = prev_list;
 
-                // If the current block is live-out then extend the segment
+                // If the last live block is live-out then extend the segment
                 // to the end of the block and mark it as a live-out.
-                if self.value_live_ranges.live_out.contains(block) {
-                    segment.live_range.to = self.func.block_insts(block).to.slot(Slot::Boundary);
+                let end_block = next_dead_block.prev();
+                if self.value_live_ranges.live_out.contains(end_block) {
+                    segment.live_range.to =
+                        self.func.block_insts(end_block).to.slot(Slot::Boundary);
                     segment.use_list.set_liveout(true);
                 }
 
                 // Add the segment to the list.
                 segments.push(segment);
 
-                // Skip over any dead blocks.
-                block = block.next();
-                while !self.value_live_ranges.live_in.contains(block) {
-                    debug_assert_ne!(block, use_block);
-                    debug_assert_ne!(block, last_block);
-                    block = block.next();
-                }
+                // Skip over any dead blocks to find the next live block.
+                let next_live_block = self
+                    .value_live_ranges
+                    .live_in
+                    .next_present_from(next_dead_block.next())
+                    .unwrap();
+                debug_assert!(next_live_block <= use_block);
+                debug_assert!(next_live_block <= last_block);
+
+                // Then find the next dead block.
+                next_dead_block = self
+                    .value_live_ranges
+                    .live_in
+                    .next_absent_from(next_live_block.next());
 
                 // Start a new segment at the beginning of the next live block,
                 // marking it as having a live-in value.
-                segment.live_range.from = self.func.block_insts(block).from.slot(Slot::Boundary);
+                segment.live_range.from = self
+                    .func
+                    .block_insts(next_live_block)
+                    .from
+                    .slot(Slot::Boundary);
                 segment.use_list = next_list;
                 segment.use_list.set_livein(true);
             }
@@ -880,17 +887,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         // Handle any remaining live range after the last use.
         loop {
-            // Skip over any live blocks and stop just before the next dead
-            // block.
-            while self.value_live_ranges.live_in.contains(block.next()) {
-                debug_assert_ne!(block, last_block);
-                block = block.next();
-            }
-
-            // If the current block is live-out then extend the segment
+            // If the last live block is live-out then extend the segment
             // to the end of the block and mark it as a live-out.
-            if self.value_live_ranges.live_out.contains(block) {
-                segment.live_range.to = self.func.block_insts(block).to.slot(Slot::Boundary);
+            let end_block = next_dead_block.prev();
+            if self.value_live_ranges.live_out.contains(end_block) {
+                segment.live_range.to = self.func.block_insts(end_block).to.slot(Slot::Boundary);
                 segment.use_list.set_liveout(true);
             }
 
@@ -898,19 +899,31 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             segments.push(segment);
 
             // If this was the last block, we're done.
-            if block == last_block {
+            if end_block == last_block {
                 break;
             }
 
-            // Skip over any dead blocks.
-            block = block.next();
-            while !self.value_live_ranges.live_in.contains(block) {
-                debug_assert_ne!(block, last_block);
-                block = block.next();
-            }
+            // Skip over any dead blocks to find the next live block.
+            let next_live_block = self
+                .value_live_ranges
+                .live_in
+                .next_present_from(next_dead_block.next())
+                .unwrap();
+            debug_assert!(next_live_block <= last_block);
 
-            // Start a new segment at the start of the next live block.
-            segment.live_range.from = self.func.block_insts(block).from.slot(Slot::Boundary);
+            // Then find the next dead block.
+            next_dead_block = self
+                .value_live_ranges
+                .live_in
+                .next_absent_from(next_live_block.next());
+
+            // Start a new segment at the beginning of the next live block,
+            // marking it as having a live-in value.
+            segment.live_range.from = self
+                .func
+                .block_insts(next_live_block)
+                .from
+                .slot(Slot::Boundary);
             segment.use_list = UseList::empty();
             segment.use_list.set_livein(true);
         }

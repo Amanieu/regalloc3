@@ -9,6 +9,7 @@ use super::EntityRef;
 
 /// Word type used in the bit set.
 type Word = usize;
+type SignedWord = isize;
 
 /// A set of entities implemented as a bit vector.
 ///
@@ -115,6 +116,61 @@ where
             .iter()
             .map(|word| word.count_ones() as usize)
             .sum()
+    }
+
+    /// Returns the next entity starting from `from` that is present in the set.
+    #[inline]
+    #[must_use]
+    pub fn next_present_from(&self, from: T) -> Option<T> {
+        let (idx, bit) = Self::index(from);
+
+        if idx < self.storage.len() {
+            // Search for another set bit in the current word.
+            if self.storage[idx] >> bit != 0 {
+                let next_bit = (self.storage[idx] >> bit).trailing_zeros();
+                return Some(T::new(from.index() + next_bit as usize));
+            }
+
+            // Search for a subsequent non-zero word.
+            for (idx, &word) in self.storage.iter().enumerate().skip(idx + 1) {
+                if word != 0 {
+                    let bit = word.trailing_zeros();
+                    return Some(T::new(idx * Word::BITS as usize + bit as usize));
+                }
+            }
+        }
+
+        // We reached the end of the storage, there are no more set bits.
+        None
+    }
+
+    /// Returns the next entity starting from `from` that is absent from the set.
+    #[inline]
+    #[must_use]
+    pub fn next_absent_from(&self, from: T) -> T {
+        let (idx, bit) = Self::index(from);
+
+        if idx < self.storage.len() {
+            // Search for another zero bit in the current word. We use a
+            // sign-extending right shift here to avoid introducing spurious zero
+            // bits.
+            if self.storage[idx] as SignedWord >> bit != !0 {
+                let next_bit = (self.storage[idx] >> bit).trailing_ones();
+                return T::new(from.index() + next_bit as usize);
+            }
+
+            // Search for a subsequent non-full word.
+            for (idx, &word) in self.storage.iter().enumerate().skip(idx + 1) {
+                if word != !0 {
+                    let bit = word.trailing_ones();
+                    return T::new(idx * Word::BITS as usize + bit as usize);
+                }
+            }
+        }
+
+        // We reached the end of the storage, there is an implicit absent entity
+        // after the end.
+        T::new(self.storage.len() * Word::BITS as usize)
     }
 
     /// Returns an iterator over all the elements in the set, starting from the
