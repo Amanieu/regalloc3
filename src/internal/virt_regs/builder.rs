@@ -24,12 +24,12 @@ use core::cmp::Ordering;
 
 use crate::entity::packed_option::{PackedOption, ReservedValue};
 use crate::entity::{CompactList, SecondaryMap};
-use crate::function::{Function, Inst, OperandKind, Value, ValueGroup};
+use crate::function::{Function, OperandKind, Value, ValueGroup};
 use crate::internal::coalescing::Coalescing;
-use crate::internal::live_range::{LiveRangeSegment, Slot};
+use crate::internal::live_range::{LiveRangeSegment, Slot, ValueSegment};
 use crate::internal::split_placement::SplitPlacement;
 use crate::internal::uses::{Use, UseIndex, UseKind, Uses, MOVE_COST, SPILL_RELOAD_COST};
-use crate::internal::value_live_ranges::{ValueSegment, ValueSet};
+use crate::internal::value_live_ranges::ValueSet;
 use crate::internal::virt_regs::{VirtReg, VirtRegData, VirtRegGroup, VirtRegs};
 use crate::reginfo::{RegBank, RegClass, RegInfo, MAX_GROUP_SIZE};
 use crate::Stats;
@@ -399,58 +399,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         self.constraints = VirtRegBuilderConstraints::new(self.top_level_class);
     }
 
-    /// Utility function for splitting a [`ValueSegments`] into 2 halves at
-    /// the given split point.
-    ///
-    /// The first half will be processed by `compute_constraints` and the
-    /// second half will be returned.
-    fn split_segments_at<'b>(
-        &mut self,
-        segments: &'b mut [ValueSegment],
-        before_inst: Inst,
-    ) -> &'b mut [ValueSegment] {
-        // The split point must be inside the live range of the vreg.
-        let split_at = before_inst.slot(Slot::Boundary);
-        debug_assert!(split_at > segments[0].live_range.from);
-        debug_assert!(split_at < segments.last().unwrap().live_range.to);
-
-        // Separate the list of segments into the set before the split and the set
-        // after the split. These may overlap by exactly 1 segment if that segment
-        // contains the split point.
-        let first_segment_in_second_half =
-            segments.partition_point(|seg| seg.live_range.to <= split_at);
-        let last_segment_in_first_half =
-            if segments[first_segment_in_second_half].live_range.from < split_at {
-                first_segment_in_second_half
-            } else {
-                first_segment_in_second_half - 1
-            };
-
-        // If both vregs share a segment that is split down the middle, split it
-        // into 2 separate segments. The shared segment is already present in both
-        // vectors, it just needs to be truncated accordingly for each half.
-        if first_segment_in_second_half == last_segment_in_first_half {
-            debug_assert!(!segments[first_segment_in_second_half].live_range.is_empty());
-            let (first_uses, second_uses) = segments[first_segment_in_second_half]
-                .use_list
-                .split_at_inst(split_at.inst(), self.uses);
-            let (first_range, second_range) = segments[first_segment_in_second_half]
-                .live_range
-                .split_at(split_at);
-            segments[last_segment_in_first_half].live_range = first_range;
-            segments[last_segment_in_first_half].use_list = first_uses;
-
-            self.compute_constraints(&mut segments[..=last_segment_in_first_half], false);
-
-            segments[first_segment_in_second_half].live_range = second_range;
-            segments[first_segment_in_second_half].use_list = second_uses;
-        } else {
-            self.compute_constraints(&mut segments[..=last_segment_in_first_half], false);
-        }
-
-        &mut segments[first_segment_in_second_half..]
-    }
-
     /// Computes register class constraints for the live range uses in the
     /// current set of segments.
     ///
@@ -577,11 +525,14 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             // Create a vreg for the portion before the split.
                             // This should never conflict and therefore can't
                             // recurse.
-                            segments = self.split_segments_at(segments, split_point);
+                            let mut split =
+                                ValueSegment::split_at(segments, self.uses, split_point);
+                            self.compute_constraints(split.first_half(), false);
 
                             // Then continue vreg creation as normal for the
                             // portion after the split, which may still have
                             // conflicts.
+                            segments = split.into_second_half();
                         }
 
                         // After a conflict has been resolved, we need to

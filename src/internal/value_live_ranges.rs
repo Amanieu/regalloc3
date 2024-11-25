@@ -25,7 +25,7 @@ use core::ops::{Index, IndexMut};
 use smallvec::SmallVec;
 
 use super::allocations::Allocations;
-use super::live_range::{LiveRangeSegment, Slot};
+use super::live_range::{LiveRangeSegment, Slot, ValueSegment};
 use super::reg_matrix::RegMatrix;
 use super::uses::{Use, UseKind, Uses};
 use crate::entity::{EntitySet, PackedOption, PrimaryMap, SecondaryMap};
@@ -36,22 +36,6 @@ use crate::internal::uses::UseList;
 use crate::output::Allocation;
 use crate::reginfo::{RegClass, RegInfo};
 use crate::Stats;
-
-/// A continuous segment of a value's live range.
-#[derive(Debug, Clone, Copy)]
-pub struct ValueSegment {
-    /// Live range covered by this segment.
-    pub live_range: LiveRangeSegment,
-
-    /// Set of `Use`s associated with this live range segment.
-    pub use_list: UseList,
-
-    /// SSA value associated with this live range segment.
-    ///
-    /// Coalescing may produce virtual registers which cover multiple SSA values
-    /// but each segment will only come from a single SSA value.
-    pub value: Value,
-}
 
 entity_def! {
     /// A value set corresponds to a set of [`Value`]s whose live range do not

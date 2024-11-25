@@ -11,7 +11,9 @@
 
 use core::fmt;
 
-use crate::function::Inst;
+use crate::function::{Inst, Value};
+
+use super::uses::{UseList, Uses};
 
 /// A slot within an instruction at which a live range starts or end.
 ///
@@ -228,5 +230,101 @@ impl fmt::Display for LiveRangeSegment {
 impl fmt::Debug for LiveRangeSegment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
+    }
+}
+
+/// A continuous segment of a value's live range.
+#[derive(Debug, Clone, Copy)]
+pub struct ValueSegment {
+    /// Live range covered by this segment.
+    pub live_range: LiveRangeSegment,
+
+    /// Set of `Use`s associated with this live range segment.
+    pub use_list: UseList,
+
+    /// SSA value associated with this live range segment.
+    ///
+    /// Coalescing may produce virtual registers which cover multiple SSA values
+    /// but each segment will only come from a single SSA value.
+    pub value: Value,
+}
+
+impl ValueSegment {
+    /// Utility function for splitting a [`ValueSegment`] into 2 halves at
+    /// the given split point.
+    pub fn split_at<'a>(
+        segments: &'a mut [ValueSegment],
+        uses: &Uses,
+        before_inst: Inst,
+    ) -> SplitResult<'a> {
+        // The split point must be inside the live range of the vreg.
+        let split_at = before_inst.slot(Slot::Boundary);
+        debug_assert!(split_at > segments[0].live_range.from);
+        debug_assert!(split_at < segments.last().unwrap().live_range.to);
+
+        // Separate the list of segments into the set before the split and the set
+        // after the split. These may overlap by exactly 1 segment if that segment
+        // contains the split point.
+        let first_segment_in_second_half =
+            segments.partition_point(|seg| seg.live_range.to <= split_at);
+        let last_segment_in_first_half =
+            if segments[first_segment_in_second_half].live_range.from < split_at {
+                first_segment_in_second_half
+            } else {
+                first_segment_in_second_half - 1
+            };
+
+        // If both vregs share a segment that is split down the middle, split it
+        // into 2 separate segments. The shared segment is already present in both
+        // vectors, it just needs to be truncated accordingly for each half.
+        let second_live_range_and_use_list =
+            if first_segment_in_second_half == last_segment_in_first_half {
+                debug_assert!(!segments[first_segment_in_second_half].live_range.is_empty());
+                let (first_uses, second_uses) = segments[first_segment_in_second_half]
+                    .use_list
+                    .split_at_inst(split_at.inst(), uses);
+                let (first_range, second_range) = segments[first_segment_in_second_half]
+                    .live_range
+                    .split_at(split_at);
+                segments[last_segment_in_first_half].live_range = first_range;
+                segments[last_segment_in_first_half].use_list = first_uses;
+
+                Some((second_range, second_uses))
+            } else {
+                None
+            };
+
+        SplitResult {
+            segments,
+            last_segment_in_first_half,
+            first_segment_in_second_half,
+            second_live_range_and_use_list,
+        }
+    }
+}
+
+/// Result of spliting a live range with [`ValueSegment::split_at`].
+pub struct SplitResult<'a> {
+    segments: &'a mut [ValueSegment],
+    last_segment_in_first_half: usize,
+    first_segment_in_second_half: usize,
+    second_live_range_and_use_list: Option<(LiveRangeSegment, UseList)>,
+}
+
+impl<'a> SplitResult<'a> {
+    /// First half of the split.
+    pub fn first_half(&mut self) -> &mut [ValueSegment] {
+        &mut self.segments[..=self.last_segment_in_first_half]
+    }
+
+    /// Second half of the split.
+    pub fn into_second_half(self) -> &'a mut [ValueSegment] {
+        // Mutate the range in-place to avoid temporary allocations.
+        if let Some((second_range, second_uses)) = self.second_live_range_and_use_list {
+            self.segments[self.first_segment_in_second_half].live_range = second_range;
+            self.segments[self.first_segment_in_second_half].use_list = second_uses;
+        }
+
+        &mut self.segments[self.first_segment_in_second_half..]
     }
 }

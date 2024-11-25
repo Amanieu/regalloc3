@@ -8,7 +8,7 @@ use super::{AbstractVirtRegGroup, Assignment, Context, Stage};
 use crate::function::{Function, OperandKind};
 use crate::internal::live_range::{LiveRangeSegment, Slot};
 use crate::internal::uses::UseKind;
-use crate::internal::value_live_ranges::ValueSegment;
+use crate::internal::live_range::ValueSegment;
 use crate::internal::virt_regs::VirtReg;
 use crate::reginfo::RegInfo;
 

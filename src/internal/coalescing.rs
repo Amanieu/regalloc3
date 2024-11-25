@@ -17,8 +17,9 @@ use core::mem;
 
 use smallvec::SmallVec;
 
+use super::live_range::ValueSegment;
 use super::uses::Uses;
-use super::value_live_ranges::{ValueLiveRanges, ValueSegment};
+use super::value_live_ranges::ValueLiveRanges;
 use crate::entity::packed_option::PackedOption;
 use crate::entity::SecondaryMap;
 use crate::function::{Block, Function, OperandConstraint, OperandKind, Value, ValueGroup};

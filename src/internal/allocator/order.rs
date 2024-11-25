@@ -199,7 +199,7 @@ impl AllocationOrder {
     }
 
     /// Returns an iterator over all the registers in the allocation order.
-    pub fn order(&mut self) -> impl Iterator<Item = CandidateReg> + '_ {
+    pub fn order(&self) -> impl Iterator<Item = CandidateReg> + '_ {
         self.candidates
             .iter()
             .map(|&(reg, preference_weight)| CandidateReg {

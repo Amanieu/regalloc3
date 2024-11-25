@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 use core::cmp::Reverse;
 
 use super::coalescing::Coalescing;
-use super::live_range::{LiveRangeSegment, Slot};
-use super::value_live_ranges::{ValueSegment, ValueSet};
+use super::live_range::{LiveRangeSegment, Slot, ValueSegment};
+use super::value_live_ranges::ValueSet;
 use crate::entity::{PrimaryMap, SecondaryMap};
 use crate::function::{Function, Inst, Value};
 use crate::output::{SpillSlot, StackLayout};

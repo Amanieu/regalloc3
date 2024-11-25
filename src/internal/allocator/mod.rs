@@ -39,7 +39,7 @@ use super::coalescing::Coalescing;
 use super::reg_matrix::RegMatrix;
 use super::spill_allocator::SpillAllocator;
 use super::uses::Uses;
-use super::value_live_ranges::ValueSegment;
+use super::live_range::ValueSegment;
 use super::virt_regs::builder::VirtRegBuilder;
 use super::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
 use crate::entity::packed_option::PackedOption;

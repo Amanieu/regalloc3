@@ -5,8 +5,8 @@ use core::cmp::Ordering;
 use core::mem;
 use core::ops::Bound;
 
+use super::live_range::ValueSegment;
 use super::live_range::{LiveRangePoint, LiveRangeSegment, Slot};
-use super::value_live_ranges::ValueSegment;
 use super::virt_regs::{VirtReg, VirtRegs};
 use crate::entity::packed_option::PackedOption;
 use crate::entity::SecondaryMap;
