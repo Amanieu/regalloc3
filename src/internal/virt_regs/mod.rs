@@ -159,6 +159,7 @@ impl VirtRegs {
         stats: &mut Stats,
         new_vregs: &mut Vec<VirtReg>,
     ) {
+        debug_assert!(!segments.is_empty());
         let bank = func.value_bank(segments[0].value);
         virt_reg_builder.build(
             bank,
