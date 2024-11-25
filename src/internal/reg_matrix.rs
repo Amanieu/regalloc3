@@ -373,6 +373,7 @@ impl RegMatrix {
     }
 
     /// Dumps the entire register matrix to the log.
+    #[allow(dead_code)]
     pub fn dump(&self) {
         trace!("Register matrix:");
         for (unit, reservations) in &self.reservations {

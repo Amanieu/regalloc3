@@ -29,7 +29,7 @@ use crate::internal::coalescing::Coalescing;
 use crate::internal::hints::Hints;
 use crate::internal::live_range::{LiveRangeSegment, Slot, ValueSegment};
 use crate::internal::split_placement::SplitPlacement;
-use crate::internal::uses::{Use, UseIndex, UseKind, Uses, MOVE_COST, SPILL_RELOAD_COST};
+use crate::internal::uses::{Use, UseIndex, UseKind, Uses};
 use crate::internal::value_live_ranges::ValueSet;
 use crate::internal::virt_regs::{VirtReg, VirtRegData, VirtRegGroup, VirtRegs};
 use crate::reginfo::{RegBank, RegClass, RegInfo, MAX_GROUP_SIZE};
@@ -159,10 +159,10 @@ impl VirtRegBuilderConstraints {
         }
     }
 
-    /// Updates the constraints to accept the given `Use`, or returns an error
-    /// as to why this is not possible.
+    /// Updates the constraints to accept the given `Use`, or returns false
+    /// if this is not possible.
     ///
-    /// Constrains are not updated if this function returns an error.
+    /// Constraints are not updated if this function returns false.
     fn merge_use(
         &mut self,
         u: Use,
@@ -180,6 +180,7 @@ impl VirtRegBuilderConstraints {
                     self.class = new_class;
                     true
                 } else {
+                    trace!("-> No common subclass between {} and {class}", self.class);
                     false
                 }
             }
@@ -667,7 +668,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// instruction, in which case it cannot be split further. This case is
     /// represented by giving that virtual register an infinite spill weight.
     fn calc_spill_weight(&self, segments: &[ValueSegment]) -> f32 {
-        let num_insts: u32 = segments.iter().map(|seg| seg.live_range.num_insts()).sum();
+        let num_insts = ValueSegment::live_insts(segments);
         trace!("Computing spill weight with {num_insts} instructions");
 
         // Register classes that allow spillslots are always spillable.
@@ -681,7 +682,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             f32::INFINITY
         } else {
             // Accumulate the spill cost weighed by the block frequency.
-            let mut spill_cost: f32 = segments
+            let spill_cost: f32 = segments
                 .iter()
                 .map(|seg| {
                     // Add up the spill weights of all uses.
@@ -704,40 +705,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 })
                 .sum();
 
-            // If the first segment has a live-in or the last segment has a
-            // live-out then we need to pay an additional cost if this virtual
-            // register is spilled: we would need the link the live-in/live-out
-            // with a load/store instead of a register move.
-            //
-            // This isn't a precise measure, but accurately calculating spill
-            // costs at every block boundary in each segment is too expensive.
-            if segments[0].use_list.has_livein() {
-                let inst = segments[0].live_range.from.inst();
-                let cost = SPILL_RELOAD_COST - MOVE_COST;
-                let block_freq = self.func.block_frequency(self.func.inst_block(inst));
-                trace!(
-                    "Increasing spill cost by {} for live-in of first segment at {inst} ({cost} * \
-                     {block_freq})",
-                    cost * block_freq
-                );
-                spill_cost += cost * block_freq;
-            }
-            if segments.last().unwrap().use_list.has_liveout() {
-                let inst = segments.last().unwrap().live_range.to.inst().prev();
-                let cost = SPILL_RELOAD_COST - MOVE_COST;
-                let block_freq = self.func.block_frequency(self.func.inst_block(inst));
-                trace!(
-                    "Increasing spill cost by {} for live-out of last segment at {inst} ({cost} * \
-                     {block_freq})",
-                    cost * block_freq
-                );
-                spill_cost += cost * block_freq;
-            }
-
             // Cap the spill weight at f32::MAX. Infinite spill weights are only
             // for unspillable virtual registers.
             let spill_weight = (spill_cost / num_insts as f32).min(f32::MAX);
-            trace!("-> Spill weight of {spill_weight}");
+            trace!("-> Spill weight of {spill_weight} ({spill_cost} / {num_insts})");
             spill_weight
         };
 

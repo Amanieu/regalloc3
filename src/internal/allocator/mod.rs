@@ -24,7 +24,7 @@
 mod evict;
 mod order;
 mod queue;
-mod spill;
+mod split;
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -34,12 +34,13 @@ pub use order::combined_allocation_order;
 
 use self::order::{AllocationOrder, CandidateReg};
 use self::queue::{AllocationQueue, VirtRegOrGroup};
-use self::spill::Spiller;
+use self::split::Splitter;
 use super::coalescing::Coalescing;
 use super::hints::Hints;
 use super::live_range::ValueSegment;
 use super::reg_matrix::RegMatrix;
 use super::spill_allocator::SpillAllocator;
+use super::split_placement::SplitPlacement;
 use super::uses::Uses;
 use super::virt_regs::builder::VirtRegBuilder;
 use super::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
@@ -48,7 +49,7 @@ use crate::entity::SecondaryMap;
 use crate::function::Function;
 use crate::internal::reg_matrix::InterferenceKind;
 use crate::reginfo::{PhysReg, RegGroup, RegInfo};
-use crate::{RegAllocError, Stats};
+use crate::{RegAllocError, SplitStrategy, Stats};
 
 entity_def! {
     /// This type represents either a [`PhysReg`] for groups of size 1 or a
@@ -125,6 +126,9 @@ trait AbstractVirtRegGroup: Copy + fmt::Debug + fmt::Display + Into<VirtRegOrGro
         virt_regs: &VirtRegs,
         reginfo: &impl RegInfo,
     ) -> impl ExactSizeIterator<Item = (VirtReg, PhysReg)>;
+
+    /// Dumps the virtual register to the log.
+    fn dump(self, virt_regs: &VirtRegs, uses: &Uses);
 }
 
 impl AbstractVirtRegGroup for VirtReg {
@@ -143,6 +147,18 @@ impl AbstractVirtRegGroup for VirtReg {
         _reginfo: &impl RegInfo,
     ) -> impl ExactSizeIterator<Item = (VirtReg, PhysReg)> {
         iter::once((self, reg.as_single()))
+    }
+
+    fn dump(self, virt_regs: &VirtRegs, uses: &Uses) {
+        let vreg_data = &virt_regs[self];
+        trace!(
+            "  {self} ({}, spill_weight={}):",
+            vreg_data.class,
+            vreg_data.spill_weight,
+        );
+        for segment in virt_regs.segments(self) {
+            segment.dump(uses);
+        }
     }
 }
 
@@ -170,6 +186,12 @@ impl AbstractVirtRegGroup for VirtRegGroup {
         let members = reginfo.reg_group_members(reg.as_multi());
         debug_assert_eq!(members.len(), self.vregs(virt_regs).len());
         self.vregs(virt_regs).zip(members.iter().copied())
+    }
+
+    fn dump(self, virt_regs: &VirtRegs, uses: &Uses) {
+        for &vreg in virt_regs.group_members(self) {
+            vreg.dump(virt_regs, uses);
+        }
     }
 }
 
@@ -326,8 +348,8 @@ pub struct Allocator {
     /// `try_evict`.
     candidate_interfering_vregs: Vec<VirtReg>,
 
-    /// Temporary allocations used by the spiller.
-    spiller: Spiller,
+    /// Temporary state used by live range splitting.
+    splitter: Splitter,
 
     /// Segments with an empty live range that are not part of a virtual
     /// register.
@@ -352,7 +374,7 @@ impl Allocator {
             assignments: SecondaryMap::new(),
             interfering_vregs: vec![],
             candidate_interfering_vregs: vec![],
-            spiller: Spiller::new(),
+            splitter: Splitter::new(),
             empty_segments: vec![],
             remat_segments: vec![],
         }
@@ -360,6 +382,9 @@ impl Allocator {
 
     /// Assigns a physical register (or spill index) to every virtual register
     /// in the function.
+    ///
+    /// This will split unallocatable virtual registers into smaller pieces or
+    /// spill them as needed.
     pub fn run(
         &mut self,
         uses: &mut Uses,
@@ -368,10 +393,12 @@ impl Allocator {
         virt_regs: &mut VirtRegs,
         virt_reg_builder: &mut VirtRegBuilder,
         spill_allocator: &mut SpillAllocator,
+        split_placement: &SplitPlacement,
         coalescing: &mut Coalescing,
         stats: &mut Stats,
         func: &impl Function,
         reginfo: &impl RegInfo,
+        split_strategy: SplitStrategy,
     ) -> Result<(), RegAllocError> {
         self.assignments.clear_and_resize(virt_regs.num_virt_regs());
         self.remat_segments.clear();
@@ -386,14 +413,17 @@ impl Allocator {
             virt_regs,
             virt_reg_builder,
             spill_allocator,
+            split_placement,
             coalescing,
             stats,
+            split_strategy,
         };
 
         // Populate the queue with the initial set of virtual registers.
         context.allocator.queue.init(context.virt_regs);
 
         // Allocate each virtual register in priority order.
+        // TODO(perf): Optimize the case where we dequeue the same vreg twice in a row
         while let Some((vreg, stage)) = context.allocator.queue.dequeue() {
             match vreg {
                 VirtRegOrGroup::Reg(vreg) => context.allocate(vreg, stage)?,
@@ -432,6 +462,14 @@ impl Allocator {
             }
         }
 
+        // Ensure all virtual registers are dead or assigned.
+        for vreg in virt_regs.virt_regs() {
+            debug_assert!(matches!(
+                self.assignments[vreg],
+                Assignment::Assigned { .. } | Assignment::Dead
+            ));
+        }
+
         Ok(())
     }
 
@@ -448,9 +486,7 @@ impl Allocator {
                     reg,
                     preference_weight: _,
                 } => Some((vreg, reg)),
-                Assignment::Unassigned { .. } => {
-                    unreachable!("{vreg} unassigned after allocation")
-                }
+                Assignment::Unassigned { .. } => None,
                 Assignment::Dead => None,
             })
     }
@@ -466,8 +502,10 @@ struct Context<'a, F, R> {
     virt_regs: &'a mut VirtRegs,
     virt_reg_builder: &'a mut VirtRegBuilder,
     spill_allocator: &'a mut SpillAllocator,
+    split_placement: &'a SplitPlacement,
     coalescing: &'a mut Coalescing,
     stats: &'a mut Stats,
+    split_strategy: SplitStrategy,
 }
 
 impl<F: Function, R: RegInfo> Context<'_, F, R> {
@@ -478,6 +516,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         stage: Stage,
     ) -> Result<(), RegAllocError> {
         trace!("Allocating {vreg} in stage {stage:?}");
+        vreg.dump(self.virt_regs, self.uses);
         let first_vreg = vreg.first_vreg(self.virt_regs);
         if vreg.is_group() {
             stat!(self.stats, dequeued_group);
@@ -496,7 +535,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             hint,
         );
         if trace_enabled!() {
-            self.reg_matrix.dump();
             trace!("Allocation order:");
             for candidate in self.allocator.allocation_order.order() {
                 trace!("  {}", candidate);
@@ -558,7 +596,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     return Ok(());
                 }
 
-                trace!("Failed to evict interference for {vreg}, re-queuing for spilling");
+                trace!("Failed to evict interference for {vreg}, re-queuing for splitting");
 
                 // If the virtual register has an infinite spill weight (meaning
                 // that it covers only a single instruction and cannot be
@@ -597,8 +635,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             // If the virtual register failed to evict interference, then we
             // need to split it.
             Stage::Split => {
-                // TODO: Implement live range splitting.
-                self.spill(vreg);
+                trace!("Splitting {vreg} into smaller pieces");
+                stat!(self.stats, try_split_or_spill);
+
+                self.split_or_spill(vreg);
             }
         }
 
@@ -645,9 +685,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             }
                             InterferenceKind::VirtReg(vreg) => {
                                 trace!(
-                                    "  - Interference with {vreg} at {} in {}",
+                                    "  - Interference with {vreg} at {} in {} (weight={})",
                                     interference.range,
-                                    interference.unit
+                                    interference.unit,
+                                    self.virt_regs[vreg].spill_weight,
                                 );
                             }
                         }

@@ -80,6 +80,9 @@
     clippy::ignored_unit_patterns
 )]
 
+#[cfg(any(feature = "clap", feature = "arbitrary"))]
+extern crate std;
+
 extern crate alloc;
 
 use core::fmt;
@@ -207,6 +210,10 @@ impl RegisterAllocator {
         F: Function,
         R: RegInfo,
     {
+        trace!(
+            "Input register description:\n{}",
+            debug_utils::DisplayRegInfo(reginfo)
+        );
         trace!("Input function:\n{}", debug_utils::DisplayFunction(func));
 
         // Reset stats and gather initial information.
@@ -266,10 +273,12 @@ impl RegisterAllocator {
             &mut self.virt_regs,
             &mut self.virt_reg_builder,
             &mut self.spill_allocator,
+            &self.split_placement,
             &mut self.coalescing,
             &mut self.stats,
             func,
             reginfo,
+            options.split_strategy,
         )?;
 
         // Allocate spill slots.
@@ -314,6 +323,8 @@ impl RegisterAllocator {
 
 /// Controls how much optimization to perform after register allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum MoveOptimizationLevel {
     /// Don't do any optimizations.
     Off,
@@ -335,28 +346,33 @@ pub enum MoveOptimizationLevel {
     Global,
 }
 
+/// Selects the algorithm use for live range splitting when the entire live
+/// range of a value cannot be allocated to a single register.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub enum SplitStrategy {
+    /// Split live ranges around each use and spill the gaps between uses.
+    Spill,
+
+    /// Split live ranges by finding a region which is dense enough to evict
+    /// interfering live ranges.
+    #[default]
+    Linear,
+}
+
 /// Configuration options for the register allocator.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "clap", derive(clap::Args))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Options {
     /// Controls how moves are optimized after register allocation.
+    #[cfg_attr(feature = "clap", clap(long, default_value = "forward"))]
     pub move_optimization: MoveOptimizationLevel,
-}
 
-#[cfg(feature = "arbitrary")]
-impl<'a> arbitrary::Arbitrary<'a> for MoveOptimizationLevel {
-    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        u.choose(&[Self::Off, Self::Local, Self::Forward, Self::Global])
-            .copied()
-    }
-}
-
-#[cfg(feature = "arbitrary")]
-impl<'a> arbitrary::Arbitrary<'a> for Options {
-    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(Self {
-            move_optimization: u.arbitrary()?,
-        })
-    }
+    /// Selects the algorithm for live range splitting.
+    #[cfg_attr(feature = "clap", clap(long, default_value = "linear"))]
+    pub split_strategy: SplitStrategy,
 }
 
 /// Error returned by the register allocator if allocation is impossible.
@@ -460,8 +476,21 @@ pub struct Stats {
     assigned_after_evict: usize,
     evicted_vregs: usize,
     evicted_groups: usize,
+    try_split_or_spill: usize,
+    spill_weight_zero: usize,
+    num_split_uses: usize,
+    num_split_gaps: usize,
+    no_split_uses: usize,
+    no_best_split_use: usize,
+    no_best_split: usize,
+    unevictable_initial_gap: usize,
+    evict_for_null_split: usize,
+    spill_cheaper_than_split: usize,
+    split_vregs: usize,
     spilled_vregs: usize,
-    minimal_segments: usize,
+    spill_minimal_segments: usize,
+    isolated_group_vregs: usize,
+    isolated_group_minimal_segments: usize,
 
     // Stats from spillslot allocation.
     spilled_sets: usize,
