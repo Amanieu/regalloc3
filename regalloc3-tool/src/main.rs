@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use arbitrary::Unstructured;
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use example_reginfo::Arch;
 use rand::RngCore;
 use regalloc3::debug_utils::{
@@ -12,21 +12,6 @@ use regalloc3::debug_utils::{
 use regalloc3::{Options, RegisterAllocator};
 
 mod example_reginfo;
-
-#[derive(ValueEnum, Clone)]
-enum MoveOptimizationLevel {
-    /// Don't do any optimizations.
-    Off,
-
-    /// Optimize moves within each block.
-    Local,
-
-    /// Optimize moves within blocks and across forward block edges.
-    Forward,
-
-    /// Optimize moves across all blocks.
-    Global,
-}
 
 #[derive(Parser)]
 /// Tool for testing regalloc3.
@@ -43,9 +28,9 @@ enum Args {
         /// File containing the function to register allocate.
         function: PathBuf,
 
-        /// Controls how moves are optimized after register allocation.
-        #[clap(long, default_value = "forward")]
-        move_opt: MoveOptimizationLevel,
+        /// Register allocator options.
+        #[clap(flatten)]
+        options: Options,
     },
 
     /// Generate a random function.
@@ -160,7 +145,7 @@ fn main() -> Result<()> {
             verbose,
             ref reginfo,
             ref function,
-            move_opt,
+            ref options,
         } => {
             let reginfo = load_reginfo(reginfo)?;
             let function = load_function(function, &reginfo)?;
@@ -172,17 +157,9 @@ fn main() -> Result<()> {
                 );
             }
 
-            let move_optimization = match move_opt {
-                MoveOptimizationLevel::Off => regalloc3::MoveOptimizationLevel::Off,
-                MoveOptimizationLevel::Local => regalloc3::MoveOptimizationLevel::Local,
-                MoveOptimizationLevel::Forward => regalloc3::MoveOptimizationLevel::Forward,
-                MoveOptimizationLevel::Global => regalloc3::MoveOptimizationLevel::Global,
-            };
-            let options = Options { move_optimization };
-
             let mut regalloc = RegisterAllocator::new();
             let output = regalloc
-                .allocate_registers(&function, &reginfo, &options)
+                .allocate_registers(&function, &reginfo, options)
                 .unwrap();
 
             println!("================ Output ================\n{output}");

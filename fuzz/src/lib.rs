@@ -60,6 +60,8 @@ impl Arbitrary<'_> for TestCase {
                 ("example_reginfo/riscv.reginfo", riscv),
             ]
         });
+        let options = u.arbitrary()?;
+        log::trace!("Options: {options:?}");
         let reginfo = if u.arbitrary()? {
             let (path, reginfo) = u.choose(example_reginfos)?;
             log::trace!("Using example reginfo: {path}");
@@ -70,7 +72,6 @@ impl Arbitrary<'_> for TestCase {
             TestCaseRegInfo::Arbitrary { reginfo }
         };
         let func = GenericFunction::arbitrary_with_config(reginfo.get(), u, Default::default())?;
-        let options = u.arbitrary()?;
         Ok(TestCase {
             reginfo,
             func,
@@ -81,6 +82,7 @@ impl Arbitrary<'_> for TestCase {
 
 impl fmt::Debug for TestCase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Options: {:?}", self.options)?;
         match &self.reginfo {
             TestCaseRegInfo::Example { path, reginfo: _ } => {
                 writeln!(f, "Using example reginfo: {path}")?;

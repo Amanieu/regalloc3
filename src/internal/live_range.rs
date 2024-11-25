@@ -288,6 +288,22 @@ impl ValueSegment {
         }
     }
 
+    /// Number of live instructions covered by several non-overlapping segments.
+    ///
+    /// This avoids double-counting instructions which are partially live in
+    /// 2 consecutive segments.
+    pub fn live_insts(segments: &[ValueSegment]) -> u32 {
+        let mut num_insts = 0;
+        let mut prev_seg_end = Inst::new(0).slot(Slot::Boundary);
+        for seg in segments {
+            num_insts +=
+                LiveRangeSegment::new(prev_seg_end.max(seg.live_range.from), seg.live_range.to)
+                    .num_insts();
+            prev_seg_end = seg.live_range.to.round_to_next_inst();
+        }
+        num_insts
+    }
+
     /// Splits the given segment into 2 halves.
     pub fn split_at(self, split_at: Inst, uses: &Uses, hints: &Hints) -> (Self, Self) {
         debug_assert!(!self.live_range.is_empty());
@@ -331,32 +347,31 @@ impl ValueSegment {
         // Separate the list of segments into the set before the split and the set
         // after the split. These may overlap by exactly 1 segment if that segment
         // contains the split point.
-        let first_segment_in_second_half =
-            segments.partition_point(|seg| seg.live_range.to <= split_at);
-        let last_segment_in_first_half =
-            if segments[first_segment_in_second_half].live_range.from < split_at {
-                first_segment_in_second_half
-            } else {
-                first_segment_in_second_half - 1
-            };
+        let second_half_start = segments.partition_point(|seg| seg.live_range.to <= split_at);
+        let first_half_end = if second_half_start != segments.len()
+            && segments[second_half_start].live_range.from < split_at
+        {
+            second_half_start + 1
+        } else {
+            second_half_start
+        };
 
         // If both vregs share a segment that is split down the middle, split it
         // into 2 separate segments. The shared segment is already present in both
         // vectors, it just needs to be truncated accordingly for each half.
-        let second_live_range_and_use_list =
-            if first_segment_in_second_half == last_segment_in_first_half {
-                let (first, second) =
-                    segments[first_segment_in_second_half].split_at(split_at.inst(), uses, hints);
-                segments[last_segment_in_first_half] = first;
-                Some((second.live_range, second.use_list))
-            } else {
-                None
-            };
+        let second_live_range_and_use_list = if second_half_start != first_half_end {
+            let (first, second) =
+                segments[second_half_start].split_at(split_at.inst(), uses, hints);
+            segments[second_half_start] = first;
+            Some((second.live_range, second.use_list))
+        } else {
+            None
+        };
 
         SplitResult {
             segments,
-            last_segment_in_first_half,
-            first_segment_in_second_half,
+            first_half_end,
+            second_half_start,
             second_live_range_and_use_list,
         }
     }
@@ -389,29 +404,29 @@ impl ValueSegment {
     }
 }
 
-/// Result of spliting a live range with [`ValueSegment::split_at`].
+/// Result of splitting a live range with [`ValueSegment::split_at`].
 pub struct SplitResult<'a> {
     segments: &'a mut [ValueSegment],
-    last_segment_in_first_half: usize,
-    first_segment_in_second_half: usize,
+    first_half_end: usize,
+    second_half_start: usize,
     second_live_range_and_use_list: Option<(LiveRangeSegment, UseList)>,
 }
 
 impl<'a> SplitResult<'a> {
     /// First half of the split.
     pub fn first_half(&mut self) -> &mut [ValueSegment] {
-        &mut self.segments[..=self.last_segment_in_first_half]
+        &mut self.segments[..self.first_half_end]
     }
 
     /// Second half of the split.
     pub fn into_second_half(self) -> &'a mut [ValueSegment] {
         // Mutate the range in-place to avoid temporary allocations.
         if let Some((second_range, second_uses)) = self.second_live_range_and_use_list {
-            self.segments[self.first_segment_in_second_half].live_range = second_range;
-            self.segments[self.first_segment_in_second_half].use_list = second_uses;
+            self.segments[self.second_half_start].live_range = second_range;
+            self.segments[self.second_half_start].use_list = second_uses;
         }
 
-        &mut self.segments[self.first_segment_in_second_half..]
+        &mut self.segments[self.second_half_start..]
     }
 }
 
