@@ -39,8 +39,15 @@ impl Use {
     /// register.
     pub fn spill_cost(self, reginfo: &impl RegInfo) -> f32 {
         match self.kind {
-            // Fixed uses/defs are simple: just pay the cost of the spill/reload.
-            UseKind::FixedDef { reg: _ } | UseKind::FixedUse { reg: _ } => SPILL_RELOAD_COST,
+            // Fixed uses/defs are simple: just pay the cost of the
+            // spill/reload, except if reg represents a memory location.
+            UseKind::FixedDef { reg } | UseKind::FixedUse { reg } => {
+                if reginfo.is_memory(reg) {
+                    0.0
+                } else {
+                    SPILL_RELOAD_COST
+                }
+            }
 
             // Some instructions can directly accept stack operands, use the
             // class spill cost to determine how much this costs.

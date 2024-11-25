@@ -7,6 +7,7 @@ use alloc::collections::BinaryHeap;
 use core::{fmt, mem};
 
 use super::Stage;
+use crate::internal::live_range::ValueSegment;
 use crate::internal::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
 use crate::reginfo::MAX_GROUP_SIZE;
 
@@ -56,11 +57,7 @@ impl Entry {
         };
         let has_fixed_use = virt_regs[vreg].has_fixed_hint as u64;
         let group_size = 0;
-        let size: u64 = virt_regs
-            .segments(vreg)
-            .iter()
-            .map(|seg| seg.live_range.num_insts() as u64)
-            .sum();
+        let size = ValueSegment::live_insts(virt_regs.segments(vreg)) as u64;
         let size = size.min((1 << 27) - 1);
         let index = vreg.index() as u64;
         Entry {
@@ -79,13 +76,7 @@ impl Entry {
         let group_size = members.len() as u64 - 1;
         let size: u64 = members
             .iter()
-            .map(|&vreg| {
-                virt_regs
-                    .segments(vreg)
-                    .iter()
-                    .map(|seg| seg.live_range.num_insts() as u64)
-                    .sum::<u64>()
-            })
+            .map(|&vreg| ValueSegment::live_insts(virt_regs.segments(vreg)) as u64)
             .sum();
         let size = size.min((1 << 27) - 1);
         let index = group.index() as u64;
@@ -106,11 +97,9 @@ impl Entry {
         let index = self.bits as u32 as usize;
         let vreg_or_group = if group_size == 1 {
             let vreg = VirtReg::new(index);
-            trace!("Dequeuing {vreg}");
             VirtRegOrGroup::Reg(vreg)
         } else {
             let group = VirtRegGroup::new(index);
-            trace!("Dequeuing {group}");
             VirtRegOrGroup::Group(group)
         };
         (vreg_or_group, stage)

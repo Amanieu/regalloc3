@@ -119,9 +119,7 @@ impl SplitPlacement {
                     break;
                 }
             }
-            trace!(
-                "Selecting split point at {split}-pre between {after} and {before} (prefer start)"
-            );
+            trace!("Selecting split point at {split} between {after} and {before} (prefer start)");
             split
         } else {
             let mut split = before;
@@ -141,10 +139,18 @@ impl SplitPlacement {
                     break;
                 }
             }
-            trace!(
-                "Selecting split point at {split}-pre between {after} and {before} (prefer end)"
-            );
+            trace!("Selecting split point at {split} between {after} and {before} (prefer end)");
             split
         }
+    }
+
+    /// Returns the first block after `block` with a lower frequency.
+    pub fn next_lower_freq(&self, block: Block) -> Option<Block> {
+        self.next_lower_freq[block].expand()
+    }
+
+    /// Returns the last block before `block` with a lower frequency.
+    pub fn prev_lower_freq(&self, block: Block) -> Option<Block> {
+        self.prev_lower_freq[block].expand()
     }
 }
