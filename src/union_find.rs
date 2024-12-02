@@ -69,11 +69,11 @@ impl<K: EntityRef> UnionFind<K> {
     ///
     /// Returns whether the sets were successfully merged (or if both keys were
     /// already in the same set).
-    pub fn try_union(&mut self, a: K, b: K, unify: impl FnOnce(K, K) -> bool) -> bool {
+    pub fn try_union(&mut self, a: K, b: K, unify: impl FnOnce(K, K) -> bool) {
         let a = self.find(a);
         let b = self.find(b);
         if a == b {
-            return true;
+            return;
         }
 
         // Merge into the set with the higher rank.
@@ -91,10 +91,6 @@ impl<K: EntityRef> UnionFind<K> {
 
             // Merge the follower into the leader's tree.
             self.table[follower.index()].parent = leader;
-
-            true
-        } else {
-            false
         }
     }
 }

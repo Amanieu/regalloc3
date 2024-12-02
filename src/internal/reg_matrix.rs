@@ -303,7 +303,7 @@ impl RegMatrix {
         virt_regs: &'a VirtRegs,
         reginfo: &'a impl RegInfo,
     ) -> impl Iterator<Item = Interference> + 'a {
-        let segments = virt_regs[vreg].segments(virt_regs);
+        let segments = virt_regs.segments(vreg);
         reginfo.reg_units(reg).iter().flat_map(move |&unit| {
             let btree = &self.reservations[unit].vregs;
             let fixed = &self.reservations[unit].fixed;
@@ -335,10 +335,8 @@ impl RegMatrix {
 
         // We need to track reservations in each register unit separately.
         for &unit in reginfo.reg_units(reg) {
-            for segment in virt_regs[vreg].segments(virt_regs) {
-                if segment.live_range.is_empty() {
-                    continue;
-                }
+            for segment in virt_regs.segments(vreg) {
+                debug_assert!(!segment.live_range.is_empty());
 
                 let prev = self.reservations[unit]
                     .vregs
@@ -363,10 +361,8 @@ impl RegMatrix {
 
         // We need to track reservations in each register unit separately.
         for &unit in reginfo.reg_units(reg) {
-            for segment in virt_regs[vreg].segments(virt_regs) {
-                if segment.live_range.is_empty() {
-                    continue;
-                }
+            for segment in virt_regs.segments(vreg) {
+                debug_assert!(!segment.live_range.is_empty());
 
                 let prev = self.reservations[unit].vregs.remove(&segment.live_range.to);
 

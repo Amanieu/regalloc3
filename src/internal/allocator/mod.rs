@@ -36,10 +36,11 @@ use self::order::{AllocationOrder, CandidateReg};
 use self::queue::{AllocationQueue, VirtRegOrGroup};
 use self::spill::Spiller;
 use super::coalescing::Coalescing;
+use super::hints::Hints;
+use super::live_range::ValueSegment;
 use super::reg_matrix::RegMatrix;
 use super::spill_allocator::SpillAllocator;
 use super::uses::Uses;
-use super::live_range::ValueSegment;
 use super::virt_regs::builder::VirtRegBuilder;
 use super::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
 use crate::entity::packed_option::PackedOption;
@@ -317,6 +318,7 @@ impl Allocator {
     pub fn run(
         &mut self,
         uses: &mut Uses,
+        hints: &Hints,
         reg_matrix: &mut RegMatrix,
         virt_regs: &mut VirtRegs,
         virt_reg_builder: &mut VirtRegBuilder,
@@ -334,6 +336,7 @@ impl Allocator {
             reginfo,
             allocator: self,
             uses,
+            hints,
             reg_matrix,
             virt_regs,
             virt_reg_builder,
@@ -413,6 +416,7 @@ struct Context<'a, F, R> {
     reginfo: &'a R,
     allocator: &'a mut Allocator,
     uses: &'a mut Uses,
+    hints: &'a Hints,
     reg_matrix: &'a mut RegMatrix,
     virt_regs: &'a mut VirtRegs,
     virt_reg_builder: &'a mut VirtRegBuilder,
@@ -441,9 +445,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         self.allocator.allocation_order.compute(
             vreg,
             self.virt_regs,
-            self.uses,
+            self.hints,
             self.reg_matrix,
-            self.func,
             self.reginfo,
             hint,
         );

@@ -26,6 +26,7 @@ use crate::entity::packed_option::{PackedOption, ReservedValue};
 use crate::entity::{CompactList, SecondaryMap};
 use crate::function::{Function, OperandKind, Value, ValueGroup};
 use crate::internal::coalescing::Coalescing;
+use crate::internal::hints::Hints;
 use crate::internal::live_range::{LiveRangeSegment, Slot, ValueSegment};
 use crate::internal::split_placement::SplitPlacement;
 use crate::internal::uses::{Use, UseIndex, UseKind, Uses, MOVE_COST, SPILL_RELOAD_COST};
@@ -81,9 +82,9 @@ impl VirtRegBuilder {
         reginfo: &impl RegInfo,
         virt_regs: &mut VirtRegs,
         uses: &mut Uses,
+        hints: &Hints,
         coalescing: &mut Coalescing,
         stats: &mut Stats,
-        empty_segments: &mut Vec<ValueSegment>,
         split_placement: Option<&SplitPlacement>,
         new_vregs: Option<&mut Vec<VirtReg>>,
         segments: &mut [ValueSegment],
@@ -98,7 +99,7 @@ impl VirtRegBuilder {
             virt_regs,
             coalescing,
             stats,
-            empty_segments,
+            hints,
             value_group_mapping: &mut self.value_group_mapping,
             conflicting_uses: &mut self.conflicting_uses,
             new_vregs,
@@ -142,9 +143,6 @@ struct VirtRegBuilderConstraints {
     /// Group information if this vreg is in a register group class.
     group: Option<VirtRegBuilderGroup>,
 
-    /// Whether we saw a fixed-use/fixed-def constraint.
-    has_fixed_use: bool,
-
     /// Whether we need to add the uses to an existing virtual register instead
     /// of creating a new one.
     merge_into_existing_vreg: Option<VirtReg>,
@@ -157,7 +155,6 @@ impl VirtRegBuilderConstraints {
         Self {
             class: top_level_class,
             group: None,
-            has_fixed_use: false,
             merge_into_existing_vreg: None,
         }
     }
@@ -357,15 +354,11 @@ impl VirtRegBuilderConstraints {
                 true
             }
 
-            // Record that we saw a fixed use, but don't change the constraint.
-            UseKind::FixedDef { .. } | UseKind::FixedUse { .. } => {
-                self.has_fixed_use = true;
-                true
-            }
-
             // These don't affect the allocation constraint: we will
             // automatically insert a move as necessary.
-            UseKind::TiedUse { .. }
+            UseKind::FixedDef { .. }
+            | UseKind::FixedUse { .. }
+            | UseKind::TiedUse { .. }
             | UseKind::ConstraintConflict { .. }
             | UseKind::BlockparamIn { .. }
             | UseKind::BlockparamOut { .. } => true,
@@ -378,10 +371,10 @@ struct Context<'a, F, R> {
     reginfo: &'a R,
     virt_regs: &'a mut VirtRegs,
     uses: &'a mut Uses,
+    hints: &'a Hints,
     split_placement: Option<&'a SplitPlacement>,
     coalescing: &'a mut Coalescing,
     stats: &'a mut Stats,
-    empty_segments: &'a mut Vec<ValueSegment>,
     value_group_mapping: &'a mut SecondaryMap<ValueGroup, PackedOption<VirtRegGroup>>,
     conflicting_uses: &'a mut Vec<(Value, Use)>,
     new_vregs: Option<&'a mut Vec<VirtReg>>,
@@ -417,6 +410,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             for seg_idx in 0..segments.len() {
                 let value = segments[seg_idx].value;
                 let use_list = segments[seg_idx].use_list;
+                debug_assert!(!segments[seg_idx].live_range.is_empty());
                 for idx in 0..use_list.len() {
                     // Attempt to adjust our constraints to include the use.
                     // In most cases the use is already covered by our register
@@ -447,10 +441,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         trace!("-> conflict!");
                         stat!(self.stats, vreg_conflicts);
                         debug_assert!(may_conflict, "should not conflict after split");
-                        debug_assert!(
-                            !segments[seg_idx].live_range.is_empty(),
-                            "empty segments cannot cause conflicts"
-                        );
 
                         // We have conflicting uses, which we must place in
                         // separate vregs. First, scan backwards to find the
@@ -525,8 +515,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             // Create a vreg for the portion before the split.
                             // This should never conflict and therefore can't
                             // recurse.
-                            let mut split =
-                                ValueSegment::split_at(segments, self.uses, split_point);
+                            let mut split = ValueSegment::split_segments_at(
+                                segments,
+                                self.uses,
+                                self.hints,
+                                split_point,
+                            );
                             self.compute_constraints(split.first_half(), false);
 
                             // Then continue vreg creation as normal for the
@@ -771,6 +765,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// to a virtual register.
     fn emit_vreg(&mut self, segments: &mut [ValueSegment]) {
         debug_assert!(!segments.is_empty());
+        debug_assert!(segments.iter().all(|seg| !seg.live_range.is_empty()));
+        let has_fixed_hint = segments.iter().any(|seg| seg.use_list.has_fixedhint());
 
         // Special handling if we need to insert our segments into an existing
         // virtual register. This only happens when we are joining an existing
@@ -790,8 +786,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             // The new segments should not conflict with any existing segments
             // for that register group. We just need to find the correct point
             // in the segment list in which to insert the new segments.
-            let idx = self.virt_regs[vreg]
-                .segments(self.virt_regs)
+            let idx = self
+                .virt_regs
+                .segments(vreg)
                 .binary_search_by(|seg| {
                     if seg.live_range.to <= segments[0].live_range.from {
                         Ordering::Less
@@ -811,9 +808,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
             // Update spill_weight, class and has_fixed_use for the virtual
             // register.
-            let spill_weight =
-                self.calc_spill_weight(self.virt_regs[vreg].segments(self.virt_regs));
-            self.virt_regs.virt_regs[vreg].has_fixed_use |= self.constraints.has_fixed_use;
+            let spill_weight = self.calc_spill_weight(self.virt_regs.segments(vreg));
+            self.virt_regs.virt_regs[vreg].has_fixed_hint |= has_fixed_hint;
             self.virt_regs.virt_regs[vreg].class = self.constraints.class;
 
             // Propagate the class and spill weight to all members of the
@@ -829,15 +825,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             return;
         }
 
-        // Don't create a virtual register if no segments have a live range.
-        //
-        // We don't actually need to allocate a register for such segments.
-        if segments.iter().all(|segment| segment.live_range.is_empty()) {
-            trace!("All segments are empty, not emitting vreg");
-            self.empty_segments.extend_from_slice(segments);
-            return;
-        }
-
         // Allocate a virtual register.
         let spill_weight = self.calc_spill_weight(segments);
         let vreg = self.virt_regs.virt_regs.push(VirtRegData {
@@ -848,7 +835,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             class: self.constraints.class,
             group_index: 0,
             group: None.into(),
-            has_fixed_use: self.constraints.has_fixed_use,
+            has_fixed_hint,
             spill_weight,
         });
 
@@ -866,7 +853,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     trace!("Created new vreg group {vreg_group}");
 
                     // Update the ValueGroup mappings to point to our new group.
-                    for seg in self.virt_regs.virt_regs[vreg].segments(self.virt_regs) {
+                    for seg in self.virt_regs.segments(vreg) {
                         for u in &self.uses[seg.use_list] {
                             let slot = match u.kind {
                                 UseKind::GroupClassUse {

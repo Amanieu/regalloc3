@@ -6,9 +6,8 @@ use alloc::vec::Vec;
 use super::queue::VirtRegOrGroup;
 use super::{AbstractVirtRegGroup, Assignment, Context, Stage};
 use crate::function::{Function, OperandKind};
-use crate::internal::live_range::{LiveRangeSegment, Slot};
-use crate::internal::uses::UseKind;
 use crate::internal::live_range::ValueSegment;
+use crate::internal::uses::UseKind;
 use crate::internal::virt_regs::VirtReg;
 use crate::reginfo::RegInfo;
 
@@ -46,7 +45,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // created when building the new virtual registers.
         if vreg.is_group() {
             let vreg = vreg.first_vreg(self.virt_regs);
-            for segment in self.virt_regs[vreg].segments(self.virt_regs) {
+            for segment in self.virt_regs.segments(vreg) {
                 for &u in &self.uses[segment.use_list] {
                     if let UseKind::GroupClassUse {
                         slot,
@@ -84,29 +83,17 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         for (group_index, vreg) in vreg.vregs(self.virt_regs).enumerate() {
             trace!("Spilling {vreg}");
             stat!(self.stats, spilled_vregs);
-            for &segment in self.virt_regs[vreg].segments(self.virt_regs) {
-                // Empty segments don't need an allocation and can be skipped.
-                if segment.live_range.is_empty() {
-                    trace!(
-                        "Discarding empty segment for {} at {}",
-                        segment.value,
-                        segment.live_range
-                    );
-                    self.allocator.empty_segments.push(segment);
-                    continue;
-                }
-
+            for &segment in self.virt_regs.segments(vreg) {
                 // If the value of that segment is rematerializable then we
                 // don't need to spill it. This will result in it having no
                 // allocation, which the move resolver will handle by
                 // rematerializing the value.
                 let can_remat = self.func.can_rematerialize(segment.value).is_some();
 
-                let mut start_pos = segment.live_range.from;
-                let mut use_list = segment.use_list;
+                let mut segment = segment;
                 'outer: loop {
                     let mut must_spill = false;
-                    for &u in &self.uses[use_list] {
+                    for &u in &self.uses[segment.use_list] {
                         // Ignore uses that can be assigned to spill slots.
                         let can_spill = match u.kind {
                             UseKind::ClassUse { slot: _, class }
@@ -157,40 +144,26 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
                         // If there is a live range segment with no uses before
                         // this use, spill that segment.
-                        if u.pos != start_pos.round_to_prev_inst().inst() {
-                            let (before, after) = use_list.split_at_inst(u.pos, self.uses);
-                            let segment = ValueSegment {
-                                live_range: LiveRangeSegment::new(
-                                    start_pos,
-                                    u.pos.slot(Slot::Boundary),
-                                ),
-                                use_list: before,
-                                value: segment.value,
-                            };
+                        if u.pos != segment.live_range.from.round_to_prev_inst().inst() {
+                            let (before, after) = segment.split_at(u.pos, self.uses, self.hints);
                             if must_spill || !can_remat {
-                                let set = self.coalescing.set_for_value(segment.value);
-                                self.spill_allocator.spill_segment(set, segment);
+                                let set = self.coalescing.set_for_value(before.value);
+                                self.spill_allocator.spill_segment(set, before);
                             } else {
                                 trace!(
                                     "Rematerializing segment for {} at {}",
-                                    segment.value,
-                                    segment.live_range
+                                    before.value,
+                                    before.live_range
                                 );
-                                self.allocator.remat_segments.push(segment);
+                                self.allocator.remat_segments.push(before);
                             }
-                            use_list = after;
-                            start_pos = u.pos.slot(Slot::Boundary);
+                            segment = after;
                         }
 
                         if u.pos.next() == segment.live_range.to.round_to_next_inst().inst() {
                             // If this use is on the last instruction of the segment
                             // then split off the rest of the segment into a
                             // minimal segment.
-                            let segment = ValueSegment {
-                                live_range: LiveRangeSegment::new(start_pos, segment.live_range.to),
-                                use_list,
-                                value: segment.value,
-                            };
                             trace!(
                                 "Generating minimal segment for {} at {}",
                                 segment.value,
@@ -203,23 +176,15 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             // instruction boundary after the use. The first
                             // half is split as a minimal segment and continue
                             // processing the remaining half.
-                            let (before, after) = use_list.split_at_inst(u.pos.next(), self.uses);
-                            let segment = ValueSegment {
-                                live_range: LiveRangeSegment::new(
-                                    start_pos,
-                                    u.pos.next().slot(Slot::Boundary),
-                                ),
-                                use_list: before,
-                                value: segment.value,
-                            };
+                            let (before, after) =
+                                segment.split_at(u.pos.next(), self.uses, self.hints);
                             trace!(
                                 "Generating minimal segment for {} at {}",
-                                segment.value,
-                                segment.live_range
+                                before.value,
+                                before.live_range
                             );
-                            self.allocator.spiller.minimal_segments.push(segment);
-                            use_list = after;
-                            start_pos = u.pos.next().slot(Slot::Boundary);
+                            self.allocator.spiller.minimal_segments.push(before);
+                            segment = after;
                             continue 'outer;
                         }
                     }
@@ -227,11 +192,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     // If there are no uses left in the segment, spill it. The
                     // live range must be non-empty at this point, this is
                     // checked in spill_segment.
-                    let segment = ValueSegment {
-                        live_range: LiveRangeSegment::new(start_pos, segment.live_range.to),
-                        use_list,
-                        value: segment.value,
-                    };
                     if must_spill || !can_remat {
                         let set = self.coalescing.set_for_value(segment.value);
                         self.spill_allocator.spill_segment(set, segment);
@@ -265,10 +225,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     self.func,
                     self.reginfo,
                     self.uses,
+                    self.hints,
                     self.virt_reg_builder,
                     self.coalescing,
                     self.stats,
-                    &mut self.allocator.empty_segments,
                     &mut self.allocator.spiller.new_vregs,
                 );
             });

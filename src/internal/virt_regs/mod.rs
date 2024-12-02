@@ -7,8 +7,8 @@ use alloc::vec::Vec;
 use core::ops::Index;
 
 use self::builder::VirtRegBuilder;
-use super::allocator::Allocator;
 use super::coalescing::Coalescing;
+use super::hints::Hints;
 use super::live_range::ValueSegment;
 use super::spill_allocator::SpillAllocator;
 use super::split_placement::SplitPlacement;
@@ -59,8 +59,8 @@ pub struct VirtRegData {
     /// in a group.
     pub group: PackedOption<VirtRegGroup>,
 
-    /// Whether this virtual register has a `FixedUse` or `FixedDef` use.
-    pub has_fixed_use: bool,
+    /// Whether a segment in this virtual register has a fixed-register hint.
+    pub has_fixed_hint: bool,
 
     /// The spill weight represents the use density of this virtual register.
     ///
@@ -73,16 +73,6 @@ pub struct VirtRegData {
     /// When a virtual register is part of a group, the spill weight of each
     /// virtual register is set to the lowest spill weight of the group.
     pub spill_weight: f32,
-}
-
-impl VirtRegData {
-    /// Sorted list of live range segments for this virtual register.
-    ///
-    /// This is guaranteed to contain at least one segment with a non-empty
-    /// live range.
-    pub fn segments<'a>(&self, virt_regs: &'a VirtRegs) -> &'a [ValueSegment] {
-        self.segments.as_slice(&virt_regs.segment_pool)
-    }
 }
 
 /// Storage for all virtual registers in the function.
@@ -149,6 +139,13 @@ impl VirtRegs {
         self.groups[group].as_slice(&self.group_pool)
     }
 
+    /// Sorted list of live range segments for a virtual register.
+    ///
+    /// All segments are guaranteed to have a non-empty live range.
+    pub fn segments(&self, vreg: VirtReg) -> &[ValueSegment] {
+        self.virt_regs[vreg].segments.as_slice(&self.segment_pool)
+    }
+
     /// Creates new virtual registers from the given segments.
     pub fn create_vreg_from_segments(
         &mut self,
@@ -156,10 +153,10 @@ impl VirtRegs {
         func: &impl Function,
         reginfo: &impl RegInfo,
         uses: &mut Uses,
+        hints: &Hints,
         virt_reg_builder: &mut VirtRegBuilder,
         coalescing: &mut Coalescing,
         stats: &mut Stats,
-        empty_segments: &mut Vec<ValueSegment>,
         new_vregs: &mut Vec<VirtReg>,
     ) {
         let bank = func.value_bank(segments[0].value);
@@ -169,9 +166,9 @@ impl VirtRegs {
             reginfo,
             self,
             uses,
+            hints,
             coalescing,
             stats,
-            empty_segments,
             None,
             Some(new_vregs),
             segments,
@@ -186,16 +183,15 @@ impl VirtRegs {
         value_live_ranges: &mut ValueLiveRanges,
         coalescing: &mut Coalescing,
         uses: &mut Uses,
+        hints: &Hints,
         split_placement: &SplitPlacement,
         spill_allocator: &mut SpillAllocator,
         virt_reg_builder: &mut VirtRegBuilder,
-        allocator: &mut Allocator,
         stats: &mut Stats,
     ) {
         self.clear();
         virt_reg_builder.clear(func);
         spill_allocator.clear(func);
-        allocator.empty_segments.clear();
 
         for (set, mut segments) in value_live_ranges.take_all_value_sets() {
             let bank = func.value_bank(segments[0].value);
@@ -211,9 +207,9 @@ impl VirtRegs {
                 reginfo,
                 self,
                 uses,
+                hints,
                 coalescing,
                 stats,
-                &mut allocator.empty_segments,
                 Some(split_placement),
                 None,
                 &mut segments,
@@ -248,18 +244,8 @@ impl VirtRegs {
                 vreg_data.class,
                 vreg_data.spill_weight,
             );
-            for segment in vreg_data.segments(self) {
-                trace!("    {} ({})", segment.live_range, segment.value);
-                if segment.use_list.has_livein() {
-                    trace!("    - livein");
-                }
-                let uses = &uses[segment.use_list];
-                for u in uses {
-                    trace!("    - {}: {}", u.pos, u.kind);
-                }
-                if segment.use_list.has_liveout() {
-                    trace!("    - liveout");
-                }
+            for segment in vreg_data.segments.as_slice(&self.segment_pool) {
+                segment.dump(uses);
             }
         }
         trace!("Virtual register groups:");

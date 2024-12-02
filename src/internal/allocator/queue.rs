@@ -54,10 +54,10 @@ impl Entry {
             Stage::Evict => 1,
             Stage::Split => 0,
         };
-        let has_fixed_use = virt_regs[vreg].has_fixed_use as u64;
+        let has_fixed_use = virt_regs[vreg].has_fixed_hint as u64;
         let group_size = 0;
-        let size: u64 = virt_regs[vreg]
-            .segments(virt_regs)
+        let size: u64 = virt_regs
+            .segments(vreg)
             .iter()
             .map(|seg| seg.live_range.num_insts() as u64)
             .sum();
@@ -75,13 +75,13 @@ impl Entry {
             Stage::Split => 0,
         };
         let members = virt_regs.group_members(group);
-        let has_fixed_use = members.iter().any(|&vreg| virt_regs[vreg].has_fixed_use) as u64;
+        let has_fixed_use = members.iter().any(|&vreg| virt_regs[vreg].has_fixed_hint) as u64;
         let group_size = members.len() as u64 - 1;
         let size: u64 = members
             .iter()
             .map(|&vreg| {
-                virt_regs[vreg]
-                    .segments(virt_regs)
+                virt_regs
+                    .segments(vreg)
                     .iter()
                     .map(|seg| seg.live_range.num_insts() as u64)
                     .sum::<u64>()

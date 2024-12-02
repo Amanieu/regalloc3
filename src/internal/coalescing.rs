@@ -280,8 +280,12 @@ impl Coalescing {
             // done efficiently since the segments are always sorted.
             let mut segments_a = &value_live_ranges[set_a][..];
             let mut segments_b = &value_live_ranges[set_b][..];
-            debug_assert!(!segments_a.is_empty());
-            debug_assert!(!segments_b.is_empty());
+
+            // If either set has an empty live range then there is no point in
+            // merging them.
+            if segments_a.is_empty() || segments_b.is_empty() {
+                return false;
+            }
 
             // Fast path if one set of segments are all before/after the other.
             if segments_a[0].live_range.from >= segments_b.last().unwrap().live_range.to {
@@ -337,13 +341,8 @@ fn merge(mut a: &[ValueSegment], mut b: &[ValueSegment]) -> SmallVec<[ValueSegme
     loop {
         match (a, b) {
             (&[seg_a, ref rest_a @ ..], &[seg_b, ref rest_b @ ..]) => {
-                // We need to look at both from and to because of empty segments
-                // which are adjacent to another segment.
-                let key_a =
-                    seg_a.live_range.from.bits as u64 | (seg_a.live_range.to.bits as u64) << 32;
-                let key_b =
-                    seg_b.live_range.from.bits as u64 | (seg_b.live_range.to.bits as u64) << 32;
-                let seg = if key_a <= key_b {
+                debug_assert_ne!(seg_a.live_range.from, seg_b.live_range.from);
+                let seg = if seg_a.live_range.from < seg_b.live_range.from {
                     a = rest_a;
                     seg_a
                 } else {

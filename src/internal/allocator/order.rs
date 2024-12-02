@@ -28,9 +28,8 @@ use ordered_float::OrderedFloat;
 
 use super::AbstractVirtRegGroup;
 use crate::entity::SparseMap;
-use crate::function::Function;
+use crate::internal::hints::Hints;
 use crate::internal::reg_matrix::RegMatrix;
-use crate::internal::uses::{UseKind, Uses};
 use crate::internal::virt_regs::{VirtReg, VirtRegs};
 use crate::reginfo::{AllocationOrderSet, PhysReg, RegClass, RegInfo, RegOrRegGroup};
 
@@ -120,9 +119,8 @@ impl AllocationOrder {
         &mut self,
         vreg: impl AbstractVirtRegGroup,
         virt_regs: &VirtRegs,
-        uses: &Uses,
+        hints: &Hints,
         reg_matrix: &RegMatrix,
-        func: &impl Function,
         reginfo: &impl RegInfo,
         hint: Option<PhysReg>,
     ) {
@@ -133,14 +131,13 @@ impl AllocationOrder {
         // and assign them weights based on their use frequency.
         let is_group = vreg.is_group();
         for (group_index, vreg) in vreg.vregs(virt_regs).enumerate() {
-            if virt_regs[vreg].has_fixed_use {
+            if virt_regs[vreg].has_fixed_hint {
                 self.collect_fixed_preferences(
                     vreg,
                     is_group.then_some(group_index),
                     class,
                     virt_regs,
-                    uses,
-                    func,
+                    hints,
                     reginfo,
                 );
             }
@@ -171,7 +168,7 @@ impl AllocationOrder {
         // Random seed algorithm copied from regalloc2: this helps spread
         // allocations around and increases the chance that we find a free
         // register on the first try.
-        let random_seed = virt_regs[vreg.first_vreg(virt_regs)].segments(virt_regs)[0]
+        let random_seed = virt_regs.segments(vreg.first_vreg(virt_regs))[0]
             .live_range
             .from
             .inst()
@@ -230,50 +227,40 @@ impl AllocationOrder {
         group_index: Option<usize>,
         class: RegClass,
         virt_regs: &VirtRegs,
-        uses: &Uses,
-        func: &impl Function,
+        hints: &Hints,
         reginfo: &impl RegInfo,
     ) {
         // Iterate over all uses in this vreg and collect fixed register uses.
-        for seg in virt_regs[vreg].segments(virt_regs) {
-            for u in &uses[seg.use_list] {
-                let reg = match u.kind {
-                    UseKind::FixedDef { reg } | UseKind::FixedUse { reg } => reg,
-                    UseKind::TiedUse { .. }
-                    | UseKind::ConstraintConflict { .. }
-                    | UseKind::ClassUse { .. }
-                    | UseKind::ClassDef { .. }
-                    | UseKind::GroupClassUse { .. }
-                    | UseKind::GroupClassDef { .. }
-                    | UseKind::BlockparamIn { .. }
-                    | UseKind::BlockparamOut { .. } => continue,
-                };
-
-                let reg_group = if let Some(group_index) = group_index {
-                    // If this is a register group then we need to find the register
-                    // group in this class which contains this register.
-                    let Some(reg_group) = reginfo.group_for_reg(reg, group_index, class) else {
-                        continue;
+        trace!("Collecting fixed register hints for {vreg}:");
+        for seg in virt_regs.segments(vreg) {
+            if seg.use_list.has_fixedhint() {
+                for hint in hints.hints_for_segment(seg.value, seg.live_range) {
+                    trace!("- {hint}");
+                    let reg_group = if let Some(group_index) = group_index {
+                        // If this is a register group then we need to find the register
+                        // group in this class which contains this register.
+                        let Some(reg_group) = reginfo.group_for_reg(hint.reg, group_index, class)
+                        else {
+                            continue;
+                        };
+                        debug_assert!(reginfo
+                            .class_members(class)
+                            .contains(RegOrRegGroup::multi(reg_group)));
+                        RegOrRegGroup::multi(reg_group)
+                    } else {
+                        // Ignore preferences that conflict with our register class
+                        // constraint.
+                        if !reginfo
+                            .class_members(class)
+                            .contains(RegOrRegGroup::single(hint.reg))
+                        {
+                            continue;
+                        }
+                        RegOrRegGroup::single(hint.reg)
                     };
-                    debug_assert!(reginfo
-                        .class_members(class)
-                        .contains(RegOrRegGroup::multi(reg_group)));
-                    RegOrRegGroup::multi(reg_group)
-                } else {
-                    // Ignore preferences that conflict with our register class
-                    // constraint.
-                    if !reginfo
-                        .class_members(class)
-                        .contains(RegOrRegGroup::single(reg))
-                    {
-                        continue;
-                    }
-                    RegOrRegGroup::single(reg)
-                };
 
-                // Weigh each preference based on its use frequency.
-                let weight = func.block_frequency(func.inst_block(u.pos));
-                *self.candidates.entry(reg_group).or_default() += weight;
+                    *self.candidates.entry(reg_group).or_default() += hint.weight;
+                }
             }
         }
     }

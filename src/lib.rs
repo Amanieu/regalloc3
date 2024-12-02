@@ -88,6 +88,7 @@ use function::Function;
 use internal::allocations::Allocations;
 use internal::allocator::Allocator;
 use internal::coalescing::Coalescing;
+use internal::hints::Hints;
 use internal::move_optimizer::MoveOptimizer;
 use internal::move_resolver::MoveResolver;
 use internal::reg_matrix::RegMatrix;
@@ -151,6 +152,7 @@ pub use internal::parallel_moves;
 pub struct RegisterAllocator {
     value_live_ranges: ValueLiveRanges,
     uses: Uses,
+    hints: Hints,
     coalescing: Coalescing,
     virt_regs: VirtRegs,
     virt_reg_builder: VirtRegBuilder,
@@ -178,6 +180,7 @@ impl RegisterAllocator {
         Self {
             value_live_ranges: ValueLiveRanges::new(),
             uses: Uses::new(),
+            hints: Hints::new(),
             coalescing: Coalescing::new(),
             virt_regs: VirtRegs::new(),
             virt_reg_builder: VirtRegBuilder::new(),
@@ -222,9 +225,11 @@ impl RegisterAllocator {
         // Compute the live range for each SSA value.
         self.value_live_ranges.compute(
             &mut self.uses,
+            &mut self.hints,
             &mut self.allocations,
             &mut self.reg_matrix,
             &mut self.stats,
+            &mut self.allocator.empty_segments,
             func,
             reginfo,
         );
@@ -245,16 +250,17 @@ impl RegisterAllocator {
             &mut self.value_live_ranges,
             &mut self.coalescing,
             &mut self.uses,
+            &self.hints,
             &self.split_placement,
             &mut self.spill_allocator,
             &mut self.virt_reg_builder,
-            &mut self.allocator,
             &mut self.stats,
         );
 
         // Allocate virtual registers to physical registers.
         self.allocator.run(
             &mut self.uses,
+            &self.hints,
             &mut self.reg_matrix,
             &mut self.virt_regs,
             &mut self.virt_reg_builder,

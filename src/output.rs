@@ -246,8 +246,9 @@ where
             .allocator
             .assignments()
             .flat_map(|(vreg, reg)| {
-                self.regalloc.virt_regs[vreg]
-                    .segments(&self.regalloc.virt_regs)
+                self.regalloc
+                    .virt_regs
+                    .segments(vreg)
                     .iter()
                     .filter_map(move |segment| {
                         let inst_range = InstRange::new(

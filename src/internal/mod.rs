@@ -4,6 +4,7 @@
 pub(crate) mod allocations;
 pub(crate) mod allocator;
 pub(crate) mod coalescing;
+pub(crate) mod hints;
 pub(crate) mod live_range;
 pub(crate) mod move_optimizer;
 pub(crate) mod move_resolver;

@@ -33,7 +33,7 @@ use super::uses::{Use, UseKind, Uses};
 use super::virt_regs::VirtRegs;
 use crate::entity::packed_option::PackedOption;
 use crate::function::{Block, Function, Inst, Value};
-use crate::internal::live_range::LiveRangeSegment;
+use crate::internal::live_range::{LiveRangeSegment, ValueSegmentComponent};
 use crate::output::{Allocation, AllocationKind};
 use crate::reginfo::{RegClass, RegInfo};
 use crate::{MoveOptimizationLevel, Stats};
@@ -230,7 +230,7 @@ impl MoveResolver {
         trace!("Adding half-moves from vregs");
         for (vreg, reg) in allocator.assignments() {
             trace!("Adding half-moves from {vreg}");
-            for segment in virt_regs[vreg].segments(virt_regs) {
+            for segment in virt_regs.segments(vreg) {
                 ctx.process_segment(segment, Some(Allocation::reg(reg)));
             }
         }
@@ -994,103 +994,77 @@ impl<F: Function> Context<'_, F> {
             segment.value
         );
 
-        // Emit a destination half-move when this value is live-in from another
-        // segment.
-        let mut current_block;
-        if segment.use_list.has_livein() {
-            debug_assert_eq!(segment.live_range.from.slot(), Slot::Boundary);
-
-            let first_inst = segment.live_range.from.inst();
-            let first_block = self.func.inst_block(first_inst);
-            if first_inst == self.func.block_insts(first_block).from {
-                self.handle_block_live_in(first_inst, first_block, segment, alloc);
-            } else {
-                trace!("-> split livein");
-
-                // If the segment's live range ends here then we don't need a
-                // destination half move. Any uses with no live range (fixed/tied)
-                // will use the incoming values directly from self.live_in.
-                if segment.live_range.to != first_inst.slot(Slot::Boundary) {
-                    self.move_resolver.emit_dest_half_move(
-                        MovePosition::early(first_inst),
-                        segment.value,
-                        alloc.expect("split live range must have an allocation"),
-                    );
-                }
-                self.live_in = Some((
-                    first_inst,
-                    LiveInKind::Single {
-                        from_same_segment: false,
-                    },
-                ));
-            }
-
-            current_block = first_block;
-        } else {
-            // A segment with no live-in must start with a definition.
-            self.live_in = None;
-            current_block = self.func.inst_block(self.uses[segment.use_list][0].pos);
-        }
-
+        self.live_in = None;
         self.fixed_def = None;
-        for u in &self.uses[segment.use_list] {
-            // Handle any block boundaries between the previous use and the new
-            // one. We need to emit half-moves
-            let block = self.func.inst_block(u.pos);
-            while current_block != block {
-                trace!(
-                    "Segment crosses block bounary between {current_block} and {}",
-                    current_block.next()
-                );
-                let terminator = self.func.block_insts(current_block).last();
-                self.handle_block_live_out(terminator, current_block, segment, alloc);
-                current_block = current_block.next();
-                self.handle_block_live_in(terminator.next(), current_block, segment, alloc);
-            }
+        for component in segment.components(self.uses, self.func) {
+            match component {
+                // Emit a destination half-move when this value is live-in from another
+                // segment.
+                ValueSegmentComponent::LiveIn { inst } => {
+                    debug_assert_eq!(segment.live_range.from.slot(), Slot::Boundary);
 
-            trace!("-> {} {}", u.pos, u.kind);
-            self.handle_use(u, segment, alloc);
-        }
+                    let first_block = self.func.inst_block(inst);
+                    if inst == self.func.block_insts(first_block).from {
+                        self.handle_block_live_in(inst, first_block, segment, alloc);
+                    } else {
+                        trace!("-> split livein");
 
-        // Emit a source half-move if the value is live-out to another segment.
-        if segment.use_list.has_liveout() {
-            debug_assert_eq!(segment.live_range.to.slot(), Slot::Boundary);
-            let inst = segment.live_range.to.inst().prev();
-            let block = self.func.inst_block(inst);
+                        // If the segment's live range ends here then we don't need a
+                        // destination half move. Any uses with no live range (fixed/tied)
+                        // will use the incoming values directly from self.live_in.
+                        if segment.live_range.to != inst.slot(Slot::Boundary) {
+                            self.move_resolver.emit_dest_half_move(
+                                MovePosition::early(inst),
+                                segment.value,
+                                alloc.expect("split live range must have an allocation"),
+                            );
+                        }
+                        self.live_in = Some((
+                            inst,
+                            LiveInKind::Single {
+                                from_same_segment: false,
+                            },
+                        ));
+                    }
+                }
 
-            // Handle any block boundaries between the previous use and the new
-            // one. We need to emit half-moves
-            while current_block != block {
-                trace!(
-                    "Segment crosses block bounary between {current_block} and {}",
-                    current_block.next()
-                );
-                let terminator = self.func.block_insts(current_block).last();
-                self.handle_block_live_out(terminator, current_block, segment, alloc);
-                current_block = current_block.next();
-                self.handle_block_live_in(terminator.next(), current_block, segment, alloc);
-            }
+                ValueSegmentComponent::Use { u } => {
+                    trace!("-> {} {}", u.pos, u.kind);
+                    self.handle_use(&u, segment, alloc);
+                }
 
-            if inst == self.func.block_insts(block).last() {
-                self.handle_block_live_out(inst, block, segment, alloc);
-            } else {
-                trace!("-> split liveout");
+                ValueSegmentComponent::BlockBoundary { prev, next } => {
+                    trace!("Segment crosses block bounary between {prev} and {next}");
+                    let terminator = self.func.block_insts(prev).last();
+                    self.handle_block_live_out(terminator, prev, segment, alloc);
+                    self.handle_block_live_in(terminator.next(), next, segment, alloc);
+                }
 
-                // If the last instruction in the segment was a fixed definition
-                // then we should use that allocation as the source of the move.
-                let alloc_out = match self.fixed_def {
-                    Some((pos, alloc)) if pos == segment.live_range.to.inst() => alloc,
-                    _ => alloc.expect("missing allocation for segment with live-out"),
-                };
+                // Emit a source half-move if the value is live-out to another segment.
+                ValueSegmentComponent::LiveOut { inst } => {
+                    let last_block = self.func.inst_block(inst.prev());
+                    if inst == self.func.block_insts(last_block).to {
+                        self.handle_block_live_out(inst.prev(), last_block, segment, alloc);
+                    } else {
+                        trace!("-> split liveout");
 
-                // Emit a move after the last instruction. This is guaranteed to be
-                // in the same block: split live-in/live-out are never inserted at
-                // block boundaries.
-                self.move_resolver.emit_source_half_move(
-                    MovePosition::early(segment.live_range.to.inst()),
-                    segment.value,
-                    alloc_out,
-                );
+                        // If the last instruction in the segment was a fixed definition
+                        // then we should use that allocation as the source of the move.
+                        let alloc_out = match self.fixed_def {
+                            Some((pos, alloc)) if pos == inst => alloc,
+                            _ => alloc.expect("missing allocation for segment with live-out"),
+                        };
+
+                        // Emit a move after the last instruction. This is guaranteed to be
+                        // in the same block: split live-in/live-out are never inserted at
+                        // block boundaries.
+                        self.move_resolver.emit_source_half_move(
+                            MovePosition::early(inst),
+                            segment.value,
+                            alloc_out,
+                        );
+                    }
+                }
             }
         }
     }

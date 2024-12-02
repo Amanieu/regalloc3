@@ -25,6 +25,7 @@ use core::ops::{Index, IndexMut};
 use smallvec::SmallVec;
 
 use super::allocations::Allocations;
+use super::hints::Hints;
 use super::live_range::{LiveRangeSegment, Slot, ValueSegment};
 use super::reg_matrix::RegMatrix;
 use super::uses::{Use, UseKind, Uses};
@@ -115,6 +116,12 @@ struct ValueInfo {
 
     /// Tail of the linked list of uses in `ValueLiveRanges::use_list_entries`.
     use_list_tail: UseListIndex,
+
+    /// Whether this value is defined in a fixed register.
+    fixed_def: bool,
+
+    /// If this value is a block parameter, its index.
+    blockparam_idx: Option<u32>,
 }
 
 impl Default for ValueInfo {
@@ -124,6 +131,8 @@ impl Default for ValueInfo {
             def_range: LiveRangeSegment::new(zero_point, zero_point),
             use_list_head: UseListIndex::new(0),
             use_list_tail: UseListIndex::new(0),
+            fixed_def: false,
+            blockparam_idx: None,
         }
     }
 }
@@ -214,14 +223,18 @@ impl ValueLiveRanges {
     pub fn compute(
         &mut self,
         uses: &mut Uses,
+        hints: &mut Hints,
         allocations: &mut Allocations,
         reg_matrix: &mut RegMatrix,
         stats: &mut Stats,
+        empty_segments: &mut Vec<ValueSegment>,
         func: &impl Function,
         reginfo: &impl RegInfo,
     ) {
         uses.clear();
+        hints.clear(func);
         reg_matrix.clear();
+        empty_segments.clear();
         self.value_sets.clear_and_resize(func.num_values());
         self.use_list_entries.clear();
 
@@ -234,15 +247,21 @@ impl ValueLiveRanges {
             func,
             reginfo,
             uses,
+            hints,
             allocations,
             reg_matrix,
             stats,
+            empty_segments,
             value_live_ranges: self,
         };
 
         // Compute live ranges for values and collect uses from instruction
         // operands.
         ctx.collect_uses();
+
+        // Sort hints from fixed defs/uses so that we can efficiently do range
+        // queries on them later.
+        ctx.hints.sort_hints();
 
         // Builds `ValueSegment`s for each value from the collected uses.
         for value in func.values() {
@@ -262,16 +281,7 @@ impl ValueLiveRanges {
         for (set, segments) in self.all_value_sets() {
             trace!("  {set}:");
             for segment in segments {
-                trace!("    {}: {}", segment.value, segment.live_range);
-                if segment.use_list.has_livein() {
-                    trace!("    - livein");
-                }
-                for u in &uses[segment.use_list] {
-                    trace!("    - {}: {}", u.pos, u.kind);
-                }
-                if segment.use_list.has_liveout() {
-                    trace!("    - liveout");
-                }
+                segment.dump(uses);
             }
         }
     }
@@ -282,9 +292,11 @@ struct Context<'a, F, R> {
     func: &'a F,
     reginfo: &'a R,
     uses: &'a mut Uses,
+    hints: &'a mut Hints,
     allocations: &'a mut Allocations,
     reg_matrix: &'a mut RegMatrix,
     stats: &'a mut Stats,
+    empty_segments: &'a mut Vec<ValueSegment>,
     value_live_ranges: &'a mut ValueLiveRanges,
 }
 
@@ -526,6 +538,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         value,
                     );
                 }
+                self.hints.add_fixed_def(value, inst, reg, self.func);
                 self.value_def(
                     value,
                     inst,
@@ -559,6 +572,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         value,
                     );
                 }
+                self.hints.add_fixed_def(value, inst, reg, self.func);
                 self.value_def(
                     value,
                     inst,
@@ -597,6 +611,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         value,
                     );
                 }
+                let value_info = &self.value_live_ranges.value_info[value];
+                let blockparam_idx = value_info
+                    .blockparam_idx
+                    .filter(|_| inst == value_info.def_range.from.inst());
+                self.hints
+                    .add_fixed_use(value, inst, reg, blockparam_idx, self.func);
                 self.value_use(value, inst, UseKind::FixedUse { reg });
             }
             (
@@ -752,6 +772,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             def_range: live_range,
             use_list_head: self.value_live_ranges.use_list_entries.next_key(),
             use_list_tail: self.value_live_ranges.use_list_entries.next_key(),
+            fixed_def: matches!(use_kind, UseKind::FixedDef { reg: _ }),
+            blockparam_idx: if let UseKind::BlockparamIn { blockparam_idx } = use_kind {
+                Some(blockparam_idx)
+            } else {
+                None
+            },
         };
 
         // Add the use to the linked list of uses for this value.
@@ -776,11 +802,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             },
             next: None.into(),
         });
-        let tail = &mut self.value_live_ranges.value_info[value].use_list_tail;
-        let prev = &mut self.value_live_ranges.use_list_entries[*tail];
-        debug_assert!(prev.next.is_none());
-        prev.next = Some(next).into();
-        *tail = next;
+        let value_info = &mut self.value_live_ranges.value_info[value];
+        let tail = &mut self.value_live_ranges.use_list_entries[value_info.use_list_tail];
+        debug_assert!(tail.next.is_none());
+        tail.next = Some(next).into();
+        value_info.use_list_tail = next;
     }
 
     /// Calculates the live-in/live-out bitsets for each block of the value's
@@ -788,6 +814,13 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     ///
     /// This returns the highest numbered block found by the search.
     fn calc_block_live_in_out(&mut self, use_list: UseList, def_block: Block) -> Block {
+        self.value_live_ranges
+            .live_in
+            .clear_and_resize(self.func.num_blocks());
+        self.value_live_ranges
+            .live_out
+            .clear_and_resize(self.func.num_blocks());
+
         // Mark the definition block as live-in so that the search stops there.
         // The live-in bit on the definition block isn't read later so it
         // doesn't matter if it is incorrect.
@@ -834,44 +867,38 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// Computes the live range for the given value.
     fn build_segments(&mut self, value: Value) {
         trace!("Building live range segments for {value}");
-
-        self.value_live_ranges
-            .live_in
-            .clear_and_resize(self.func.num_blocks());
-        self.value_live_ranges
-            .live_out
-            .clear_and_resize(self.func.num_blocks());
+        let value_info = &self.value_live_ranges.value_info[value];
+        let has_fixed_hint = self.hints.has_fixed_hint(value);
 
         // Get the sorted list of all uses for this value by walking the linked
         // list that we previously built.
-        let mut head = Some(self.value_live_ranges.value_info[value].use_list_head);
+        let mut head = Some(value_info.use_list_head);
         let iter = iter::from_fn(|| {
             let entry = &self.value_live_ranges.use_list_entries[head?];
             head = entry.next.expand();
             Some(entry.u)
         });
-        let full_use_list = self.uses.add_use_list(iter);
+        let mut full_use_list = self.uses.add_use_list(iter);
+        if value_info.fixed_def {
+            full_use_list.set_fixeddef(true);
+        }
 
-        // The first use in the list is always the one which defines the value.
-        let def = &self.uses[full_use_list][0];
-        debug_assert!(def.kind.is_def());
-        let def_block = self.func.inst_block(def.pos);
+        // Start with an initial segment containing just the definition.
+        let mut segment = ValueSegment {
+            live_range: value_info.def_range,
+            use_list: full_use_list,
+            value,
+        };
+        let def_block = self.func.inst_block(segment.first_inst());
 
         // Calculate the set of blocks in which the value is live-in or
         // live-out.
         let last_block = self.calc_block_live_in_out(full_use_list, def_block);
 
-        // Start with an initial segment containing just the definition.
-        let mut segment = ValueSegment {
-            live_range: self.value_live_ranges.value_info[value].def_range,
-            use_list: full_use_list,
-            value,
-        };
-        let segments = &mut self.value_live_ranges.value_sets[ValueSet::from_value(value)].segments;
-        debug_assert!(segments.is_empty());
-
         // Iterate over all uses and try to add them to the segment. Split up
         // segments where there is a gap in the live range.
+        let segments = &mut self.value_live_ranges.value_sets[ValueSet::from_value(value)].segments;
+        debug_assert!(segments.is_empty());
         let mut next_dead_block = self
             .value_live_ranges
             .live_in
@@ -899,8 +926,25 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     segment.use_list.set_liveout(true);
                 }
 
-                // Add the segment to the list.
-                segments.push(segment);
+                // Add the segment to the list. Also determine whether it holds
+                // a fixed register hint.
+                if segment.live_range.is_empty() {
+                    segment.dump(self.uses);
+                    self.empty_segments.push(segment);
+                } else {
+                    if has_fixed_hint {
+                        if self
+                            .hints
+                            .hints_for_segment(value, segment.live_range)
+                            .next()
+                            .is_some()
+                        {
+                            segment.use_list.set_fixedhint(true);
+                        }
+                    }
+                    segment.dump(self.uses);
+                    segments.push(segment);
+                }
 
                 // Skip over any dead blocks to find the next live block.
                 let next_live_block = self
@@ -945,8 +989,25 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 segment.use_list.set_liveout(true);
             }
 
-            // Add the segment to the list.
-            segments.push(segment);
+            // Add the segment to the list. Also determine whether it holds
+            // a fixed register hint.
+            if segment.live_range.is_empty() {
+                segment.dump(self.uses);
+                self.empty_segments.push(segment);
+            } else {
+                if has_fixed_hint {
+                    if self
+                        .hints
+                        .hints_for_segment(value, segment.live_range)
+                        .next()
+                        .is_some()
+                    {
+                        segment.use_list.set_fixedhint(true);
+                    }
+                }
+                segment.dump(self.uses);
+                segments.push(segment);
+            }
 
             // If this was the last block, we're done.
             if end_block == last_block {

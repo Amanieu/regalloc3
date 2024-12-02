@@ -125,8 +125,7 @@ pub enum UseKind {
     ///
     /// The portion of the live range corresponding to the use (`Boundary` to
     /// `Normal`) is actually excluded from the live range. We only record the
-    /// live range ending at the preceding `Boundary`. The fixed register is
-    /// kept as a hint for the main allocation loop.
+    /// live range ending at the preceding `Boundary`.
     ///
     /// This is done so that a move is automatically generated from the
     /// allocation that is selected for this live range to the fixed register.
@@ -335,8 +334,12 @@ pub struct UseList {
     to: u32,
 }
 
-/// Extra bit to indicate that the value is live-in/live-out.
-const USE_LIST_EXTRA_BIT: u32 = 1 << 31;
+// Flags packed into the high bits of the use index.
+const USE_INDEX_LIVE_IN: u32 = 1 << 31;
+const USE_INDEX_LIVE_OUT: u32 = 1 << 31;
+const USE_INDEX_FIXED_HINT: u32 = 1 << 30;
+const USE_INDEX_FIXED_DEF: u32 = 1 << 30;
+const USE_INDEX_MASK: u32 = !0 >> 2;
 
 impl UseList {
     /// Returns an empty use list which doesn't contain any uses.
@@ -347,30 +350,59 @@ impl UseList {
     /// Indicates that the live range that contains this use list is live-in
     /// from a preceding segment at the start of the live range.
     pub fn has_livein(self) -> bool {
-        self.from & USE_LIST_EXTRA_BIT != 0
+        self.from & USE_INDEX_LIVE_IN != 0
     }
 
     /// Indicates that the live range that contains this use list is live-out
     /// to another segment at the end of the live range.
     pub fn has_liveout(self) -> bool {
-        self.to & USE_LIST_EXTRA_BIT != 0
+        self.to & USE_INDEX_LIVE_OUT != 0
+    }
+
+    /// Indicates that the live range that contains this use list has a fixed
+    /// register hint.
+    pub fn has_fixedhint(self) -> bool {
+        self.to & USE_INDEX_FIXED_HINT != 0
+    }
+
+    /// Indicates that the first use in this list is a `FixedDef`.
+    pub fn has_fixeddef(self) -> bool {
+        self.from & USE_INDEX_FIXED_DEF != 0
     }
 
     /// Sets the live-in bit to the given value.
     pub fn set_livein(&mut self, val: bool) {
         if val {
-            self.from |= USE_LIST_EXTRA_BIT;
+            self.from |= USE_INDEX_LIVE_IN;
         } else {
-            self.from &= !USE_LIST_EXTRA_BIT;
+            self.from &= !USE_INDEX_LIVE_IN;
         }
     }
 
     /// Sets the live-out bit to the given value.
     pub fn set_liveout(&mut self, val: bool) {
         if val {
-            self.to |= USE_LIST_EXTRA_BIT;
+            self.to |= USE_INDEX_LIVE_OUT;
         } else {
-            self.to &= !USE_LIST_EXTRA_BIT;
+            self.to &= !USE_INDEX_LIVE_OUT;
+        }
+    }
+
+    /// Sets the fixed-hint bit to the given value.
+    pub fn set_fixedhint(&mut self, val: bool) {
+        if val {
+            self.to |= USE_INDEX_FIXED_HINT;
+        } else {
+            self.to &= !USE_INDEX_FIXED_HINT;
+        }
+    }
+
+    /// Sets the fixed-def bit to the given value.
+    pub fn set_fixeddef(&mut self, val: bool) {
+        if val {
+            self.from |= USE_INDEX_FIXED_DEF;
+        } else {
+            self.from &= !USE_INDEX_FIXED_DEF;
         }
     }
 
@@ -382,7 +414,7 @@ impl UseList {
     /// Returns a [`UseIndex`] pointing to a single [`Use`] in this list.
     pub fn index(self, index: usize) -> UseIndex {
         debug_assert!(index < self.len());
-        UseIndex((self.from & !USE_LIST_EXTRA_BIT) + index as u32)
+        UseIndex((self.from & USE_INDEX_MASK) + index as u32)
     }
 
     /// Returns an iterator over all the [`UseIndex`] in this list.
@@ -392,8 +424,8 @@ impl UseList {
 
     /// Returns the range of indices encoded in the `UseList`.
     fn indices(self) -> Range<usize> {
-        let from = (self.from & !USE_LIST_EXTRA_BIT) as usize;
-        let to = (self.to & !USE_LIST_EXTRA_BIT) as usize;
+        let from = (self.from & USE_INDEX_MASK) as usize;
+        let to = (self.to & USE_INDEX_MASK) as usize;
         from..to
     }
 
@@ -404,27 +436,33 @@ impl UseList {
     /// second list.
     pub fn split_at_inst(self, split_at: Inst, uses: &Uses) -> (Self, Self) {
         let split_index = uses[self].partition_point(|u| u.pos < split_at);
-        let mid = UseIndex((self.from & !USE_LIST_EXTRA_BIT) + split_index as u32);
+        let mid = UseIndex((self.from & USE_INDEX_MASK) + split_index as u32);
         let (mut first, mut second) = self.split_at_index(mid);
 
         // Mark the use lists as having a matching live-in/live-out.
         first.set_liveout(true);
         second.set_livein(true);
+
         (first, second)
     }
 
     /// Splits the given use list at the given `UseIndex`.
+    ///
+    /// The fixed-hint flag is cleared by this operation.
     pub fn split_at_index(self, mid: UseIndex) -> (Self, Self) {
         debug_assert!(mid.0 as usize >= self.indices().start);
         debug_assert!((mid.0 as usize) <= self.indices().end);
-        let first = UseList {
+        let mut first = UseList {
             from: self.from,
             to: mid.0,
         };
         let second = UseList {
             from: mid.0,
-            to: self.to,
+            to: self.to & !USE_INDEX_FIXED_HINT,
         };
+        if self.has_fixeddef() {
+            first.set_fixeddef(true);
+        }
         (first, second)
     }
 }

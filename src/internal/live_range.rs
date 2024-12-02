@@ -11,9 +11,12 @@
 
 use core::fmt;
 
-use crate::function::{Inst, Value};
+use crate::function::{Block, Function, Inst, Value};
 
-use super::uses::{UseList, Uses};
+use super::{
+    hints::Hints,
+    uses::{Use, UseList, Uses},
+};
 
 /// A slot within an instruction at which a live range starts or end.
 ///
@@ -250,11 +253,74 @@ pub struct ValueSegment {
 }
 
 impl ValueSegment {
-    /// Utility function for splitting a [`ValueSegment`] into 2 halves at
-    /// the given split point.
-    pub fn split_at<'a>(
+    /// Dumps the segments and its uses to the log.
+    pub fn dump(self, uses: &Uses) {
+        trace!(
+            "    {}: {} {}",
+            self.value,
+            self.live_range,
+            if self.use_list.has_fixedhint() {
+                " has_fixed_hint"
+            } else {
+                ""
+            }
+        );
+        if self.use_list.has_livein() {
+            trace!("    - livein");
+        }
+        for u in &uses[self.use_list] {
+            trace!("    - {}: {}", u.pos, u.kind);
+        }
+        if self.use_list.has_liveout() {
+            trace!("    - liveout");
+        }
+    }
+
+    /// Returns the first instruction that this segment covers.
+    pub fn first_inst(self) -> Inst {
+        // This is normally where the live range starts, except if it starts
+        // with a fixed definition since the live range then starts on the
+        // next instruction.
+        if self.use_list.has_fixeddef() {
+            self.live_range.from.inst().prev()
+        } else {
+            self.live_range.from.inst()
+        }
+    }
+
+    /// Splits the given segment into 2 halves.
+    pub fn split_at(self, split_at: Inst, uses: &Uses, hints: &Hints) -> (Self, Self) {
+        debug_assert!(!self.live_range.is_empty());
+        let (mut first_uses, mut second_uses) = self.use_list.split_at_inst(split_at, uses);
+        let (first_range, second_range) = self.live_range.split_at(split_at.slot(Slot::Boundary));
+
+        // Determine which half of the split has fixed register hints.
+        if self.use_list.has_fixedhint() {
+            let (first_hint, second_hint) =
+                hints.hints_for_split(self.value, self.live_range, split_at);
+            first_uses.set_fixedhint(first_hint);
+            second_uses.set_fixedhint(second_hint);
+        }
+
+        let first = Self {
+            live_range: first_range,
+            use_list: first_uses,
+            value: self.value,
+        };
+        let second = Self {
+            live_range: second_range,
+            use_list: second_uses,
+            value: self.value,
+        };
+        (first, second)
+    }
+
+    /// Utility function for splitting a slice of [`ValueSegment`] into 2 halves
+    /// at the given split point.
+    pub fn split_segments_at<'a>(
         segments: &'a mut [ValueSegment],
         uses: &Uses,
+        hints: &Hints,
         before_inst: Inst,
     ) -> SplitResult<'a> {
         // The split point must be inside the live range of the vreg.
@@ -279,17 +345,10 @@ impl ValueSegment {
         // vectors, it just needs to be truncated accordingly for each half.
         let second_live_range_and_use_list =
             if first_segment_in_second_half == last_segment_in_first_half {
-                debug_assert!(!segments[first_segment_in_second_half].live_range.is_empty());
-                let (first_uses, second_uses) = segments[first_segment_in_second_half]
-                    .use_list
-                    .split_at_inst(split_at.inst(), uses);
-                let (first_range, second_range) = segments[first_segment_in_second_half]
-                    .live_range
-                    .split_at(split_at);
-                segments[last_segment_in_first_half].live_range = first_range;
-                segments[last_segment_in_first_half].use_list = first_uses;
-
-                Some((second_range, second_uses))
+                let (first, second) =
+                    segments[first_segment_in_second_half].split_at(split_at.inst(), uses, hints);
+                segments[last_segment_in_first_half] = first;
+                Some((second.live_range, second.use_list))
             } else {
                 None
             };
@@ -299,6 +358,41 @@ impl ValueSegment {
             last_segment_in_first_half,
             first_segment_in_second_half,
             second_live_range_and_use_list,
+        }
+    }
+
+    /// Iterates over all components of this value segment in order.
+    ///
+    /// This will indicate live-in/out, block boundaries and uses.
+    pub fn components<'a, F: Function>(
+        self,
+        uses: &'a Uses,
+        func: &'a F,
+    ) -> ValueSegmentIter<'a, F> {
+        let live_in = self
+            .use_list
+            .has_livein()
+            .then(|| {
+                debug_assert_eq!(self.live_range.from.slot(), Slot::Boundary);
+                self.live_range.from.inst()
+            })
+            .into();
+        let live_out = self
+            .use_list
+            .has_liveout()
+            .then(|| {
+                debug_assert_eq!(self.live_range.to.slot(), Slot::Boundary);
+                self.live_range.to.inst()
+            })
+            .into();
+        let uses = &uses[self.use_list];
+        let current_block = func.inst_block(self.first_inst());
+        ValueSegmentIter {
+            live_in,
+            live_out,
+            current_block,
+            uses,
+            func,
         }
     }
 }
@@ -327,4 +421,75 @@ impl<'a> SplitResult<'a> {
 
         &mut self.segments[self.first_segment_in_second_half..]
     }
+}
+
+/// Iterator over all the components in a `ValueSegment`.
+pub struct ValueSegmentIter<'a, F> {
+    live_in: Option<Inst>,
+    live_out: Option<Inst>,
+    current_block: Block,
+    uses: &'a [Use],
+    func: &'a F,
+}
+
+impl<F: Function> Iterator for ValueSegmentIter<'_, F> {
+    type Item = ValueSegmentComponent;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // First yield the live-in.
+        if let Some(inst) = self.live_in.take() {
+            return Some(ValueSegmentComponent::LiveIn { inst });
+        }
+
+        // Then check if there is a block boundary before the next use.
+        if let Some((first, rest)) = self.uses.split_first() {
+            // If there is then advance to the block boundary.
+            let block = self.func.inst_block(first.pos);
+            if block != self.current_block {
+                let prev = self.current_block;
+                self.current_block = self.current_block.next();
+                return Some(ValueSegmentComponent::BlockBoundary {
+                    prev,
+                    next: self.current_block,
+                });
+            }
+
+            // Otherwise yield the use.
+            self.uses = rest;
+            return Some(ValueSegmentComponent::Use { u: *first });
+        }
+
+        // Finally yield the live-out.
+        if let Some(inst) = self.live_out {
+            // Then check if there is a block boundary before the live-out.
+            let block = self.func.inst_block(inst.prev());
+            if block != self.current_block {
+                let prev = self.current_block;
+                self.current_block = self.current_block.next();
+                return Some(ValueSegmentComponent::BlockBoundary {
+                    prev,
+                    next: self.current_block,
+                });
+            }
+            self.live_out = None;
+            return Some(ValueSegmentComponent::LiveOut { inst });
+        }
+
+        None
+    }
+}
+
+/// A component of a `ValueSegment` as yielded by `ValueSegmentIter`.
+pub enum ValueSegmentComponent {
+    /// The value is live-in from another segment at `inst`.
+    LiveIn { inst: Inst },
+
+    /// The value is used by `u`.
+    Use { u: Use },
+
+    /// The value crosses a block boundary.
+    BlockBoundary { prev: Block, next: Block },
+
+    /// The value is live-out to another segment at `inst`.
+    LiveOut { inst: Inst },
 }
