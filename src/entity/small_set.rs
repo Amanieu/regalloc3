@@ -123,7 +123,11 @@ where
     #[inline]
     pub fn contains(&self, entity: T) -> bool {
         let idx = Self::index(entity);
-        self.storage[idx / W::BITS] & W::bit(idx % W::BITS) != W::ZERO
+        if let Some(&word) = self.storage.get(idx / W::BITS) {
+            word & W::bit(idx % W::BITS) != W::ZERO
+        } else {
+            false
+        }
     }
 
     /// Inserts an element into the set.

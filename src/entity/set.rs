@@ -64,7 +64,11 @@ where
     #[track_caller]
     pub fn contains(&self, entity: T) -> bool {
         let (idx, bit) = Self::index(entity);
-        self.storage[idx] & (1 << bit) != 0
+        if let Some(&word) = self.storage.get(idx) {
+            word & (1 << bit) != 0
+        } else {
+            false
+        }
     }
 
     /// Inserts an element into the set.
