@@ -369,22 +369,14 @@ impl ValueSegment {
         uses: &'a Uses,
         func: &'a F,
     ) -> ValueSegmentIter<'a, F> {
-        let live_in = self
-            .use_list
-            .has_livein()
-            .then(|| {
-                debug_assert_eq!(self.live_range.from.slot(), Slot::Boundary);
-                self.live_range.from.inst()
-            })
-            .into();
-        let live_out = self
-            .use_list
-            .has_liveout()
-            .then(|| {
-                debug_assert_eq!(self.live_range.to.slot(), Slot::Boundary);
-                self.live_range.to.inst()
-            })
-            .into();
+        let live_in = self.use_list.has_livein().then(|| {
+            debug_assert_eq!(self.live_range.from.slot(), Slot::Boundary);
+            self.live_range.from.inst()
+        });
+        let live_out = self.use_list.has_liveout().then(|| {
+            debug_assert_eq!(self.live_range.to.slot(), Slot::Boundary);
+            self.live_range.to.inst()
+        });
         let uses = &uses[self.use_list];
         let current_block = func.inst_block(self.first_inst());
         ValueSegmentIter {
