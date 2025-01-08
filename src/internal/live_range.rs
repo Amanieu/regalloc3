@@ -83,7 +83,7 @@ impl LiveRangePoint {
     /// Returns a new `LiveRangePoint` at the given slot in an instruction.
     pub fn new(inst: Inst, slot: Slot) -> Self {
         Self {
-            bits: (inst.index() as u32) << 2 | slot as u32,
+            bits: ((inst.index() as u32) << 2) | slot as u32,
         }
     }
 

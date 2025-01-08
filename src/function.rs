@@ -319,7 +319,7 @@ impl fmt::Display for OperandConstraint {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 // Packing so that the overall size is 6 bytes instead of 8.
-#[repr(packed(2))]
+#[repr(Rust, packed(2))]
 pub struct Operand {
     /// `OperandKind` encoded in 32 bits:
     ///
@@ -339,19 +339,19 @@ impl Operand {
     pub fn new(kind: OperandKind, constraint: OperandConstraint) -> Self {
         let kind_field = match kind {
             #[allow(clippy::identity_op)]
-            OperandKind::Def(value) => 0 << 29 | value.index() as u32,
-            OperandKind::Use(value) => 1 << 29 | value.index() as u32,
-            OperandKind::EarlyDef(value) => 2 << 29 | value.index() as u32,
-            OperandKind::DefGroup(group) => 3 << 29 | group.index() as u32,
-            OperandKind::UseGroup(group) => 4 << 29 | group.index() as u32,
-            OperandKind::EarlyDefGroup(group) => 5 << 29 | group.index() as u32,
+            OperandKind::Def(value) => (0 << 29) | value.index() as u32,
+            OperandKind::Use(value) => (1 << 29) | value.index() as u32,
+            OperandKind::EarlyDef(value) => (2 << 29) | value.index() as u32,
+            OperandKind::DefGroup(group) => (3 << 29) | group.index() as u32,
+            OperandKind::UseGroup(group) => (4 << 29) | group.index() as u32,
+            OperandKind::EarlyDefGroup(group) => (5 << 29) | group.index() as u32,
             OperandKind::NonAllocatable => 6 << 29,
         };
         let constraint = match constraint {
             #[allow(clippy::identity_op)]
-            OperandConstraint::Class(class) => 0 << 14 | class.index() as u16,
-            OperandConstraint::Fixed(reg) => 1 << 14 | reg.index() as u16,
-            OperandConstraint::Reuse(index) => 2 << 14 | index as u16,
+            OperandConstraint::Class(class) => (0 << 14) | class.index() as u16,
+            OperandConstraint::Fixed(reg) => (1 << 14) | reg.index() as u16,
+            OperandConstraint::Reuse(index) => (2 << 14) | index as u16,
         };
         Self {
             kind: kind_field,

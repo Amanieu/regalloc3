@@ -11,7 +11,7 @@ use crate::reginfo::{
     MAX_GROUP_SIZE, MAX_REG_UNITS,
 };
 
-/// Configuration options for [`GenericRegInfo::arbitrary`].
+/// Configuration options for [`GenericRegInfo::arbitrary_with_config`].
 ///
 /// These are ranges from which a value is arbitrarily chosen when generating a
 /// function.

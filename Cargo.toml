@@ -36,6 +36,7 @@ parse = ["dep:pest", "dep:pest_derive", "anyhow/std"]
 serde = ["dep:serde"]
 
 # Support for generating randomized functions for testing.
+# Requires std.
 arbitrary = ["dep:arbitrary"]
 
 # Enables detailed logging which can be somewhat expensive.

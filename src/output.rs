@@ -106,7 +106,7 @@ impl Allocation {
     pub fn new(kind: AllocationKind) -> Self {
         let bits = match kind {
             AllocationKind::SpillSlot(spillslot) => spillslot.index() as u32,
-            AllocationKind::PhysReg(reg) => 1 << 31 | reg.index() as u32,
+            AllocationKind::PhysReg(reg) => (1 << 31) | reg.index() as u32,
         };
         Self { bits }
     }

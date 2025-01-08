@@ -142,6 +142,7 @@ mod union_find;
 
 /// Exposed internal APIs for fuzzing.
 #[cfg(feature = "fuzzing")]
+#[doc(hidden)]
 pub use internal::parallel_moves;
 
 /// Structure holding persistent memory allocations that can be reused across

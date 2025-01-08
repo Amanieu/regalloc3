@@ -64,7 +64,7 @@ impl Entry {
         let size = size.min((1 << 27) - 1);
         let index = vreg.index() as u64;
         Entry {
-            bits: stage << 63 | has_fixed_use << 62 | group_size << 59 | size << 32 | index,
+            bits: (stage << 63) | (has_fixed_use << 62) | (group_size << 59) | (size << 32) | index,
         }
     }
 
@@ -90,7 +90,7 @@ impl Entry {
         let size = size.min((1 << 27) - 1);
         let index = group.index() as u64;
         Entry {
-            bits: stage << 63 | has_fixed_use << 62 | group_size << 59 | size << 32 | index,
+            bits: (stage << 63) | (has_fixed_use << 62) | (group_size << 59) | (size << 32) | index,
         }
     }
 

@@ -16,7 +16,7 @@ use crate::reginfo::{
     AllocationOrderSet, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet, MAX_REG_UNITS,
 };
 
-/// Configuration options for [`GenericFunction::arbitrary`].
+/// Configuration options for [`GenericFunction::arbitrary_with_config`].
 ///
 /// These are ranges from which a value is arbitrarily chosen when generating a
 /// function.
