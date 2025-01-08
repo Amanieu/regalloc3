@@ -1,0 +1,108 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The `RegInfo` trait which describes the registers and register classes in the target ISA."><title>regalloc3::reginfo - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="regalloc3" data-themes="" data-resource-suffix="" data-rustdoc-version="1.86.0-nightly (ad211ced8 2025-01-07)" data-channel="nightly" data-search-js="search-75f5ac3e.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../regalloc3/index.html">regalloc3</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module reginfo</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#physical-registers" title="Physical registers">Physical registers</a></li><li><a href="#register-banks" title="Register banks">Register banks</a></li><li><a href="#register-classes" title="Register classes">Register classes</a></li><li><a href="#allocation-order" title="Allocation order">Allocation order</a></li><li><a href="#fixed-stack-slots" title="Fixed stack slots">Fixed stack slots</a></li><li><a href="#compound-registers" title="Compound registers">Compound registers</a></li><li><a href="#register-groups" title="Register groups">Register groups</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate regalloc3</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">regalloc3</a></span><h1>Module <span>reginfo</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/regalloc3/reginfo.rs.html#1-577">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The <a href="trait.RegInfo.html" title="trait regalloc3::reginfo::RegInfo"><code>RegInfo</code></a> trait which describes the registers and register classes in
+the target ISA.</p>
+<p>The registers are described using a hierarchy of types:</p>
+<ul>
+<li>A <a href="struct.RegBank.html" title="struct regalloc3::reginfo::RegBank"><code>RegBank</code></a> is a top-level grouping of registers, and contains one or
+more <a href="struct.RegClass.html" title="struct regalloc3::reginfo::RegClass"><code>RegClass</code></a>.</li>
+<li>A <a href="struct.RegClass.html" title="struct regalloc3::reginfo::RegClass"><code>RegClass</code></a> represents a selection of <a href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> or <a href="struct.RegGroup.html" title="struct regalloc3::reginfo::RegGroup"><code>RegGroup</code></a> to
+allocate for a instruction operand.</li>
+<li>A <a href="struct.RegGroup.html" title="struct regalloc3::reginfo::RegGroup"><code>RegGroup</code></a> represents a sequence of <a href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> which are allocated
+together for a single operand.</li>
+<li>A <a href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> consists of one or more <a href="struct.RegUnit.html" title="struct regalloc3::reginfo::RegUnit"><code>RegUnit</code></a> which are the smallest
+unit of allocation.</li>
+</ul>
+<h2 id="physical-registers"><a class="doc-anchor" href="#physical-registers">§</a>Physical registers</h2>
+<p>A <a href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> is the unit of allocation that the register allocator works
+with. Fundamentally, the job of the register allocator is to assign a
+<a href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> (or a spill slot) to every use of a <a href="../function/struct.Value.html" title="struct regalloc3::function::Value"><code>Value</code></a> in a function.</p>
+<h2 id="register-banks"><a class="doc-anchor" href="#register-banks">§</a>Register banks</h2>
+<p>A <a href="struct.RegBank.html" title="struct regalloc3::reginfo::RegBank"><code>RegBank</code></a> represents a set of <a href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> between which values can be
+moved with <code>move</code> instructions. Register banks must not overlap: each
+<a href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> may only be part of a single register bank.</p>
+<p>Each <a href="../function/struct.Value.html" title="struct regalloc3::function::Value"><code>Value</code></a> must be located in one register bank: all operand constraints
+related to this value must use registers and register classes from that
+register bank. Similarly, any pair of values linked together through tied
+operands or  through block parameters must share the same register bank.</p>
+<h2 id="register-classes"><a class="doc-anchor" href="#register-classes">§</a>Register classes</h2>
+<p>A <a href="struct.RegClass.html" title="struct regalloc3::reginfo::RegClass"><code>RegClass</code></a> represents a subset of the registers of a <a href="struct.RegBank.html" title="struct regalloc3::reginfo::RegBank"><code>RegBank</code></a> which
+can be used by an instruction. Specifically, it describes which registers
+are allowed to satisfy a given constraint, and whether the constraint can
+be satisfied by stack spill slot (for instruction which can accept either a
+register or a memory operand).</p>
+<p>Each register bank has an associated <em>top-level register class</em>. This is a
+register class which covers the entire set of registers in the bank.
+Top-level register classes are required to allow moves to/from spillslots.</p>
+<p>Each register bank also has an associated <em>stack-to-stack register class</em>.
+This is used when a scratch register is required to resolve a move between
+2 memory locations.</p>
+<p>Register classes may overlap either completely or partially with other
+register classes in the same bank.</p>
+<h2 id="allocation-order"><a class="doc-anchor" href="#allocation-order">§</a>Allocation order</h2>
+<p>Each register class has an <em>allocation order</em> which is the order in which
+the register allocator will attempt to select a suitable register for a
+constraint of this class.</p>
+<p>The <a href="trait.RegInfo.html" title="trait regalloc3::reginfo::RegInfo"><code>RegInfo</code></a> trait specifies the allocation order as 4 sets of registers:</p>
+<ul>
+<li><a href="enum.AllocationOrderSet.html#variant.Preferred" title="variant regalloc3::reginfo::AllocationOrderSet::Preferred"><code>AllocationOrderSet::Preferred</code></a></li>
+<li><a href="enum.AllocationOrderSet.html#variant.NonPreferred" title="variant regalloc3::reginfo::AllocationOrderSet::NonPreferred"><code>AllocationOrderSet::NonPreferred</code></a></li>
+<li><a href="enum.AllocationOrderSet.html#variant.CalleeSavedPreferred" title="variant regalloc3::reginfo::AllocationOrderSet::CalleeSavedPreferred"><code>AllocationOrderSet::CalleeSavedPreferred</code></a></li>
+<li><a href="enum.AllocationOrderSet.html#variant.CalleeSavedNonPreferred" title="variant regalloc3::reginfo::AllocationOrderSet::CalleeSavedNonPreferred"><code>AllocationOrderSet::CalleeSavedNonPreferred</code></a></li>
+</ul>
+<p>Preferred registers generally have a more compact or efficient encoding than
+non-preferred registers. Callee-saved registers are treated as normal
+registers if they have already been used at least once in the function, and
+are otherwise given the lowest priority. This minimizes the need for saving
+and restoring these registers on function entry and exit.</p>
+<p>For a minimal implementation, it is possible to only specify registers as
+<a href="enum.AllocationOrderSet.html#variant.Preferred" title="variant regalloc3::reginfo::AllocationOrderSet::Preferred"><code>AllocationOrderSet::Preferred</code></a> and leave the other sets empty.</p>
+<p>Any registers that are members of a class but not in the allocation order
+are only selected by the register allocator if it helps to satisfy a <code>Fixed</code>
+register constraint and are otherwise never used.</p>
+<h2 id="fixed-stack-slots"><a class="doc-anchor" href="#fixed-stack-slots">§</a>Fixed stack slots</h2>
+<p>A <a href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> can also be used to represent a memory location instead of a
+register. This is useful to model stack slots for function arguments and
+return values which</p>
+<p>Since it is undesirable to use these stack slots unless specifically needed,
+these can be made part of a register class without being part of its
+allocation order. This means that these <a href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> will only be selected if
+necessary to satisfy a <code>Fixed</code> constraint, but not a <code>Class</code> constraint.</p>
+<h2 id="compound-registers"><a class="doc-anchor" href="#compound-registers">§</a>Compound registers</h2>
+<p>Some architectures may have registers that overlap: for example on AArch32
+the <code>D0</code> 64-bit register overlaps with the <code>S0</code> and <code>S1</code> 32-bit registers.
+This is modeled in the register allocator by using “register units”: <code>S0</code>
+and <code>S1</code> can be defined as covering single register units <code>unit0</code> and
+<code>unit1</code>, while <code>D0</code> can be defined as a compound register covering both
+<code>unit0</code> and <code>unit1</code>.</p>
+<p>Liveness is only tracked at the register unit level, so the register units
+must completely cover all the bits of the compound register.</p>
+<p>Overlaps are only allowed with registers in other banks (i.e. <code>D0</code> and <code>S0</code>
+must be in different register banks). Within a bank no registers may share
+a unit.</p>
+<p>Compound registers are still limited to holding a single <a href="../function/struct.Value.html" title="struct regalloc3::function::Value"><code>Value</code></a>. They
+only interact with register units to avoid conflicts with values held in
+other registers than they share a register unit with.</p>
+<h2 id="register-groups"><a class="doc-anchor" href="#register-groups">§</a>Register groups</h2>
+<p>Some instructions take a sequence of registers as operands, where only the
+first register is encoded in the instruction (e.g. <code>LD4</code> on AArch64). This
+cannot be modeled using compound registers because each register needs to
+be assigned a different <a href="../function/struct.Value.html" title="struct regalloc3::function::Value"><code>Value</code></a>.</p>
+<p>The register allocator can model this using register groups, where a
+<a href="struct.RegGroup.html" title="struct regalloc3::reginfo::RegGroup"><code>RegGroup</code></a> represents a sequence of <a href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a>. Register classes are
+generalized to contain either a set of <a href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> or a set of <a href="struct.RegGroup.html" title="struct regalloc3::reginfo::RegGroup"><code>RegGroup</code></a>,
+with the restriction that all register groups in a class must have the same
+number of registers.</p>
+<p>Instruction operands can then be specified to require a group of values
+using <a href="../function/enum.OperandKind.html#variant.UseGroup" title="variant regalloc3::function::OperandKind::UseGroup"><code>OperandKind::UseGroup</code></a>, <a href="../function/enum.OperandKind.html#variant.DefGroup" title="variant regalloc3::function::OperandKind::DefGroup"><code>OperandKind::DefGroup</code></a> or
+<a href="../function/enum.OperandKind.html#variant.EarlyDefGroup" title="variant regalloc3::function::OperandKind::EarlyDefGroup"><code>OperandKind::EarlyDefGroup</code></a>. These operands take a <a href="../function/struct.ValueGroup.html" title="struct regalloc3::function::ValueGroup"><code>ValueGroup</code></a> which
+represents a list of <a href="../function/struct.Value.html" title="struct regalloc3::function::Value"><code>Value</code></a>s.</p>
+<p>Group operands can only be used with <a href="../function/enum.OperandConstraint.html#variant.Class" title="variant regalloc3::function::OperandConstraint::Class"><code>OperandConstraint::Class</code></a> and the
+class must be a class of register groups where groups have the same number
+of registers as the number of <a href="../function/struct.Value.html" title="struct regalloc3::function::Value"><code>Value</code></a>s in the <a href="../function/struct.ValueGroup.html" title="struct regalloc3::function::ValueGroup"><code>ValueGroup</code></a>.</p>
+<p>The <a href="../output/struct.Allocation.html" title="struct regalloc3::output::Allocation"><code>Allocation</code></a> in <a href="../output/enum.OutputInst.html#variant.Inst.field.operand_allocs" title="field regalloc3::output::OutputInst::operand_allocs"><code>OutputInst::Inst::operand_allocs</code></a> will only contain a
+single entry for the operand which holds the first register of the register
+group that was allocated for the operand.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg">PhysReg</a></div><div class="desc docblock-short">A location to which a value can be mapped to.</div></li><li><div class="item-name"><a class="struct" href="struct.RegBank.html" title="struct regalloc3::reginfo::RegBank">RegBank</a></div><div class="desc docblock-short">A set of registers between which values can be copied with move
+instructions.</div></li><li><div class="item-name"><a class="struct" href="struct.RegClass.html" title="struct regalloc3::reginfo::RegClass">RegClass</a></div><div class="desc docblock-short">A set of <a href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> or <a href="struct.RegGroup.html" title="struct regalloc3::reginfo::RegGroup"><code>RegGroup</code></a> which can be allocated for an operand.</div></li><li><div class="item-name"><a class="struct" href="struct.RegGroup.html" title="struct regalloc3::reginfo::RegGroup">RegGroup</a></div><div class="desc docblock-short">A sequence of multiple registers which are assigned together for a single
+operand.</div></li><li><div class="item-name"><a class="struct" href="struct.RegOrRegGroup.html" title="struct regalloc3::reginfo::RegOrRegGroup">RegOr<wbr>RegGroup</a></div><div class="desc docblock-short">A sequence of registers which are assigned together for a single operand.</div></li><li><div class="item-name"><a class="struct" href="struct.RegUnit.html" title="struct regalloc3::reginfo::RegUnit">RegUnit</a></div><div class="desc docblock-short">A subset of a register which cannot be further split.</div></li><li><div class="item-name"><a class="struct" href="struct.SpillSlotSize.html" title="struct regalloc3::reginfo::SpillSlotSize">Spill<wbr>Slot<wbr>Size</a></div><div class="desc docblock-short">The size of a spillslot, which must be a power of two.</div></li></ul><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.AllocationOrderSet.html" title="enum regalloc3::reginfo::AllocationOrderSet">Allocation<wbr>Order<wbr>Set</a></div><div class="desc docblock-short">Sets of registers in a <a href="struct.RegClass.html" title="struct regalloc3::reginfo::RegClass"><code>RegClass</code></a> grouped by their priority for register
+allocation.</div></li></ul><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.MAX_GROUP_SIZE.html" title="constant regalloc3::reginfo::MAX_GROUP_SIZE">MAX_<wbr>GROUP_<wbr>SIZE</a></div><div class="desc docblock-short">Maximum size of a register group.</div></li><li><div class="item-name"><a class="constant" href="constant.MAX_PHYSREGS.html" title="constant regalloc3::reginfo::MAX_PHYSREGS">MAX_<wbr>PHYSREGS</a></div><div class="desc docblock-short">Maximum number of registers.</div></li><li><div class="item-name"><a class="constant" href="constant.MAX_REG_BANKS.html" title="constant regalloc3::reginfo::MAX_REG_BANKS">MAX_<wbr>REG_<wbr>BANKS</a></div><div class="desc docblock-short">Maximum number of register banks.</div></li><li><div class="item-name"><a class="constant" href="constant.MAX_REG_CLASSES.html" title="constant regalloc3::reginfo::MAX_REG_CLASSES">MAX_<wbr>REG_<wbr>CLASSES</a></div><div class="desc docblock-short">Maximum number of register classes.</div></li><li><div class="item-name"><a class="constant" href="constant.MAX_REG_GROUPS.html" title="constant regalloc3::reginfo::MAX_REG_GROUPS">MAX_<wbr>REG_<wbr>GROUPS</a></div><div class="desc docblock-short">Maximum number of register groups.</div></li><li><div class="item-name"><a class="constant" href="constant.MAX_REG_UNITS.html" title="constant regalloc3::reginfo::MAX_REG_UNITS">MAX_<wbr>REG_<wbr>UNITS</a></div><div class="desc docblock-short">Maximum number of register units.</div></li><li><div class="item-name"><a class="constant" href="constant.MAX_UNITS_PER_REG.html" title="constant regalloc3::reginfo::MAX_UNITS_PER_REG">MAX_<wbr>UNITS_<wbr>PER_<wbr>REG</a></div><div class="desc docblock-short">Maximum number of register units in a compound register.</div></li></ul><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="trait" href="trait.RegInfo.html" title="trait regalloc3::reginfo::RegInfo">RegInfo</a></div><div class="desc docblock-short">Trait which describes the physical registers and register classes that may
+be allocated from.</div></li></ul><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="type" href="type.PhysRegSet.html" title="type regalloc3::reginfo::PhysRegSet">Phys<wbr>RegSet</a></div><div class="desc docblock-short">A set of <a href="struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> encoded as a fixed-size bit set.</div></li><li><div class="item-name"><a class="type" href="type.RegClassSet.html" title="type regalloc3::reginfo::RegClassSet">RegClass<wbr>Set</a></div><div class="desc docblock-short">A set of <a href="struct.RegClass.html" title="struct regalloc3::reginfo::RegClass"><code>RegClass</code></a> encoded as a fixed-size bit set.</div></li><li><div class="item-name"><a class="type" href="type.RegOrRegGroupSet.html" title="type regalloc3::reginfo::RegOrRegGroupSet">RegOr<wbr>RegGroup<wbr>Set</a></div><div class="desc docblock-short">A set of <a href="struct.RegOrRegGroup.html" title="struct regalloc3::reginfo::RegOrRegGroup"><code>RegOrRegGroup</code></a> encoded as a fixed-size bit set.</div></li><li><div class="item-name"><a class="type" href="type.RegUnitSet.html" title="type regalloc3::reginfo::RegUnitSet">RegUnit<wbr>Set</a></div><div class="desc docblock-short">A set of <a href="struct.RegUnit.html" title="struct regalloc3::reginfo::RegUnit"><code>RegUnit</code></a> encoded as a fixed-size bit set.</div></li></ul></section></div></main></body></html>

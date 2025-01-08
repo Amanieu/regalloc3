@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_GROUP_SIZE","MAX_PHYSREGS","MAX_REG_BANKS","MAX_REG_CLASSES","MAX_REG_GROUPS","MAX_REG_UNITS","MAX_UNITS_PER_REG"],"enum":["AllocationOrderSet"],"struct":["PhysReg","RegBank","RegClass","RegGroup","RegOrRegGroup","RegUnit","SpillSlotSize"],"trait":["RegInfo"],"type":["PhysRegSet","RegClassSet","RegOrRegGroupSet","RegUnitSet"]};

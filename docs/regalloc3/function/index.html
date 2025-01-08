@@ -1,0 +1,95 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The `Function` trait which describes the input function."><title>regalloc3::function - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="regalloc3" data-themes="" data-resource-suffix="" data-rustdoc-version="1.86.0-nightly (ad211ced8 2025-01-07)" data-channel="nightly" data-search-js="search-75f5ac3e.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../regalloc3/index.html">regalloc3</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module function</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#control-flow-graph-and-instructions" title="Control flow graph and instructions">Control flow graph and instructions</a></li><li><a href="#operands-and-values" title="Operands and values">Operands and values</a></li><li><a href="#ssa-and-block-parameters" title="SSA and block parameters">SSA and block parameters</a></li><li><a href="#reusing-an-input-register-for-an-output" title="Reusing an input register for an output">Reusing an input register for an output</a></li><li><a href="#non-allocatable-registers" title="Non-allocatable registers">Non-allocatable registers</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate regalloc3</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">regalloc3</a></span><h1>Module <span>function</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/regalloc3/function.rs.html#1-729">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The <a href="trait.Function.html" title="trait regalloc3::function::Function"><code>Function</code></a> trait which describes the input function.</p>
+<p>This includes all details of the function including basic blocks,
+instructions and their operands.</p>
+<h2 id="control-flow-graph-and-instructions"><a class="doc-anchor" href="#control-flow-graph-and-instructions">§</a>Control flow graph and instructions</h2>
+<p>The allocator operates on an input program that is in a standard CFG
+representation: the function body is a sequence of basic blocks, and
+each block has a sequence of instructions and zero or more
+successors. The allocator also requires the client to provide
+predecessors for each block, and these must be consistent with the
+successors. The entry block may not have any predecessors.</p>
+<p>The CFG must have <em>no critical edges</em>. A critical edge is an edge from
+block A to block B such that A has more than one successor <em>and</em> B has
+more than one predecessor.</p>
+<p>Instructions are opaque to the allocator: their behavior is entirely
+described using a vector of <a href="struct.Operand.html" title="struct regalloc3::function::Operand"><code>Operand</code></a>s. Every block must end with
+a terminator instruction. The kind of terminator is determined by the
+number of successor blocks in a function:</p>
+<ul>
+<li>A <code>jump</code> terminator has a single successor block <em>and</em> that successor
+block has more than one predecessor blocks.</li>
+<li>A <code>branch</code> terminator has multiple successor blocks, each of which only
+has a single predecessor block.</li>
+<li>A <code>ret</code> has no successor blocks and return from the function.</li>
+</ul>
+<p>Both instructions and blocks are named by indices in contiguous index
+spaces. A block’s instructions must be a contiguous range of
+instruction indices, and block i’s first instruction must come
+immediately after block i-1’s last instruction.</p>
+<p>Basic blocks in the CFG must be topologically sorted with regards to the
+dominator tree of the CFG. This means that if block A dominates block B then
+A must have a lower block index than B. Additionally, the heuristics used
+by the register allocator work best if loop bodies are continuous and
+properly nested. The best way to achieve this is to order block by a
+reverse-postorder (RPO) of the CFG, with loop back-edges prioritized to
+come earlier than other edges.</p>
+<p>The first block is treated as the entry block of the CFG. It cannot have
+any predecessors and all other blocks must be reachable from it.</p>
+<h2 id="operands-and-values"><a class="doc-anchor" href="#operands-and-values">§</a>Operands and values</h2>
+<p>Every instruction operates on values by way of <a href="struct.Operand.html" title="struct regalloc3::function::Operand"><code>Operand</code></a>s. An operand
+consists of the 2 parts: the <a href="enum.OperandKind.html" title="enum regalloc3::function::OperandKind"><code>OperandKind</code></a> and the <a href="enum.OperandConstraint.html" title="enum regalloc3::function::OperandConstraint"><code>OperandConstraint</code></a>.</p>
+<p>A <a href="struct.Value.html" title="struct regalloc3::function::Value"><code>Value</code></a> represents an abstract value produced by an instruction and
+consumed by other instructions.</p>
+<p><a href="enum.OperandKind.html" title="enum regalloc3::function::OperandKind"><code>OperandKind</code></a> describes what the operand is doing to a <a href="struct.Value.html" title="struct regalloc3::function::Value"><code>Value</code></a>. This is
+usually one of two things: it defines (<a href="enum.OperandKind.html#variant.Def" title="variant regalloc3::function::OperandKind::Def"><code>OperandKind::Def</code></a>) a value as an
+output or it uses (<a href="enum.OperandKind.html#variant.Use" title="variant regalloc3::function::OperandKind::Use"><code>OperandKind::Use</code></a>) a value as an input.</p>
+<p><a href="enum.OperandConstraint.html" title="enum regalloc3::function::OperandConstraint"><code>OperandConstraint</code></a> describes the constraints on which <a href="../reginfo/struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> can be
+assigned to an operand. This is usually <a href="enum.OperandConstraint.html#variant.Class" title="variant regalloc3::function::OperandConstraint::Class"><code>OperandConstraint::Class</code></a> which
+means that any register in a given <a href="../reginfo/struct.RegClass.html" title="struct regalloc3::reginfo::RegClass"><code>RegClass</code></a> can be selected. Some
+instructions (e.g. a function call) require values to be in a fixed
+register. For those, <a href="enum.OperandConstraint.html#variant.Fixed" title="variant regalloc3::function::OperandConstraint::Fixed"><code>OperandConstraint::Fixed</code></a> can be used.</p>
+<h2 id="ssa-and-block-parameters"><a class="doc-anchor" href="#ssa-and-block-parameters">§</a>SSA and block parameters</h2>
+<p>The function described by the <a href="trait.Function.html" title="trait regalloc3::function::Function"><code>Function</code></a> trait must be in <a href="https://en.wikipedia.org/wiki/Static_single-assignment_form">Static Single-Assignment</a>
+(SSA) form. This means that each <a href="struct.Value.html" title="struct regalloc3::function::Value"><code>Value</code></a> can only be defined once, by a
+single instruction. Additionally, because the CFG must be ordered by
+dominance, this means that the definition of a value must always appear
+before any uses of that value <em>in the linear instruction order</em>: the index
+of the defining <a href="struct.Inst.html" title="struct regalloc3::function::Inst"><code>Inst</code></a> must be less than that of any instruction using the
+value.</p>
+<p>At control-flow join points, a <a href="struct.Value.html" title="struct regalloc3::function::Value"><code>Value</code></a> may need to represent the incoming
+value from multiple blocks, each of which has a separate definition. This is
+achieved using <em>basic block parameters</em>, which are equivalent to phi-nodes.</p>
+<p>A basic block with multiple predecessor blocks may specify a set of block
+parameters with <a href="trait.Function.html#tymethod.block_params" title="method regalloc3::function::Function::block_params"><code>Function::block_params</code></a>. This defines new <a href="struct.Value.html" title="struct regalloc3::function::Value"><code>Value</code></a>s at
+the start of the block. All predecessor blocks, which must end with a <code>jump</code>
+terminator, must provide a matching number of outgoing <a href="struct.Value.html" title="struct regalloc3::function::Value"><code>Value</code></a>s with
+<a href="trait.Function.html#tymethod.jump_blockparams" title="method regalloc3::function::Function::jump_blockparams"><code>Function::jump_blockparams</code></a>. On entry to the block, the block parameter
+values will be initialized with the value from the block that control flow
+actually came from.</p>
+<h2 id="reusing-an-input-register-for-an-output"><a class="doc-anchor" href="#reusing-an-input-register-for-an-output">§</a>Reusing an input register for an output</h2>
+<p>Some instructions, particularly on ISAs like x86, only allow a single
+register to be specified as both an input and output, where the instruction
+clobber the original input value with the output value.</p>
+<p>In the case of fixed registers, this can be represented by using the same
+fixed register for both an input and an output operand. However for
+class-constraint operands an explicit relationship needs to be created
+between the input and output operand to ensure they are assigned to the same
+register.</p>
+<p>This is achieved by using <a href="enum.OperandConstraint.html#variant.Reuse" title="variant regalloc3::function::OperandConstraint::Reuse"><code>OperandConstraint::Reuse</code></a> for the output
+operand and specifying the index of the corresponding input operand, which
+must have <a href="enum.OperandConstraint.html#variant.Class" title="variant regalloc3::function::OperandConstraint::Class"><code>OperandConstraint::Class</code></a>. This will force the register
+allocator to assign to the output operand the same register as the
+designated input operand.</p>
+<h2 id="non-allocatable-registers"><a class="doc-anchor" href="#non-allocatable-registers">§</a>Non-allocatable registers</h2>
+<p><a href="enum.OperandKind.html#variant.NonAllocatable" title="variant regalloc3::function::OperandKind::NonAllocatable"><code>OperandKind::NonAllocatable</code></a> can be used to specify a <a href="../reginfo/struct.PhysReg.html" title="struct regalloc3::reginfo::PhysReg"><code>PhysReg</code></a> that
+should be ignored by the register allocator and passed on to the output
+<a href="../output/struct.Allocation.html" title="struct regalloc3::output::Allocation"><code>Allocation</code></a> unmodified. This is intended to help with client that want to
+make use of special registers like the stack pointer or a hardware zero
+register without needing to change the number of operands in an instruction.</p>
+<p>Any registers used with <code>OperandKind::NonAllocatable</code> must not be part of
+any register bank or register class.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.Block.html" title="struct regalloc3::function::Block">Block</a></div><div class="desc docblock-short">An opaque reference to a basic block in the input function.</div></li><li><div class="item-name"><a class="struct" href="struct.Inst.html" title="struct regalloc3::function::Inst">Inst</a></div><div class="desc docblock-short">An instruction index in the input function.</div></li><li><div class="item-name"><a class="struct" href="struct.Operand.html" title="struct regalloc3::function::Operand">Operand</a></div><div class="desc docblock-short">Information about an operand in an instruction.</div></li><li><div class="item-name"><a class="struct" href="struct.Value.html" title="struct regalloc3::function::Value">Value</a></div><div class="desc docblock-short">An opaque reference to an SSA value in the input function.</div></li><li><div class="item-name"><a class="struct" href="struct.ValueGroup.html" title="struct regalloc3::function::ValueGroup">Value<wbr>Group</a></div><div class="desc docblock-short">A reference to a list of <a href="struct.Value.html" title="struct regalloc3::function::Value"><code>Value</code></a>s.</div></li></ul><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.OperandConstraint.html" title="enum regalloc3::function::OperandConstraint">Operand<wbr>Constraint</a></div><div class="desc docblock-short">An <code>OperandConstraint</code> specifies which value should be assigned to this
+operand and any constraints on the location where this value should be
+placed.</div></li><li><div class="item-name"><a class="enum" href="enum.OperandKind.html" title="enum regalloc3::function::OperandKind">Operand<wbr>Kind</a></div><div class="desc docblock-short">The “kind” of an operand, which describes how an instruction makes use of
+an operand.</div></li><li><div class="item-name"><a class="enum" href="enum.RematCost.html" title="enum regalloc3::function::RematCost">Remat<wbr>Cost</a></div><div class="desc docblock-short">Information about the cost of rematerializing a value into a register.</div></li></ul><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.MAX_BLOCKS.html" title="constant regalloc3::function::MAX_BLOCKS">MAX_<wbr>BLOCKS</a></div><div class="desc docblock-short">Maximum number of basic blocks.</div></li><li><div class="item-name"><a class="constant" href="constant.MAX_BLOCK_PARAMS.html" title="constant regalloc3::function::MAX_BLOCK_PARAMS">MAX_<wbr>BLOCK_<wbr>PARAMS</a></div><div class="desc docblock-short">Maximum number of basic block parameters.</div></li><li><div class="item-name"><a class="constant" href="constant.MAX_INSTS.html" title="constant regalloc3::function::MAX_INSTS">MAX_<wbr>INSTS</a></div><div class="desc docblock-short">Maximum number of instructions.</div></li><li><div class="item-name"><a class="constant" href="constant.MAX_INST_OPERANDS.html" title="constant regalloc3::function::MAX_INST_OPERANDS">MAX_<wbr>INST_<wbr>OPERANDS</a></div><div class="desc docblock-short">Maximum number of operands per instruction.</div></li><li><div class="item-name"><a class="constant" href="constant.MAX_VALUES.html" title="constant regalloc3::function::MAX_VALUES">MAX_<wbr>VALUES</a></div><div class="desc docblock-short">Maximum number of SSA values.</div></li></ul><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="trait" href="trait.Function.html" title="trait regalloc3::function::Function">Function</a></div><div class="desc docblock-short">A trait defined by the register allocator client to provide access to its
+machine-instruction / CFG representation.</div></li></ul><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="type" href="type.InstRange.html" title="type regalloc3::function::InstRange">Inst<wbr>Range</a></div><div class="desc docblock-short">A range of instructions in the input function.</div></li></ul></section></div></main></body></html>
