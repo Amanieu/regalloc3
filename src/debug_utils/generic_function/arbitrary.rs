@@ -10,7 +10,8 @@ use crate::debug_utils::generic_function::ValueData;
 use crate::debug_utils::postorder::PostOrder;
 use crate::entity::{PrimaryMap, SecondaryMap};
 use crate::function::{
-    Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost, Value,
+    Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost,
+    TerminatorKind, Value,
 };
 use crate::reginfo::{
     AllocationOrderSet, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet, MAX_REG_UNITS,
@@ -367,7 +368,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
                     operands: vec![],
                     clobbers: vec![],
                     block,
-                    is_terminator: true,
+                    terminator_kind: Some(TerminatorKind::Jump),
                     is_pure: false,
                 });
             }
@@ -377,13 +378,14 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         // above. This one is allowed to have operands like a normal
         // instruction.
         if self.block_insts[block].is_empty() {
-            let mut terminator = self.gen_inst(
-                block,
-                num_insts == 0,
-                self.func.blocks[block].succs.is_empty(),
-            )?;
+            let is_ret = self.func.blocks[block].succs.is_empty();
+            let mut terminator = self.gen_inst(block, num_insts == 0, is_ret)?;
             terminator.is_pure = false;
-            terminator.is_terminator = true;
+            terminator.terminator_kind = Some(if is_ret {
+                TerminatorKind::Ret
+            } else {
+                TerminatorKind::Branch
+            });
             self.block_insts[block].push(terminator);
         }
 
@@ -612,7 +614,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             operands: vec![],
             clobbers: vec![],
             block,
-            is_terminator: false,
+            terminator_kind: None,
             is_pure: self.u.arbitrary()?,
         };
 

@@ -6,7 +6,9 @@ use core::fmt;
 
 use crate::entity::packed_option::PackedOption;
 use crate::entity::PrimaryMap;
-use crate::function::{Block, Function, Inst, InstRange, Operand, RematCost, Value, ValueGroup};
+use crate::function::{
+    Block, Function, Inst, InstRange, Operand, RematCost, TerminatorKind, Value, ValueGroup,
+};
 use crate::reginfo::{RegBank, RegClass, RegUnit};
 
 #[cfg(feature = "arbitrary")]
@@ -36,7 +38,7 @@ struct InstData {
     operands: Vec<Operand>,
     clobbers: Vec<RegUnit>,
     block: Block,
-    is_terminator: bool,
+    terminator_kind: Option<TerminatorKind>,
     is_pure: bool,
 }
 
@@ -98,7 +100,7 @@ impl GenericFunction {
                 operands: func.inst_operands(inst).into(),
                 clobbers: func.inst_clobbers(inst).into(),
                 block: func.inst_block(inst),
-                is_terminator: func.inst_is_terminator(inst),
+                terminator_kind: func.terminator_kind(inst),
                 is_pure: func.can_eliminate_dead_inst(inst),
             });
         }
@@ -157,8 +159,8 @@ impl Function for GenericFunction {
     }
 
     #[inline]
-    fn inst_is_terminator(&self, inst: Inst) -> bool {
-        self.insts[inst].is_terminator
+    fn terminator_kind(&self, inst: Inst) -> Option<TerminatorKind> {
+        self.insts[inst].terminator_kind
     }
 
     #[inline]

@@ -347,12 +347,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             }
 
             // Create uses for outgoing block parameters.
-            if let &[_succ] = self.func.block_succs(block) {
-                for &value in self.func.jump_blockparams(block) {
-                    trace!("Processing outgoing blockparam {value} in {block}");
-                    stat!(self.stats, blockparam_out);
-                    self.value_use(value, block_insts.last(), UseKind::BlockparamOut {});
-                }
+            for &value in self.func.jump_blockparams(block) {
+                trace!("Processing outgoing blockparam {value} in {block}");
+                stat!(self.stats, blockparam_out);
+                self.value_use(value, block_insts.last(), UseKind::BlockparamOut {});
             }
         }
     }

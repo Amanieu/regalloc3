@@ -4,7 +4,7 @@
 use core::cell::Cell;
 use core::fmt;
 
-use crate::function::{Block, Function, OperandConstraint, OperandKind, RematCost};
+use crate::function::{Block, Function, OperandConstraint, OperandKind, RematCost, TerminatorKind};
 use crate::output::{Allocation, AllocationKind, Output, OutputInst};
 use crate::reginfo::{AllocationOrderSet, RegClass, RegClassSet, RegInfo, RegOrRegGroup};
 
@@ -92,15 +92,20 @@ impl<F: Function> fmt::Display for DisplayFunction<'_, F> {
                 // Base opcode. For terminators this also encodes the list of block
                 // successors.
                 write!(f, "    {inst}: ")?;
-                match (self.0.inst_is_terminator(inst), self.0.block_succs(block)) {
-                    (false, _) => write!(f, "inst")?,
-                    (true, []) => write!(f, "ret")?,
-                    (true, &[succ]) if self.0.block_preds(succ).len() > 1 => write!(
+                match self.0.terminator_kind(inst) {
+                    None => write!(f, "inst")?,
+                    Some(TerminatorKind::Ret) => write!(f, "ret")?,
+                    Some(TerminatorKind::Jump) => write!(
                         f,
-                        "jump {succ}({})",
+                        "jump {}({})",
+                        self.0.block_succs(block)[0],
                         display_iter(self.0.jump_blockparams(block), ",")
                     )?,
-                    (true, succs) => write!(f, "branch({})", display_iter(succs, ","))?,
+                    Some(TerminatorKind::Branch) => write!(
+                        f,
+                        "branch({})",
+                        display_iter(self.0.block_succs(block), ",")
+                    )?,
                 };
 
                 // Attributes
@@ -378,15 +383,20 @@ impl<F: Function, R: RegInfo> fmt::Display for DisplayOutputInst<'_, F, R> {
                 // Base opcode. For terminators this also encodes the list of block
                 // successors.
                 write!(f, "{inst}: ")?;
-                match (func.inst_is_terminator(inst), func.block_succs(self.block)) {
-                    (false, _) => write!(f, "inst")?,
-                    (true, []) => write!(f, "ret")?,
-                    (true, &[succ]) if func.block_preds(succ).len() > 1 => write!(
+                match func.terminator_kind(inst) {
+                    None => write!(f, "inst")?,
+                    Some(TerminatorKind::Ret) => write!(f, "ret")?,
+                    Some(TerminatorKind::Jump) => write!(
                         f,
-                        "jump {succ}({})",
+                        "jump {}({})",
+                        func.block_succs(self.block)[0],
                         display_iter(func.jump_blockparams(self.block), ",")
                     )?,
-                    (true, succs) => write!(f, "branch({})", display_iter(succs, ","))?,
+                    Some(TerminatorKind::Branch) => write!(
+                        f,
+                        "branch({})",
+                        display_iter(func.block_succs(self.block), ",")
+                    )?,
                 };
 
                 // Attributes

@@ -10,7 +10,7 @@
 //! each block has a sequence of instructions and zero or more
 //! successors. The allocator also requires the client to provide
 //! predecessors for each block, and these must be consistent with the
-//! successors. The entry block may not have any predecessors.
+//! successors. The entry block cannot have any predecessors.
 //!
 //! The CFG must have *no critical edges*. A critical edge is an edge from
 //! block A to block B such that A has more than one successor *and* B has
@@ -18,13 +18,13 @@
 //!
 //! Instructions are opaque to the allocator: their behavior is entirely
 //! described using a vector of [`Operand`]s. Every block must end with
-//! a terminator instruction. The kind of terminator is determined by the
-//! number of successor blocks in a function:
-//! * A `jump` terminator has a single successor block *and* that successor
-//!   block has more than one predecessor blocks.
-//! * A `branch` terminator has multiple successor blocks, each of which only
-//!   has a single predecessor block.
-//! * A `ret` has no successor blocks and return from the function.
+//! a terminator instruction:
+//! * A [`TerminatorKind::Jump`] has a single successor block *and* that
+//!   successor block has more than one predecessor blocks.
+//! * A [`TerminatorKind::Branch`] has multiple successor blocks, each of which
+//!   only has a single predecessor block.
+//! * A [`TerminatorKind::Ret`] has no successor blocks and return from the
+//!   function.
 //!
 //! Both instructions and blocks are named by indices in contiguous index
 //! spaces. A block's instructions must be a contiguous range of
@@ -531,6 +531,32 @@ pub enum RematCost {
     CheaperThanLoad,
 }
 
+/// Type of terminator instruction at the end of a basic block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum TerminatorKind {
+    /// Blocks that end with a `Branch` terminator can have multiple successor
+    /// blocks, but those blocks may only have a single predecessor.
+    ///
+    /// `Branch` terminators can have operands and clobbers, including `Def`
+    /// operands which define values used in successor blocks.
+    Branch,
+
+    /// Blocks that end with a `Jump` terminator can only have a single
+    /// successor block and the successor block must have more than one
+    /// predecessor block.
+    ///
+    /// `Jump` terminators cannot have operands or clobbers. Only blocks ending
+    /// with a `Jump` terminator may have block parameters.
+    Jump,
+
+    /// Blocks that have no successors must end with a `Ret` terminator.
+    ///
+    /// `Ret` terminators can have `Use` and `EarlyDef` operands but cannot have
+    /// `Def` operands or clobbers.
+    Ret,
+}
+
 /// A trait defined by the register allocator client to provide access to its
 /// machine-instruction / CFG representation.
 ///
@@ -603,11 +629,12 @@ pub trait Function {
     /// predecessors.
     fn block_params(&self, block: Block) -> &[Value];
 
-    /// Determine whether an instruction is an end-of-block branch or return.
+    /// Determine whether an instruction is a terminator which ends a block and
+    /// returns its [`TerminatorKind`].
     ///
     /// All blocks must end with a terminator instruction, and terminator
     /// instructions are not allowed in the body of a block.
-    fn inst_is_terminator(&self, inst: Inst) -> bool;
+    fn terminator_kind(&self, inst: Inst) -> Option<TerminatorKind>;
 
     /// If `block` ends with a jump terminator, returns the outgoing
     /// block arguments.

@@ -10,8 +10,8 @@ use crate::debug_utils::dominator_tree::DominatorTree;
 use crate::debug_utils::postorder::PostOrder;
 use crate::entity::{EntitySet, SecondaryMap};
 use crate::function::{
-    Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, Value, ValueGroup,
-    MAX_BLOCKS, MAX_BLOCK_PARAMS, MAX_INSTS, MAX_INST_OPERANDS, MAX_VALUES,
+    Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, TerminatorKind,
+    Value, ValueGroup, MAX_BLOCKS, MAX_BLOCK_PARAMS, MAX_INSTS, MAX_INST_OPERANDS, MAX_VALUES,
 };
 use crate::reginfo::{AllocationOrderSet, PhysReg, RegInfo, RegUnitSet};
 
@@ -476,7 +476,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         }
 
         // Check outgoing block parameters.
-        let mut allow_terminator_operands = true;
         if !self.func.jump_blockparams(block).is_empty() {
             let &[succ] = self.func.block_succs(block) else {
                 bail!("{block}: Branch blockparams can only be used with a single successor");
@@ -496,15 +495,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 let bank_in = self.func.value_bank(blockparam_in);
                 ensure!(
                     bank_out == bank_in,
-                    "Blockparams with register banks: {blockparam_out} ({bank_out}) vs \
+                    "Blockparams with different register banks: {blockparam_out} ({bank_out}) vs \
                      {blockparam_in} ({bank_in})"
                 );
-            }
-
-            // If the target block has more than one predecessor, the terminator
-            // instruction cannot have operands.
-            if self.func.block_preds(succ).len() > 1 {
-                allow_terminator_operands = false;
             }
         }
 
@@ -514,12 +507,19 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             if let Some(inst) = terminator {
                 bail!("{inst}: Terminator in middle of block");
             }
-            if self.func.inst_is_terminator(inst) {
+            if let Some(kind) = self.func.terminator_kind(inst) {
                 ensure!(
                     !self.func.can_eliminate_dead_inst(inst),
                     "{inst}: Terminator cannot be marked as a pure instruction"
                 );
-                if !allow_terminator_operands {
+                if kind == TerminatorKind::Jump {
+                    let &[succ] = self.func.block_succs(block) else {
+                        bail!("{inst}: Jump terminators can only be used with a single successor");
+                    };
+                    ensure!(
+                        self.func.block_preds(succ).len() > 1,
+                        "{inst}: Jump terminators can only target blocks with multiple predecessors"
+                    );
                     ensure!(
                         self.func.inst_operands(inst).is_empty(),
                         "{inst}: Terminator cannot have operands when the successor block has \
@@ -530,13 +530,21 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         "{inst}: Terminator cannot have clobbers when the successor block has \
                          multiple predecessors"
                     );
+                } else {
+                    ensure!(
+                        self.func.jump_blockparams(block).is_empty(),
+                        "{inst}: Only jump terminators may have outgoing block parameters"
+                    );
                 }
-                if self.func.block_succs(block).is_empty() {
+                if kind == TerminatorKind::Ret {
+                    ensure!(
+                        self.func.block_succs(block).is_empty(),
+                        "{inst}: Ret terminators cannot have successors"
+                    );
                     for op in self.func.inst_operands(inst) {
                         match op.kind() {
                             OperandKind::Def(_) | OperandKind::DefGroup(_) => bail!(
-                                "{inst}: Terminator with no successors cannot have Def operands, \
-                                 only Use/EarlyDef"
+                                "{inst}: Ret terminators cannot have Def operands, only Use/EarlyDef"
                             ),
                             OperandKind::Use(_)
                             | OperandKind::EarlyDef(_)
@@ -547,7 +555,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     }
                     ensure!(
                         self.func.inst_clobbers(inst).is_empty(),
-                        "{inst}: Terminator with no successors cannot have clobbers"
+                        "{inst}: Ret terminators cannot have clobbers"
+                    );
+                } else {
+                    ensure!(
+                        !self.func.block_succs(block).is_empty(),
+                        "{inst}: Non-ret terminators must have successors"
                     );
                 }
                 terminator = Some(inst);

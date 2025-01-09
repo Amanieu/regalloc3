@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 
 use crate::{
     entity::EntitySet,
-    function::{Function, Inst, Value},
+    function::{Function, Inst, TerminatorKind, Value},
     reginfo::PhysReg,
 };
 
@@ -94,14 +94,17 @@ impl Hints {
     /// This adds an incoming fixed register hint at all successor instructions.
     pub fn add_fixed_def(&mut self, value: Value, inst: Inst, reg: PhysReg, func: &impl Function) {
         let block = func.inst_block(inst);
-        if func.inst_is_terminator(inst) {
+        if let Some(kind) = func.terminator_kind(inst) {
             let succs = func.block_succs(block);
-            let is_jump = succs.len() == 1 && func.block_preds(succs[0]).len() > 1;
             for &succ in succs {
                 self.hints.push(Hint {
                     key: HintKey::incoming(value, func.block_insts(succ).from),
                     reg,
-                    weight: func.block_frequency(if is_jump { block } else { succ }),
+                    weight: func.block_frequency(if kind == TerminatorKind::Jump {
+                        block
+                    } else {
+                        succ
+                    }),
                 });
             }
         } else {

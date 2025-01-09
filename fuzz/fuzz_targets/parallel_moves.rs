@@ -10,7 +10,7 @@ use libfuzzer_sys::fuzz_target;
 use regalloc3::debug_utils::{self, GenericRegInfo};
 use regalloc3::entity::{PrimaryMap, SecondaryMap};
 use regalloc3::function::{
-    Block, Function, Inst, InstRange, Operand, RematCost, Value, ValueGroup,
+    Block, Function, Inst, InstRange, Operand, RematCost, TerminatorKind, Value, ValueGroup,
 };
 use regalloc3::output::{Allocation, AllocationKind, SpillSlot};
 use regalloc3::parallel_moves::ParallelMoves;
@@ -271,7 +271,7 @@ impl Function for TestCase {
         unreachable!()
     }
 
-    fn inst_is_terminator(&self, _inst: Inst) -> bool {
+    fn terminator_kind(&self, _inst: Inst) -> Option<TerminatorKind> {
         unreachable!()
     }
 

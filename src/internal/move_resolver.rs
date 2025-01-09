@@ -32,7 +32,7 @@ use super::spill_allocator::SpillAllocator;
 use super::uses::{Use, UseKind, Uses};
 use super::virt_regs::VirtRegs;
 use crate::entity::packed_option::PackedOption;
-use crate::function::{Block, Function, Inst, Value};
+use crate::function::{Block, Function, Inst, TerminatorKind, Value};
 use crate::internal::live_range::{LiveRangeSegment, ValueSegmentComponent};
 use crate::output::{Allocation, AllocationKind};
 use crate::reginfo::{RegClass, RegInfo};
@@ -366,6 +366,10 @@ impl MoveResolver {
                     // and we need to check whether the unit is free in the
                     // successor block.
                     let inst = if pos.is_late() {
+                        debug_assert_eq!(
+                            func.terminator_kind(pos.inst()),
+                            Some(TerminatorKind::Jump)
+                        );
                         let block = func.inst_block(pos.inst());
                         let succ = func.block_succs(block)[0];
                         func.block_insts(succ).from
@@ -629,61 +633,62 @@ impl<F: Function> Context<'_, F> {
     ) {
         trace!("-> block liveout {block}:{terminator}");
 
-        // If we only have a single successor and that successor has multiple
-        // predecessors then this is a jump terminator.
         let succs = self.func.block_succs(block);
-        if succs.len() == 1 && self.func.block_preds(succs[0]).len() > 1 {
-            // If the successor block is in the same segment as us, then the
-            // code in handle_block_live_in will not emit a move for it. We
-            // can avoid emitting a source half-move here as well.
-            let block_start = self.func.block_insts(succs[0]).from.slot(Slot::Boundary);
-            if !(block_start >= segment.live_range.from && block_start < segment.live_range.to) {
-                debug_assert!(!segment.live_range.is_empty());
-                // For jump terminators that target a block with multiple
-                // predecessors, the move must be in this block just before
-                // the jump instruction.
-                self.move_resolver.emit_source_half_move(
-                    MovePosition::late(terminator),
-                    segment.value,
-                    // Values are live through the entire jump instruction,
-                    // so this cannot be an empty segment.
-                    alloc.expect("missing allocation for jump terminator"),
-                );
-            }
-        } else {
-            // Otherwise this is a branch terminator.
-
-            // If this terminator produced a fixed definition, use that
-            // as the move source.
-            let alloc_out = match self.fixed_def {
-                Some((pos, alloc)) if pos == terminator.next() => alloc,
-                _ => alloc.expect("missing allocation for terminator"),
-            };
-
-            // For branch terminators that target blocks with a single
-            // predecessor, the move must be at the start of each
-            // successor block.
-            for &succ in succs {
+        match self.func.terminator_kind(terminator) {
+            Some(TerminatorKind::Jump) => {
                 // If the successor block is in the same segment as us, then the
                 // code in handle_block_live_in will not emit a move for it. We
                 // can avoid emitting a source half-move here as well.
-                //
-                // We can't do this if the block ends with a fixed definition:
-                // the live range will look like it starts after the end of the
-                // block, which won't trigger the check in handle_block_live_in.
-                // Also it would have the wrong allocation anyways.
-                let block_start = self.func.block_insts(succ).from.slot(Slot::Boundary);
-                if !(block_start >= segment.live_range.from
-                    && block_start < segment.live_range.to
-                    && self.fixed_def.is_none())
+                let block_start = self.func.block_insts(succs[0]).from.slot(Slot::Boundary);
+                if !(block_start >= segment.live_range.from && block_start < segment.live_range.to)
                 {
+                    debug_assert!(!segment.live_range.is_empty());
+                    // For jump terminators that target a block with multiple
+                    // predecessors, the move must be in this block just before
+                    // the jump instruction.
                     self.move_resolver.emit_source_half_move(
-                        MovePosition::early(self.func.block_insts(succ).from),
+                        MovePosition::late(terminator),
                         segment.value,
-                        alloc_out,
+                        // Values are live through the entire jump instruction,
+                        // so this cannot be an empty segment.
+                        alloc.expect("missing allocation for jump terminator"),
                     );
                 }
             }
+            Some(TerminatorKind::Branch) => {
+                // If this terminator produced a fixed definition, use that
+                // as the move source.
+                let alloc_out = match self.fixed_def {
+                    Some((pos, alloc)) if pos == terminator.next() => alloc,
+                    _ => alloc.expect("missing allocation for terminator"),
+                };
+
+                // For branch terminators that target blocks with a single
+                // predecessor, the move must be at the start of each
+                // successor block.
+                for &succ in succs {
+                    // If the successor block is in the same segment as us, then the
+                    // code in handle_block_live_in will not emit a move for it. We
+                    // can avoid emitting a source half-move here as well.
+                    //
+                    // We can't do this if the block ends with a fixed definition:
+                    // the live range will look like it starts after the end of the
+                    // block, which won't trigger the check in handle_block_live_in.
+                    // Also it would have the wrong allocation anyways.
+                    let block_start = self.func.block_insts(succ).from.slot(Slot::Boundary);
+                    if !(block_start >= segment.live_range.from
+                        && block_start < segment.live_range.to
+                        && self.fixed_def.is_none())
+                    {
+                        self.move_resolver.emit_source_half_move(
+                            MovePosition::early(self.func.block_insts(succ).from),
+                            segment.value,
+                            alloc_out,
+                        );
+                    }
+                }
+            }
+            Some(TerminatorKind::Ret) | None => unreachable!(),
         }
     }
 
@@ -776,7 +781,7 @@ impl<F: Function> Context<'_, F> {
                 // this definition or if this fixed def is on a
                 // terminator instruction: the terminator will take care of
                 // connecting the fixed register to successors.
-                if !self.func.inst_is_terminator(u.pos)
+                if self.func.terminator_kind(u.pos).is_none()
                     && segment.live_range.to != u.pos.next().slot(Slot::Boundary)
                 {
                     // If the segment isn't a single fixed def, then it must

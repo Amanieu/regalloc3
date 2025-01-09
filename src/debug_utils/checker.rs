@@ -368,7 +368,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             } => {
                 self.check_skipped_inst(inst)?;
 
-                if func.inst_is_terminator(inst) {
+                if func.terminator_kind(inst).is_some() {
                     self.terminated = true;
                 }
 

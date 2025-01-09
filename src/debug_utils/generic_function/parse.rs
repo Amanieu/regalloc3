@@ -13,8 +13,8 @@ use crate::debug_utils::dominator_tree::DominatorTree;
 use crate::debug_utils::postorder::PostOrder;
 use crate::entity::{EntityRef, PrimaryMap, SecondaryMap};
 use crate::function::{
-    Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost, Value,
-    ValueGroup,
+    Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost,
+    TerminatorKind, Value, ValueGroup,
 };
 
 #[derive(Parser)]
@@ -155,16 +155,16 @@ fn parse_opcode(
     match pair.as_rule() {
         Rule::normal_inst => {}
         Rule::ret => {
-            data.is_terminator = true;
+            data.terminator_kind = Some(TerminatorKind::Ret);
         }
         Rule::jump => {
-            data.is_terminator = true;
+            data.terminator_kind = Some(TerminatorKind::Jump);
             let [block, value_list] = extract(pair, [Rule::block, Rule::value_list]);
             block_data.succs.push(parse_entity(block)?);
             block_data.block_params_out = parse_entity_list(value_list)?;
         }
         Rule::branch => {
-            data.is_terminator = true;
+            data.terminator_kind = Some(TerminatorKind::Branch);
             let [block_list] = extract(pair, [Rule::block_list]);
             block_data.succs = parse_entity_list(block_list)?;
         }
@@ -240,7 +240,7 @@ fn parse_instruction(
         operands: vec![],
         clobbers: vec![],
         block,
-        is_terminator: false,
+        terminator_kind: None,
         is_pure: false,
     };
     for pair in pair.into_inner() {
