@@ -31,7 +31,8 @@ use super::reg_matrix::RegMatrix;
 use super::uses::{Use, UseKind, Uses};
 use crate::entity::{EntitySet, PackedOption, PrimaryMap, SecondaryMap};
 use crate::function::{
-    Block, Function, Inst, Operand, OperandConstraint, OperandKind, Value, ValueGroup,
+    Block, Function, Inst, Operand, OperandConstraint, OperandKind, TerminatorKind, Value,
+    ValueGroup,
 };
 use crate::internal::uses::UseList;
 use crate::output::Allocation;
@@ -850,6 +851,18 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         }
                     }
                 }
+            }
+
+            // If this use is on a `Ret` terminator then extend the live range
+            // all the way to the end of the instruction. This doesn't introduce
+            // any conflicts since `Ret` cannot have non-early defs or clobbers.
+            //
+            // The benefit of this is that if the value is also live in the next
+            // block then the live range can be covered by a single segment.
+            // This speeds up all later operations in the register allocator
+            // that iterate over segments.
+            if self.func.terminator_kind(u.pos) == Some(TerminatorKind::Ret) {
+                self.value_live_ranges.live_out.insert(block);
             }
         }
 

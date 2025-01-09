@@ -688,7 +688,11 @@ impl<F: Function> Context<'_, F> {
                     }
                 }
             }
-            Some(TerminatorKind::Ret) | None => unreachable!(),
+            Some(TerminatorKind::Ret) => {
+                // Return terminators have no successor blocks so the value
+                // isn't actually live-out.
+            }
+            None => unreachable!(),
         }
     }
 
