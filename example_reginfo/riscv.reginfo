@@ -443,7 +443,7 @@ bank0 {
     class0 {
         allows_spillslots
         spill_cost = 0.5
-        registers = r1 r5 r6 r7 r8 r9 r10 r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 r23 r24 r25 r26 r27 r28 r29 r30 r31 r32 r33 r34 r35 r36 r37 r38 r39
+        members = r1 r5 r6 r7 r8 r9 r10 r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 r23 r24 r25 r26 r27 r28 r29 r30 r31 r32 r33 r34 r35 r36 r37 r38 r39
         preferred_regs = r10 r11 r12 r13 r14 r15
         non_preferred_regs = r1 r5 r6 r7 r16 r17 r28 r29 r30 r31
         callee_saved_preferred_regs = r8 r9
@@ -454,13 +454,13 @@ bank0 {
     class1: class0 {
         allows_spillslots
         spill_cost = 0
-        registers = r32 r33 r34 r35 r36 r37 r38 r39
+        members = r32 r33 r34 r35 r36 r37 r38 r39
     }
 
     ; General-purpose registers
     class2: class0 {
         spill_cost = 1
-        registers = r1 r5 r6 r7 r8 r9 r10 r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 r23 r24 r25 r26 r27 r28 r29 r30 r31
+        members = r1 r5 r6 r7 r8 r9 r10 r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 r23 r24 r25 r26 r27 r28 r29 r30 r31
         preferred_regs = r10 r11 r12 r13 r14 r15
         non_preferred_regs = r1 r5 r6 r7 r16 r17 r28 r29 r30 r31
         callee_saved_preferred_regs = r8 r9
@@ -471,7 +471,7 @@ bank0 {
     class3: class2 {
         group_size = 2
         spill_cost = 1
-        registers = rg0 rg1 rg2 rg3 rg4 rg5 rg6 rg7 rg8 rg9 rg10 rg11 rg12
+        members = rg0 rg1 rg2 rg3 rg4 rg5 rg6 rg7 rg8 rg9 rg10 rg11 rg12
         preferred_regs = rg0 rg2 rg3 rg4 rg5 rg11 rg12
         callee_saved_preferred_regs = rg1 rg6 rg7 rg8 rg9 rg10
     }
@@ -487,7 +487,7 @@ bank1 {
     class4 {
         allows_spillslots
         spill_cost = 0.5
-        registers = r40 r41 r42 r43 r44 r45 r46 r47 r48 r49 r50 r51 r52 r53 r54 r55 r56 r57 r58 r59 r60 r61 r62 r63 r64 r65 r66 r67 r68 r69 r70 r71 r72 r73 r74 r75 r76 r77 r78 r79
+        members = r40 r41 r42 r43 r44 r45 r46 r47 r48 r49 r50 r51 r52 r53 r54 r55 r56 r57 r58 r59 r60 r61 r62 r63 r64 r65 r66 r67 r68 r69 r70 r71 r72 r73 r74 r75 r76 r77 r78 r79
         preferred_regs = r50 r51 r52 r53 r54 r55
         non_preferred_regs = r40 r41 r42 r43 r44 r45 r46 r47 r56 r57 r68 r69 r70 r71
         callee_saved_preferred_regs = r48 r49
@@ -498,13 +498,13 @@ bank1 {
     class5: class4 {
         allows_spillslots
         spill_cost = 0
-        registers = r72 r73 r74 r75 r76 r77 r78 r79
+        members = r72 r73 r74 r75 r76 r77 r78 r79
     }
 
     ; Float registers
     class6: class4 {
         spill_cost = 1
-        registers = r40 r41 r42 r43 r44 r45 r46 r47 r48 r49 r50 r51 r52 r53 r54 r55 r56 r57 r58 r59 r60 r61 r62 r63 r64 r65 r66 r67 r68 r69 r70 r71
+        members = r40 r41 r42 r43 r44 r45 r46 r47 r48 r49 r50 r51 r52 r53 r54 r55 r56 r57 r58 r59 r60 r61 r62 r63 r64 r65 r66 r67 r68 r69 r70 r71
         preferred_regs = r50 r51 r52 r53 r54 r55
         non_preferred_regs = r40 r41 r42 r43 r44 r45 r46 r47 r56 r57 r68 r69 r70 r71
         callee_saved_preferred_regs = r48 r49
@@ -522,7 +522,7 @@ bank2 {
     class7 {
         allows_spillslots
         spill_cost = 0.5
-        registers = r80 r81 r82 r83 r84 r85 r86 r87 r88 r89 r90 r91 r92 r93 r94 r95 r96 r97 r98 r99 r100 r101 r102 r103 r104 r105 r106 r107 r108 r109 r110 r111 r112 r113 r114 r115 r116 r117 r118 r119
+        members = r80 r81 r82 r83 r84 r85 r86 r87 r88 r89 r90 r91 r92 r93 r94 r95 r96 r97 r98 r99 r100 r101 r102 r103 r104 r105 r106 r107 r108 r109 r110 r111 r112 r113 r114 r115 r116 r117 r118 r119
         preferred_regs = r80 r81 r82 r83 r84 r85 r86 r87 r88 r89 r90 r91 r92 r93 r94 r95 r96 r97 r98 r99 r100 r101 r102 r103 r104 r105 r106 r107 r108 r109 r110 r111
     }
 
@@ -530,13 +530,13 @@ bank2 {
     class8: class7 {
         allows_spillslots
         spill_cost = 0
-        registers = r112 r113 r114 r115 r116 r117 r118 r119
+        members = r112 r113 r114 r115 r116 r117 r118 r119
     }
 
     ; Vector registers LMUL=1
     class9: class7 {
         spill_cost = 1
-        registers = r80 r81 r82 r83 r84 r85 r86 r87 r88 r89 r90 r91 r92 r93 r94 r95 r96 r97 r98 r99 r100 r101 r102 r103 r104 r105 r106 r107 r108 r109 r110 r111
+        members = r80 r81 r82 r83 r84 r85 r86 r87 r88 r89 r90 r91 r92 r93 r94 r95 r96 r97 r98 r99 r100 r101 r102 r103 r104 r105 r106 r107 r108 r109 r110 r111
         preferred_regs = r80 r81 r82 r83 r84 r85 r86 r87 r88 r89 r90 r91 r92 r93 r94 r95 r96 r97 r98 r99 r100 r101 r102 r103 r104 r105 r106 r107 r108 r109 r110 r111
     }
 
@@ -544,7 +544,7 @@ bank2 {
     class10: class9 {
         group_size = 2
         spill_cost = 1
-        registers = rg13 rg14 rg15 rg16 rg17 rg18 rg19 rg20 rg21 rg22 rg23 rg24 rg25 rg26 rg27 rg28 rg29 rg30 rg31 rg32 rg33 rg34 rg35 rg36 rg37 rg38 rg39 rg40 rg41 rg42 rg43
+        members = rg13 rg14 rg15 rg16 rg17 rg18 rg19 rg20 rg21 rg22 rg23 rg24 rg25 rg26 rg27 rg28 rg29 rg30 rg31 rg32 rg33 rg34 rg35 rg36 rg37 rg38 rg39 rg40 rg41 rg42 rg43
         preferred_regs = rg13 rg14 rg15 rg16 rg17 rg18 rg19 rg20 rg21 rg22 rg23 rg24 rg25 rg26 rg27 rg28 rg29 rg30 rg31 rg32 rg33 rg34 rg35 rg36 rg37 rg38 rg39 rg40 rg41 rg42 rg43
     }
 
@@ -552,7 +552,7 @@ bank2 {
     class11: class9 {
         group_size = 3
         spill_cost = 1
-        registers = rg44 rg45 rg46 rg47 rg48 rg49 rg50 rg51 rg52 rg53 rg54 rg55 rg56 rg57 rg58 rg59 rg60 rg61 rg62 rg63 rg64 rg65 rg66 rg67 rg68 rg69 rg70 rg71 rg72 rg73
+        members = rg44 rg45 rg46 rg47 rg48 rg49 rg50 rg51 rg52 rg53 rg54 rg55 rg56 rg57 rg58 rg59 rg60 rg61 rg62 rg63 rg64 rg65 rg66 rg67 rg68 rg69 rg70 rg71 rg72 rg73
         preferred_regs = rg44 rg45 rg46 rg47 rg48 rg49 rg50 rg51 rg52 rg53 rg54 rg55 rg56 rg57 rg58 rg59 rg60 rg61 rg62 rg63 rg64 rg65 rg66 rg67 rg68 rg69 rg70 rg71 rg72 rg73
     }
 
@@ -560,7 +560,7 @@ bank2 {
     class12: class9 {
         group_size = 4
         spill_cost = 1
-        registers = rg74 rg75 rg76 rg77 rg78 rg79 rg80 rg81 rg82 rg83 rg84 rg85 rg86 rg87 rg88 rg89 rg90 rg91 rg92 rg93 rg94 rg95 rg96 rg97 rg98 rg99 rg100 rg101 rg102
+        members = rg74 rg75 rg76 rg77 rg78 rg79 rg80 rg81 rg82 rg83 rg84 rg85 rg86 rg87 rg88 rg89 rg90 rg91 rg92 rg93 rg94 rg95 rg96 rg97 rg98 rg99 rg100 rg101 rg102
         preferred_regs = rg74 rg75 rg76 rg77 rg78 rg79 rg80 rg81 rg82 rg83 rg84 rg85 rg86 rg87 rg88 rg89 rg90 rg91 rg92 rg93 rg94 rg95 rg96 rg97 rg98 rg99 rg100 rg101 rg102
     }
 
@@ -568,7 +568,7 @@ bank2 {
     class13: class9 {
         group_size = 5
         spill_cost = 1
-        registers = rg103 rg104 rg105 rg106 rg107 rg108 rg109 rg110 rg111 rg112 rg113 rg114 rg115 rg116 rg117 rg118 rg119 rg120 rg121 rg122 rg123 rg124 rg125 rg126 rg127 rg128 rg129 rg130
+        members = rg103 rg104 rg105 rg106 rg107 rg108 rg109 rg110 rg111 rg112 rg113 rg114 rg115 rg116 rg117 rg118 rg119 rg120 rg121 rg122 rg123 rg124 rg125 rg126 rg127 rg128 rg129 rg130
         preferred_regs = rg103 rg104 rg105 rg106 rg107 rg108 rg109 rg110 rg111 rg112 rg113 rg114 rg115 rg116 rg117 rg118 rg119 rg120 rg121 rg122 rg123 rg124 rg125 rg126 rg127 rg128 rg129 rg130
     }
 
@@ -576,7 +576,7 @@ bank2 {
     class14: class9 {
         group_size = 6
         spill_cost = 1
-        registers = rg131 rg132 rg133 rg134 rg135 rg136 rg137 rg138 rg139 rg140 rg141 rg142 rg143 rg144 rg145 rg146 rg147 rg148 rg149 rg150 rg151 rg152 rg153 rg154 rg155 rg156 rg157
+        members = rg131 rg132 rg133 rg134 rg135 rg136 rg137 rg138 rg139 rg140 rg141 rg142 rg143 rg144 rg145 rg146 rg147 rg148 rg149 rg150 rg151 rg152 rg153 rg154 rg155 rg156 rg157
         preferred_regs = rg131 rg132 rg133 rg134 rg135 rg136 rg137 rg138 rg139 rg140 rg141 rg142 rg143 rg144 rg145 rg146 rg147 rg148 rg149 rg150 rg151 rg152 rg153 rg154 rg155 rg156 rg157
     }
 
@@ -584,7 +584,7 @@ bank2 {
     class15: class9 {
         group_size = 7
         spill_cost = 1
-        registers = rg158 rg159 rg160 rg161 rg162 rg163 rg164 rg165 rg166 rg167 rg168 rg169 rg170 rg171 rg172 rg173 rg174 rg175 rg176 rg177 rg178 rg179 rg180 rg181 rg182 rg183
+        members = rg158 rg159 rg160 rg161 rg162 rg163 rg164 rg165 rg166 rg167 rg168 rg169 rg170 rg171 rg172 rg173 rg174 rg175 rg176 rg177 rg178 rg179 rg180 rg181 rg182 rg183
         preferred_regs = rg158 rg159 rg160 rg161 rg162 rg163 rg164 rg165 rg166 rg167 rg168 rg169 rg170 rg171 rg172 rg173 rg174 rg175 rg176 rg177 rg178 rg179 rg180 rg181 rg182 rg183
     }
 
@@ -592,7 +592,7 @@ bank2 {
     class16: class9 {
         group_size = 8
         spill_cost = 1
-        registers = rg184 rg185 rg186 rg187 rg188 rg189 rg190 rg191 rg192 rg193 rg194 rg195 rg196 rg197 rg198 rg199 rg200 rg201 rg202 rg203 rg204 rg205 rg206 rg207 rg208
+        members = rg184 rg185 rg186 rg187 rg188 rg189 rg190 rg191 rg192 rg193 rg194 rg195 rg196 rg197 rg198 rg199 rg200 rg201 rg202 rg203 rg204 rg205 rg206 rg207 rg208
         preferred_regs = rg184 rg185 rg186 rg187 rg188 rg189 rg190 rg191 rg192 rg193 rg194 rg195 rg196 rg197 rg198 rg199 rg200 rg201 rg202 rg203 rg204 rg205 rg206 rg207 rg208
     }
 }
@@ -607,7 +607,7 @@ bank3 {
     class17 {
         allows_spillslots
         spill_cost = 0.5
-        registers = r120 r121 r122 r123 r124 r125 r126 r127 r128 r129 r130 r131 r132 r133 r134 r135 r136 r137 r138 r139 r140 r141 r142 r143
+        members = r120 r121 r122 r123 r124 r125 r126 r127 r128 r129 r130 r131 r132 r133 r134 r135 r136 r137 r138 r139 r140 r141 r142 r143
         preferred_regs = r120 r121 r122 r123 r124 r125 r126 r127 r128 r129 r130 r131 r132 r133 r134 r135
     }
 
@@ -615,13 +615,13 @@ bank3 {
     class18: class17 {
         allows_spillslots
         spill_cost = 0
-        registers = r136 r137 r138 r139 r140 r141 r142 r143
+        members = r136 r137 r138 r139 r140 r141 r142 r143
     }
 
     ; Vector registers LMUL=2
     class19: class17 {
         spill_cost = 1
-        registers = r120 r121 r122 r123 r124 r125 r126 r127 r128 r129 r130 r131 r132 r133 r134 r135
+        members = r120 r121 r122 r123 r124 r125 r126 r127 r128 r129 r130 r131 r132 r133 r134 r135
         preferred_regs = r120 r121 r122 r123 r124 r125 r126 r127 r128 r129 r130 r131 r132 r133 r134 r135
     }
 
@@ -629,7 +629,7 @@ bank3 {
     class20: class19 {
         group_size = 2
         spill_cost = 1
-        registers = rg209 rg210 rg211 rg212 rg213 rg214 rg215 rg216 rg217 rg218 rg219 rg220 rg221 rg222 rg223
+        members = rg209 rg210 rg211 rg212 rg213 rg214 rg215 rg216 rg217 rg218 rg219 rg220 rg221 rg222 rg223
         preferred_regs = rg209 rg210 rg211 rg212 rg213 rg214 rg215 rg216 rg217 rg218 rg219 rg220 rg221 rg222 rg223
     }
 
@@ -637,7 +637,7 @@ bank3 {
     class21: class19 {
         group_size = 3
         spill_cost = 1
-        registers = rg224 rg225 rg226 rg227 rg228 rg229 rg230 rg231 rg232 rg233 rg234 rg235 rg236 rg237
+        members = rg224 rg225 rg226 rg227 rg228 rg229 rg230 rg231 rg232 rg233 rg234 rg235 rg236 rg237
         preferred_regs = rg224 rg225 rg226 rg227 rg228 rg229 rg230 rg231 rg232 rg233 rg234 rg235 rg236 rg237
     }
 
@@ -645,7 +645,7 @@ bank3 {
     class22: class19 {
         group_size = 4
         spill_cost = 1
-        registers = rg238 rg239 rg240 rg241 rg242 rg243 rg244 rg245 rg246 rg247 rg248 rg249 rg250
+        members = rg238 rg239 rg240 rg241 rg242 rg243 rg244 rg245 rg246 rg247 rg248 rg249 rg250
         preferred_regs = rg238 rg239 rg240 rg241 rg242 rg243 rg244 rg245 rg246 rg247 rg248 rg249 rg250
     }
 }
@@ -660,7 +660,7 @@ bank4 {
     class23 {
         allows_spillslots
         spill_cost = 0.5
-        registers = r144 r145 r146 r147 r148 r149 r150 r151 r152 r153 r154 r155 r156 r157 r158 r159
+        members = r144 r145 r146 r147 r148 r149 r150 r151 r152 r153 r154 r155 r156 r157 r158 r159
         preferred_regs = r144 r145 r146 r147 r148 r149 r150 r151
     }
 
@@ -668,13 +668,13 @@ bank4 {
     class24: class23 {
         allows_spillslots
         spill_cost = 0
-        registers = r152 r153 r154 r155 r156 r157 r158 r159
+        members = r152 r153 r154 r155 r156 r157 r158 r159
     }
 
     ; Vector registers LMUL=4
     class25: class23 {
         spill_cost = 1
-        registers = r144 r145 r146 r147 r148 r149 r150 r151
+        members = r144 r145 r146 r147 r148 r149 r150 r151
         preferred_regs = r144 r145 r146 r147 r148 r149 r150 r151
     }
 
@@ -682,7 +682,7 @@ bank4 {
     class26: class25 {
         group_size = 2
         spill_cost = 1
-        registers = rg251 rg252 rg253 rg254 rg255 rg256 rg257
+        members = rg251 rg252 rg253 rg254 rg255 rg256 rg257
         preferred_regs = rg251 rg252 rg253 rg254 rg255 rg256 rg257
     }
 }
@@ -697,7 +697,7 @@ bank5 {
     class27 {
         allows_spillslots
         spill_cost = 0.5
-        registers = r160 r161 r162 r163 r164 r165 r166 r167 r168 r169 r170 r171
+        members = r160 r161 r162 r163 r164 r165 r166 r167 r168 r169 r170 r171
         preferred_regs = r160 r161 r162 r163
     }
 
@@ -705,13 +705,13 @@ bank5 {
     class28: class27 {
         allows_spillslots
         spill_cost = 0
-        registers = r164 r165 r166 r167 r168 r169 r170 r171
+        members = r164 r165 r166 r167 r168 r169 r170 r171
     }
 
     ; Vector registers LMUL=8
     class29: class27 {
         spill_cost = 1
-        registers = r160 r161 r162 r163
+        members = r160 r161 r162 r163
         preferred_regs = r160 r161 r162 r163
     }
 }

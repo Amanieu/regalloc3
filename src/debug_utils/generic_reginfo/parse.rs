@@ -11,8 +11,7 @@ use pest_derive::Parser;
 use super::{GenericRegInfo, PhysRegData, RegBankData, RegClassData, RegGroupData};
 use crate::entity::{EntityRef, PrimaryMap, SecondaryMap};
 use crate::reginfo::{
-    PhysReg, RegBank, RegClass, RegClassSet, RegGroup, RegOrRegGroup, RegOrRegGroupSet,
-    SpillSlotSize,
+    PhysReg, PhysRegSet, RegBank, RegClass, RegClassSet, RegGroup, RegGroupSet, SpillSlotSize,
 };
 
 #[derive(Parser)]
@@ -80,12 +79,15 @@ fn parse_entity_list<T: EntityRef>(pair: Pair<'_, Rule>) -> Result<Vec<T>> {
     Ok(out)
 }
 
-fn parse_reg_group_list(
-    pair: Pair<'_, Rule>,
-    is_group: &mut Option<bool>,
-) -> Result<Vec<RegOrRegGroup>> {
+enum RegList {
+    Regs(Vec<PhysReg>),
+    Groups(Vec<RegGroup>),
+    Empty,
+}
+
+fn parse_reg_group_list(pair: Pair<'_, Rule>, is_group: &mut Option<bool>) -> Result<RegList> {
     let Some(list) = pair.into_inner().next() else {
-        return Ok(vec![]);
+        return Ok(RegList::Empty);
     };
     Ok(match list.as_rule() {
         Rule::reg_list => {
@@ -96,10 +98,7 @@ fn parse_reg_group_list(
                 ))?;
             }
             *is_group = Some(false);
-            parse_entity_list(list)?
-                .into_iter()
-                .map(RegOrRegGroup::single)
-                .collect()
+            RegList::Regs(parse_entity_list(list)?.into_iter().collect())
         }
         Rule::reg_group_list => {
             if *is_group == Some(false) {
@@ -109,10 +108,7 @@ fn parse_reg_group_list(
                 ))?;
             }
             *is_group = Some(true);
-            parse_entity_list(list)?
-                .into_iter()
-                .map(RegOrRegGroup::multi)
-                .collect()
+            RegList::Groups(parse_entity_list(list)?.into_iter().collect())
         }
         _ => unreachable!(),
     })
@@ -158,7 +154,7 @@ fn parse_class_def(
     let mut group_size = None;
     let mut includes_spillslots = false;
     let mut spill_cost = None;
-    let mut registers = None;
+    let mut members = None;
     let mut preferred_regs = None;
     let mut non_preferred_regs = None;
     let mut callee_saved_preferred_regs = None;
@@ -195,12 +191,12 @@ fn parse_class_def(
                 let [float] = extract(pair, [Rule::float]);
                 spill_cost = Some(parse_number(float)?);
             }
-            Rule::class_registers => {
-                if registers.is_some() {
+            Rule::class_members => {
+                if members.is_some() {
                     Err(custom_error(pair.as_span(), "duplicate attribute"))?;
                 }
                 let [reg_or_reg_group_list] = extract(pair, [Rule::reg_or_reg_group_list]);
-                registers = Some(parse_reg_group_list(reg_or_reg_group_list, &mut is_group)?);
+                members = Some(parse_reg_group_list(reg_or_reg_group_list, &mut is_group)?);
             }
             Rule::preferred_regs => {
                 if preferred_regs.is_some() {
@@ -239,45 +235,56 @@ fn parse_class_def(
     let Some(spill_cost) = spill_cost else {
         Err(custom_error(span, "missing spill_cost attribute"))?
     };
-    let Some(registers) = registers else {
-        Err(custom_error(span, "missing registers attribute"))?
+    let Some(members) = members else {
+        Err(custom_error(span, "missing members attribute"))?
     };
     let group_size = group_size.unwrap_or(1);
     if let Some(is_group) = is_group {
         if is_group != (group_size != 1) {
-            Err(custom_error(span, "group_size doesn't match registers"))?;
+            Err(custom_error(span, "group_size doesn't match members"))?;
         }
         if !is_group {
-            for &reg in &registers {
-                if regs[reg.as_single()]
-                    .bank
-                    .is_some_and(|reg_bank| reg_bank != bank)
-                {
-                    Err(custom_error(span, "register used with different banks"))?;
+            if let RegList::Regs(members) = &members {
+                for &reg in members {
+                    if regs[reg].bank.is_some_and(|reg_bank| reg_bank != bank) {
+                        Err(custom_error(span, "register used with different banks"))?;
+                    }
+                    regs[reg].bank = Some(bank);
                 }
-                regs[reg.as_single()].bank = Some(bank);
             }
         }
     };
-    let mut members = RegOrRegGroupSet::new();
-    for &reg in &registers {
-        members.insert(reg);
+    let mut regs = PhysRegSet::new();
+    let mut groups = RegGroupSet::new();
+    match members {
+        RegList::Regs(list) => regs.extend(list.iter().copied()),
+        RegList::Groups(list) => groups.extend(list.iter().copied()),
+        RegList::Empty => {}
     }
-    let preferred_regs = preferred_regs.unwrap_or(vec![]);
-    let non_preferred_regs = non_preferred_regs.unwrap_or(vec![]);
-    let callee_saved_preferred_regs = callee_saved_preferred_regs.unwrap_or(vec![]);
-    let callee_saved_non_preferred_regs = callee_saved_non_preferred_regs.unwrap_or(vec![]);
+    let map_single = |list: &Option<RegList>| match list {
+        Some(RegList::Regs(regs)) => regs.clone(),
+        _ => vec![],
+    };
+    let map_group = |list: &Option<RegList>| match list {
+        Some(RegList::Groups(groups)) => groups.clone(),
+        _ => vec![],
+    };
     classes.push(RegClassData {
         bank,
         includes_spillslots,
         spill_cost,
         group_size,
-        members,
+        members: regs,
+        group_members: groups,
         sub_classes: RegClassSet::new(),
-        preferred_regs,
-        non_preferred_regs,
-        callee_saved_preferred_regs,
-        callee_saved_non_preferred_regs,
+        preferred_regs: map_single(&preferred_regs),
+        non_preferred_regs: map_single(&non_preferred_regs),
+        callee_saved_preferred_regs: map_single(&callee_saved_preferred_regs),
+        callee_saved_non_preferred_regs: map_single(&callee_saved_non_preferred_regs),
+        group_preferred_regs: map_group(&preferred_regs),
+        group_non_preferred_regs: map_group(&non_preferred_regs),
+        group_callee_saved_preferred_regs: map_group(&callee_saved_preferred_regs),
+        group_callee_saved_non_preferred_regs: map_group(&callee_saved_non_preferred_regs),
     });
     Ok(())
 }

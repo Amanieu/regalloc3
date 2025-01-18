@@ -6,7 +6,7 @@ use core::fmt;
 
 use crate::function::{Block, Function, OperandConstraint, OperandKind, RematCost, TerminatorKind};
 use crate::output::{Allocation, AllocationKind, Output, OutputInst};
-use crate::reginfo::{AllocationOrderSet, RegClass, RegClassSet, RegInfo, RegOrRegGroup};
+use crate::reginfo::{AllocationOrderSet, RegClass, RegClassSet, RegInfo};
 
 /// Helper type to display a comma-separated list of displayable values.
 pub(crate) struct DisplayIter<T> {
@@ -272,86 +272,42 @@ impl<R: RegInfo> fmt::Display for DisplayRegInfo<'_, R> {
                 if group_size == 1 {
                     writeln!(
                         f,
-                        "        registers = {}",
-                        display_iter(
-                            self.0
-                                .class_members(class)
-                                .iter()
-                                .map(RegOrRegGroup::as_single),
-                            ""
-                        )
+                        "        members = {}",
+                        display_iter(self.0.class_members(class).iter(), "")
                     )?;
                 } else {
                     writeln!(
                         f,
-                        "        registers = {}",
-                        display_iter(
-                            self.0
-                                .class_members(class)
-                                .iter()
-                                .map(RegOrRegGroup::as_multi),
-                            ""
-                        )
+                        "        members = {}",
+                        display_iter(self.0.class_group_members(class).iter(), "")
                     )?;
                 }
 
                 // Write the allocation order.
-                fn write_order(
-                    f: &mut fmt::Formatter<'_>,
-                    group_size: usize,
-                    name: &str,
-                    order: &[RegOrRegGroup],
-                ) -> fmt::Result {
-                    if order.is_empty() {
-                        return Ok(());
-                    }
+                let mut write_order = |name, set| {
                     if group_size == 1 {
-                        writeln!(
-                            f,
-                            "        {name} = {}",
-                            display_iter(
-                                order.iter().map(|reg_or_group| reg_or_group.as_single()),
-                                ""
-                            )
-                        )
+                        let order = self.0.allocation_order(class, set);
+                        if order.is_empty() {
+                            return Ok(());
+                        }
+                        writeln!(f, "        {name} = {}", display_iter(order.iter(), ""))
                     } else {
-                        writeln!(
-                            f,
-                            "        {name} = {}",
-                            display_iter(
-                                order.iter().map(|reg_or_group| reg_or_group.as_multi()),
-                                ""
-                            )
-                        )
+                        let order = self.0.group_allocation_order(class, set);
+                        if order.is_empty() {
+                            return Ok(());
+                        }
+                        writeln!(f, "        {name} = {}", display_iter(order.iter(), ""))
                     }
-                }
+                };
+                write_order("preferred_regs", AllocationOrderSet::Preferred)?;
+                write_order("non_preferred_regs", AllocationOrderSet::NonPreferred)?;
                 write_order(
-                    f,
-                    group_size,
-                    "preferred_regs",
-                    self.0
-                        .allocation_order(class, AllocationOrderSet::Preferred),
-                )?;
-                write_order(
-                    f,
-                    group_size,
-                    "non_preferred_regs",
-                    self.0
-                        .allocation_order(class, AllocationOrderSet::NonPreferred),
-                )?;
-                write_order(
-                    f,
-                    group_size,
                     "callee_saved_preferred_regs",
-                    self.0
-                        .allocation_order(class, AllocationOrderSet::CalleeSavedPreferred),
+                    AllocationOrderSet::CalleeSavedPreferred,
                 )?;
                 write_order(
-                    f,
-                    group_size,
                     "callee_saved_non_preferred_regs",
-                    self.0
-                        .allocation_order(class, AllocationOrderSet::CalleeSavedNonPreferred),
+                    AllocationOrderSet::CalleeSavedNonPreferred,
                 )?;
 
                 writeln!(f, "    }}")?;

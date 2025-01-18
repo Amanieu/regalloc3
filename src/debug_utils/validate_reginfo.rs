@@ -6,9 +6,9 @@ use anyhow::{bail, ensure, Result};
 
 use crate::entity::SecondaryMap;
 use crate::reginfo::{
-    AllocationOrderSet, PhysReg, PhysRegSet, RegBank, RegClass, RegGroup, RegInfo, RegOrRegGroup,
-    RegUnit, RegUnitSet, MAX_GROUP_SIZE, MAX_PHYSREGS, MAX_REG_BANKS, MAX_REG_CLASSES,
-    MAX_REG_GROUPS, MAX_REG_UNITS, MAX_UNITS_PER_REG,
+    AllocationOrderSet, PhysReg, PhysRegSet, RegBank, RegClass, RegGroup, RegInfo, RegUnit,
+    RegUnitSet, MAX_GROUP_SIZE, MAX_PHYSREGS, MAX_REG_BANKS, MAX_REG_CLASSES, MAX_REG_GROUPS,
+    MAX_REG_UNITS, MAX_UNITS_PER_REG,
 };
 
 /// Checks `reginfo` to ensure it satisfies all of the pre-conditions required
@@ -129,9 +129,7 @@ impl<R: RegInfo> Context<'_, R> {
             if self.reginfo.bank_for_reg(reg) == Some(bank) {
                 empty = false;
                 ensure!(
-                    self.reginfo
-                        .class_members(top_level_class)
-                        .contains(RegOrRegGroup::single(reg)),
+                    self.reginfo.class_members(top_level_class).contains(reg),
                     "{bank}: {reg} not in top-level class {top_level_class}"
                 );
             }
@@ -140,7 +138,6 @@ impl<R: RegInfo> Context<'_, R> {
 
         // Check stack_to_stack_class
         for reg in &self.reginfo.class_members(stack_to_stack_class) {
-            let reg = reg.as_single();
             ensure!(
                 !self.reginfo.is_memory(reg),
                 "{bank}: {reg} in stack-to-stack {stack_to_stack_class} cannot be in memory"
@@ -170,12 +167,7 @@ impl<R: RegInfo> Context<'_, R> {
 
         if group_size != 1 {
             let mut regs_per_index = [PhysRegSet::new(); MAX_GROUP_SIZE];
-            for group in self
-                .reginfo
-                .class_members(class)
-                .iter()
-                .map(RegOrRegGroup::as_multi)
-            {
+            for group in &self.reginfo.class_group_members(class) {
                 // Check that class members have the same group size as the class.
                 let members = self.reginfo.reg_group_members(group);
                 ensure!(
@@ -209,12 +201,7 @@ impl<R: RegInfo> Context<'_, R> {
                 }
             }
         } else {
-            for reg in self
-                .reginfo
-                .class_members(class)
-                .iter()
-                .map(RegOrRegGroup::as_single)
-            {
+            for reg in &self.reginfo.class_members(class) {
                 // Check that class members are in the same bank as the class.
                 ensure!(
                     self.reginfo.bank_for_reg(reg) == Some(bank),
@@ -223,28 +210,55 @@ impl<R: RegInfo> Context<'_, R> {
             }
         }
 
-        // Check that the allocation isn't empty if spillslot are not allowed.
-        if !self.reginfo.class_includes_spillslots(class) {
+        // Check that the allocation order isn't empty if spillslot are not
+        // allowed or if this is a group register class.
+        if group_size == 1 {
+            if !self.reginfo.class_includes_spillslots(class) {
+                ensure!(
+                    AllocationOrderSet::each()
+                        .any(|set| !self.reginfo.allocation_order(class, set).is_empty()),
+                    "{class} cannot have an empty allocation order unless it allows spillslots"
+                );
+            }
             ensure!(
                 AllocationOrderSet::each()
-                    .any(|set| !self.reginfo.allocation_order(class, set).is_empty()),
-                "{class} cannot have an empty allocation order unless it allows spillslots"
+                    .all(|set| self.reginfo.group_allocation_order(class, set).is_empty()),
+                "{class}: Non-group class cannot have a group allocation order"
+            );
+        } else {
+            ensure!(
+                AllocationOrderSet::each()
+                    .any(|set| !self.reginfo.group_allocation_order(class, set).is_empty()),
+                "{class}: Group class cannot have an empty allocation order"
+            );
+            ensure!(
+                AllocationOrderSet::each()
+                    .all(|set| self.reginfo.allocation_order(class, set).is_empty()),
+                "{class}: Non-group class cannot have a non-group allocation order"
             );
         }
 
         // Check that the allocation order only contains class members.
-        for &reg in
-            AllocationOrderSet::each().flat_map(|set| self.reginfo.allocation_order(class, set))
-        {
-            if group_size != 1 {
-                self.check_entity(Entity::RegGroup(reg.as_multi()))?;
-            } else {
-                self.check_entity(Entity::PhysReg(reg.as_single()))?;
+        if group_size == 1 {
+            for &reg in
+                AllocationOrderSet::each().flat_map(|set| self.reginfo.allocation_order(class, set))
+            {
+                self.check_entity(Entity::PhysReg(reg))?;
+                ensure!(
+                    self.reginfo.class_members(class).contains(reg),
+                    "{class}: Allocation order contains {reg} which is outside class"
+                );
             }
-            ensure!(
-                self.reginfo.class_members(class).contains(reg),
-                "{class}: Allocation order contains {reg} which is outside class"
-            );
+        } else {
+            for &group in AllocationOrderSet::each()
+                .flat_map(|set| self.reginfo.group_allocation_order(class, set))
+            {
+                self.check_entity(Entity::RegGroup(group))?;
+                ensure!(
+                    self.reginfo.class_group_members(class).contains(group),
+                    "{class}: Allocation order contains {group} which is outside class"
+                );
+            }
         }
 
         // Check subclasses
@@ -274,17 +288,10 @@ impl<R: RegInfo> Context<'_, R> {
             }
 
             if group_size == 1 && self.reginfo.class_group_size(subclass) > 1 {
-                for group in self
-                    .reginfo
-                    .class_members(subclass)
-                    .iter()
-                    .map(RegOrRegGroup::as_multi)
-                {
+                for group in &self.reginfo.class_group_members(subclass) {
                     for &member in self.reginfo.reg_group_members(group) {
                         ensure!(
-                            self.reginfo
-                                .class_members(class)
-                                .contains(RegOrRegGroup::single(member)),
+                            self.reginfo.class_members(class).contains(member),
                             "Superclass {class} of {subclass} doesn't contain {member} (member of \
                              {group})"
                         );

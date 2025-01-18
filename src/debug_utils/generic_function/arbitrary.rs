@@ -174,7 +174,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
                     || reginfo
                         .class_members(class)
                         .iter()
-                        .all(|reg| !reginfo.is_memory(reg.as_single())))
+                        .all(|reg| !reginfo.is_memory(reg)))
             {
                 remat_class_per_bank[reginfo.bank_for_class(class)].push(class);
             }

@@ -158,7 +158,7 @@ impl RegInfo {
                     writeln!(f, "        allows_spillslots")?;
                 }
                 writeln!(f, "        spill_cost = {}", classdata.spill_cost)?;
-                writeln!(f, "        registers = {}", classdata.members)?;
+                writeln!(f, "        members = {}", classdata.members)?;
                 if !classdata.preferred_regs.is_empty() {
                     writeln!(f, "        preferred_regs = {}", classdata.preferred_regs)?;
                 }

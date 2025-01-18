@@ -705,7 +705,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 for reg in &self.reginfo.class_members(class) {
                     ensure!(
                         self.reginfo.class_includes_spillslots(class)
-                            || !self.reginfo.is_memory(reg.as_single()),
+                            || !self.reginfo.is_memory(reg),
                         "{value} cannot be rematerialized into {class} which has in-memory \
                          members but doesn't include spill slots"
                     );

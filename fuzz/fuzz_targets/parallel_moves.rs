@@ -15,11 +15,10 @@ use regalloc3::function::{
 use regalloc3::output::{Allocation, AllocationKind, SpillSlot};
 use regalloc3::parallel_moves::ParallelMoves;
 use regalloc3::reginfo::{
-    PhysReg, RegBank, RegClass, RegInfo, RegOrRegGroup, RegUnit, RegUnitSet, SpillSlotSize,
-    MAX_REG_UNITS,
+    PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet, SpillSlotSize, MAX_REG_UNITS,
 };
 
-/// Alternate between a  simple register description with 2 banks that overlap,
+/// Alternate between a simple register description with 2 banks that overlap,
 /// and an arbitrary register description.
 fn reginfo(u: &mut Unstructured) -> Result<GenericRegInfo> {
     static REGINFO: OnceLock<GenericRegInfo> = OnceLock::new();
@@ -58,12 +57,12 @@ bank0 {
     class0 {
         allows_spillslots
         spill_cost = 1
-        registers = r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11
+        members = r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11
     }
 
     class1: class0 {
         spill_cost = 1
-        registers = r0 r1 r2 r3 r4 r5 r6 r7
+        members = r0 r1 r2 r3 r4 r5 r6 r7
         preferred_regs = r0 r1 r2 r3 r4 r5 r6 r7
     }
 }
@@ -76,12 +75,12 @@ bank1 {
     class2 {
         allows_spillslots
         spill_cost = 1
-        registers = r12 r13 r14 r15 r16 r17 r18 r19
+        members = r12 r13 r14 r15 r16 r17 r18 r19
     }
 
     class3: class2 {
         spill_cost = 1
-        registers = r12 r13 r14 r15
+        members = r12 r13 r14 r15
         preferred_regs = r12 r13 r14 r15
     }
 }
@@ -170,7 +169,7 @@ impl Arbitrary<'_> for TestCase {
                                 || reginfo
                                     .class_members(class)
                                     .iter()
-                                    .all(|reg| !reginfo.is_memory(reg.as_single())))
+                                    .all(|reg| !reginfo.is_memory(reg)))
                     })
                     .collect();
                 if remat_classes.is_empty() {
@@ -535,10 +534,7 @@ fuzz_target!(|t: TestCase| {
             };
             match edit.to.unwrap().kind() {
                 AllocationKind::PhysReg(reg) => {
-                    assert!(t
-                        .reginfo
-                        .class_members(class)
-                        .contains(RegOrRegGroup::single(reg)));
+                    assert!(t.reginfo.class_members(class).contains(reg));
                     for &unit in t.reginfo.reg_units(reg) {
                         unit_values[unit] = Some(value);
                     }

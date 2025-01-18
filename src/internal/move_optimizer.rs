@@ -849,7 +849,7 @@ impl StateTracker {
                     }
                     if let OperandConstraint::Class(class) = op.constraint() {
                         if let Some(&regs_with_value) = self.value_regs.get(value) {
-                            let class_members = reginfo.class_members(class).map_index();
+                            let class_members = reginfo.class_members(class);
                             if let Some(reg) = (class_members & regs_with_value)
                                 .iter()
                                 .find(|&reg| !reginfo.is_memory(reg))

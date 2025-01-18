@@ -27,11 +27,12 @@ use core::fmt;
 use ordered_float::OrderedFloat;
 
 use super::AbstractVirtRegGroup;
+use super::RegOrRegGroup;
 use crate::entity::SparseMap;
 use crate::internal::hints::Hints;
 use crate::internal::reg_matrix::RegMatrix;
 use crate::internal::virt_regs::{VirtReg, VirtRegs};
-use crate::reginfo::{AllocationOrderSet, PhysReg, RegClass, RegInfo, RegOrRegGroup};
+use crate::reginfo::{AllocationOrderSet, PhysReg, RegClass, RegInfo};
 
 /// Returns a single allocation order from [`RegInfo::allocation_order`] which
 /// combines all [`AllocationOrderSet`]s.
@@ -42,14 +43,13 @@ use crate::reginfo::{AllocationOrderSet, PhysReg, RegClass, RegInfo, RegOrRegGro
 /// `is_reg_used` is a callback which checks if a given register currently has
 /// any live ranges allocated to it. This is used to de-prioritize callee-saved
 /// registers that haven't been allocated yet.
-pub fn combined_allocation_order<'a>(
-    reginfo: &'a impl RegInfo,
-    class: RegClass,
+pub fn combined_allocation_order<'a, T: Copy + 'a>(
+    get_slice: impl Fn(AllocationOrderSet) -> &'a [T] + Copy,
     random_seed: usize,
-    is_reg_used: impl Fn(RegOrRegGroup) -> bool + Copy + 'a,
-) -> impl DoubleEndedIterator<Item = RegOrRegGroup> + 'a {
+    is_reg_used: impl Fn(T) -> bool + Copy + 'a,
+) -> impl DoubleEndedIterator<Item = T> + 'a {
     let iter = move |set| {
-        let slice = reginfo.allocation_order(class, set);
+        let slice = get_slice(set);
         let (a, b) = slice.split_at(random_seed.checked_rem(slice.len()).unwrap_or(0));
         b.iter().copied().chain(a.iter().copied())
     };
@@ -158,9 +158,10 @@ impl AllocationOrder {
         // was pushed back onto the allocation queue, use that.
         if let Some(hint) = hint {
             if !vreg.is_group() {
-                let hint = RegOrRegGroup::single(hint);
                 if reginfo.class_members(class).contains(hint) {
-                    self.candidates.entry(hint).or_insert(0.0);
+                    self.candidates
+                        .entry(RegOrRegGroup::single(hint))
+                        .or_insert(0.0);
                 }
             }
         }
@@ -177,21 +178,36 @@ impl AllocationOrder {
 
         // Add the remaining candidates from the register class's allocation
         // order.
-        for reg in combined_allocation_order(reginfo, class, random_seed, |reg| {
-            if vreg.is_group() {
-                // For groups, check whether *all* regs are already in use
-                // so that using this group doesn't require any new
-                // callee-saved registers to be preserved.
-                reginfo
-                    .reg_group_members(reg.as_multi())
-                    .iter()
-                    .all(|&reg| reg_matrix.is_reg_used(reg, reginfo))
-            } else {
-                reg_matrix.is_reg_used(reg.as_single(), reginfo)
+        if vreg.is_group() {
+            for group in combined_allocation_order(
+                |set| reginfo.group_allocation_order(class, set),
+                random_seed,
+                |group| {
+                    // For groups, check whether *all* regs are already in use
+                    // so that using this group doesn't require any new
+                    // callee-saved registers to be preserved.
+                    reginfo
+                        .reg_group_members(group)
+                        .iter()
+                        .all(|&reg| reg_matrix.is_reg_used(reg, reginfo))
+                },
+            ) {
+                // Insert remaining candidates with a preference weight of 0.
+                self.candidates
+                    .entry(RegOrRegGroup::multi(group))
+                    .or_insert(0.0);
             }
-        }) {
-            // Insert remaining candidates with a preference weight of 0.
-            self.candidates.entry(reg).or_insert(0.0);
+        } else {
+            for reg in combined_allocation_order(
+                |set| reginfo.allocation_order(class, set),
+                random_seed,
+                |reg| reg_matrix.is_reg_used(reg, reginfo),
+            ) {
+                // Insert remaining candidates with a preference weight of 0.
+                self.candidates
+                    .entry(RegOrRegGroup::single(reg))
+                    .or_insert(0.0);
+            }
         }
     }
 
@@ -243,17 +259,12 @@ impl AllocationOrder {
                         else {
                             continue;
                         };
-                        debug_assert!(reginfo
-                            .class_members(class)
-                            .contains(RegOrRegGroup::multi(reg_group)));
+                        debug_assert!(reginfo.class_group_members(class).contains(reg_group));
                         RegOrRegGroup::multi(reg_group)
                     } else {
                         // Ignore preferences that conflict with our register class
                         // constraint.
-                        if !reginfo
-                            .class_members(class)
-                            .contains(RegOrRegGroup::single(hint.reg))
-                        {
+                        if !reginfo.class_members(class).contains(hint.reg) {
                             continue;
                         }
                         RegOrRegGroup::single(hint.reg)

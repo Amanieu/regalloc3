@@ -7,8 +7,8 @@ use arbitrary::{Arbitrary, Result, Unstructured};
 use super::{GenericRegInfo, PhysRegData, RegBankData, RegClassData, RegGroupData};
 use crate::entity::PrimaryMap;
 use crate::reginfo::{
-    PhysReg, RegBank, RegClass, RegClassSet, RegInfo, RegOrRegGroup, RegUnit, SpillSlotSize,
-    MAX_GROUP_SIZE, MAX_REG_UNITS,
+    PhysReg, RegBank, RegClass, RegClassSet, RegGroup, RegGroupSet, RegInfo, RegUnit,
+    SpillSlotSize, MAX_GROUP_SIZE, MAX_REG_UNITS,
 };
 
 /// Configuration options for [`GenericRegInfo::arbitrary_with_config`].
@@ -122,20 +122,24 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
         self.reginfo.regs[regs[0]].is_fixed_stack = false;
 
         // Generate a top-level class.
-        let members: Vec<_> = regs.iter().map(|&reg| RegOrRegGroup::single(reg)).collect();
         let [preferred_regs, non_preferred_regs, callee_saved_preferred_regs, callee_saved_non_preferred_regs] =
-            self.gen_allocation_order(&members, true)?;
+            self.gen_allocation_order(&regs, true)?;
         let top_level_class = RegClassData {
             bank,
             includes_spillslots: true,
             spill_cost: self.spill_cost()?,
             group_size: 1,
-            members: members.into_iter().collect(),
+            members: regs.iter().copied().collect(),
+            group_members: RegGroupSet::new(),
             sub_classes: RegClassSet::from_iter([self.reginfo.classes.next_key()]),
             preferred_regs,
             non_preferred_regs,
             callee_saved_preferred_regs,
             callee_saved_non_preferred_regs,
+            group_preferred_regs: vec![],
+            group_non_preferred_regs: vec![],
+            group_callee_saved_preferred_regs: vec![],
+            group_callee_saved_non_preferred_regs: vec![],
         };
         let top_level_class = self.reginfo.classes.push(top_level_class);
 
@@ -162,11 +166,11 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
     }
 
     /// Generates an allocation order for a register class.
-    fn gen_allocation_order(
+    fn gen_allocation_order<T: Copy>(
         &mut self,
-        members: &[RegOrRegGroup],
+        members: &[T],
         allows_spillslots: bool,
-    ) -> Result<[Vec<RegOrRegGroup>; 4]> {
+    ) -> Result<[Vec<T>; 4]> {
         let mut out = [vec![], vec![], vec![], vec![]];
         for &member in members {
             // 20% chance of omitting from the allocation order, otherwise
@@ -200,23 +204,33 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
         let mut members: Vec<_> = self.reginfo.classes[superclass]
             .members
             .iter()
-            .filter(|reg| !is_stack_to_stack_class || !self.reginfo.is_memory(reg.as_single()))
+            .filter(|&reg| !is_stack_to_stack_class || !self.reginfo.is_memory(reg))
+            .collect();
+        let mut group_members: Vec<_> = self.reginfo.classes[superclass]
+            .group_members
+            .iter()
             .collect();
 
         // Check if we should generate a group subclass from a non-group class.
         let mut group_size = self.reginfo.class_group_size(superclass);
         if group_size == 1 && !is_stack_to_stack_class && self.u.arbitrary()? {
-            group_size = self.u.int_in_range(2..=MAX_GROUP_SIZE)?;
-            if members.len() >= group_size {
-                members = self.gen_groups(group_size, &members)?;
-            } else {
-                group_size = 1;
+            let new_group_size = self.u.int_in_range(2..=MAX_GROUP_SIZE)?;
+            if members.len() >= new_group_size {
+                group_members = self.gen_groups(new_group_size, &members)?;
+                members = vec![];
+                group_size = new_group_size;
             }
         }
 
         // Remove some members at random to make it a proper subclass.
-        while members.len() > 1 && self.u.arbitrary()? {
-            members.swap_remove(self.u.choose_index(members.len())?);
+        if group_size == 1 {
+            while members.len() > 1 && self.u.arbitrary()? {
+                members.swap_remove(self.u.choose_index(members.len())?);
+            }
+        } else {
+            while group_members.len() > 1 && self.u.arbitrary()? {
+                group_members.swap_remove(self.u.choose_index(group_members.len())?);
+            }
         }
 
         let bank = self.reginfo.bank_for_class(superclass);
@@ -225,20 +239,39 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
             && group_size == 1
             && self.reginfo.class_includes_spillslots(superclass)
             && self.u.arbitrary()?;
-        let [preferred_regs, non_preferred_regs, callee_saved_preferred_regs, callee_saved_non_preferred_regs] =
-            self.gen_allocation_order(&members, includes_spillslots)?;
-        let class_data = RegClassData {
+        let mut class_data = RegClassData {
             bank,
             includes_spillslots,
             spill_cost: self.spill_cost()?,
             group_size: group_size as u8,
-            members: members.into_iter().collect(),
+            members: members.iter().copied().collect(),
+            group_members: group_members.iter().copied().collect(),
             sub_classes: RegClassSet::from_iter([class]),
-            preferred_regs,
-            non_preferred_regs,
-            callee_saved_preferred_regs,
-            callee_saved_non_preferred_regs,
+            preferred_regs: vec![],
+            non_preferred_regs: vec![],
+            callee_saved_preferred_regs: vec![],
+            callee_saved_non_preferred_regs: vec![],
+            group_preferred_regs: vec![],
+            group_non_preferred_regs: vec![],
+            group_callee_saved_preferred_regs: vec![],
+            group_callee_saved_non_preferred_regs: vec![],
         };
+
+        if group_size == 1 {
+            [
+                class_data.preferred_regs,
+                class_data.non_preferred_regs,
+                class_data.callee_saved_preferred_regs,
+                class_data.callee_saved_non_preferred_regs,
+            ] = self.gen_allocation_order(&members, includes_spillslots)?;
+        } else {
+            [
+                class_data.group_preferred_regs,
+                class_data.group_non_preferred_regs,
+                class_data.group_callee_saved_preferred_regs,
+                class_data.group_callee_saved_non_preferred_regs,
+            ] = self.gen_allocation_order(&group_members, includes_spillslots)?;
+        }
 
         // Insert as sub-class of all our superclasses.
         for c in self.reginfo.classes() {
@@ -251,11 +284,7 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
     }
 
     /// Creates register groups from the given registers.
-    fn gen_groups(
-        &mut self,
-        group_size: usize,
-        members: &[RegOrRegGroup],
-    ) -> Result<Vec<RegOrRegGroup>> {
+    fn gen_groups(&mut self, group_size: usize, members: &[PhysReg]) -> Result<Vec<RegGroup>> {
         // Start with all members at every group index.
         let mut all = vec![members.to_vec(); group_size];
 
@@ -277,11 +306,9 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
         // Create the register groups
         let mut out = vec![];
         for i in 0..all.len() {
-            let regs = (0..group_size)
-                .map(|group_idx| all[group_idx][i].as_single())
-                .collect();
+            let regs = (0..group_size).map(|group_idx| all[group_idx][i]).collect();
             let group = self.reginfo.groups.push(RegGroupData { regs });
-            out.push(RegOrRegGroup::multi(group));
+            out.push(group);
         }
 
         Ok(out)

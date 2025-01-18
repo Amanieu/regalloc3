@@ -13,9 +13,7 @@ use crate::debug_utils::DisplayOutputInst;
 use crate::entity::{EntitySet, SecondaryMap, SparseMap};
 use crate::function::{Block, Function, Inst, Operand, OperandConstraint, OperandKind, Value};
 use crate::output::{Allocation, AllocationKind, Output, OutputInst, SpillSlot};
-use crate::reginfo::{
-    PhysReg, RegBank, RegClass, RegGroup, RegInfo, RegOrRegGroup, RegUnitSet, MAX_REG_UNITS,
-};
+use crate::reginfo::{PhysReg, RegBank, RegClass, RegGroup, RegInfo, RegUnitSet, MAX_REG_UNITS};
 
 /// Type representing a set of values. A `SmallVec` is used instead of a
 /// `HashSet` for efficiency since sets tend to be small (1-2 elements).
@@ -565,9 +563,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         let reginfo = self.output.reginfo();
         match alloc.kind() {
             AllocationKind::PhysReg(reg) => ensure!(
-                reginfo
-                    .class_members(class)
-                    .contains(RegOrRegGroup::single(reg)),
+                reginfo.class_members(class).contains(reg),
                 "{class} doesn't contain {reg}"
             ),
             AllocationKind::SpillSlot(slot) => {

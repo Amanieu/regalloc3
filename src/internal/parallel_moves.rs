@@ -14,8 +14,7 @@ use crate::function::{Function, RematCost, Value};
 use crate::internal::allocator::combined_allocation_order;
 use crate::output::{Allocation, AllocationKind, SpillSlot};
 use crate::reginfo::{
-    PhysReg, RegBank, RegClass, RegInfo, RegOrRegGroup, RegUnit, RegUnitSet, SpillSlotSize,
-    MAX_REG_UNITS,
+    PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet, SpillSlotSize, MAX_REG_UNITS,
 };
 
 /// Cache for reusing emergency spill slots.
@@ -273,7 +272,7 @@ impl ScratchAllocator {
     ) -> Allocation {
         trace!("Searching for scratch register in {class}");
         for reg in
-            combined_allocation_order(reginfo, class, 0, |_| false).map(RegOrRegGroup::as_single)
+            combined_allocation_order(|set| reginfo.allocation_order(class, set), 0, |_| false)
         {
             if reginfo.reg_units(reg).iter().all(|&unit| {
                 // If we need the scratch register for resolving a cycle,
@@ -321,10 +320,7 @@ impl ScratchAllocator {
         // evicted registers since other moves in the cycle could require
         // un-evicting that register.
         if let Some((reg, _spillslot, _size)) = self.evicted_reg {
-            if reginfo
-                .class_members(class)
-                .contains(RegOrRegGroup::single(reg))
-            {
+            if reginfo.class_members(class).contains(reg) {
                 trace!("-> re-using previously evicted {reg}");
                 return Allocation::reg(reg);
             }
@@ -340,10 +336,10 @@ impl ScratchAllocator {
         let spillslot = self
             .emergency_spillslot_cache
             .acquire(size, alloc_emergency_spillslot);
-        let reg = combined_allocation_order(reginfo, class, 0, |_| false)
-            .map(RegOrRegGroup::as_single)
-            .next_back()
-            .unwrap();
+        let reg =
+            combined_allocation_order(|set| reginfo.allocation_order(class, set), 0, |_| false)
+                .next_back()
+                .unwrap();
         trace!("-> evicted {reg} to emergency spillslot {spillslot}");
 
         // Since we are emitting moves in reverse order, this is after the
@@ -616,9 +612,7 @@ impl ParallelMoves {
             .expect("add_remat called with non-rematerializable value");
 
         let need_scratch = match dest.kind() {
-            AllocationKind::PhysReg(reg) => !reginfo
-                .class_members(class)
-                .contains(RegOrRegGroup::single(reg)),
+            AllocationKind::PhysReg(reg) => !reginfo.class_members(class).contains(reg),
             AllocationKind::SpillSlot(_) => !reginfo.class_includes_spillslots(class),
         };
         if need_scratch {
@@ -643,9 +637,7 @@ impl ParallelMoves {
         if let Some((cost, class)) = func.can_rematerialize(value) {
             if cost == RematCost::CheaperThanMove || source.is_memory(reginfo) {
                 let need_scratch = match dest.kind() {
-                    AllocationKind::PhysReg(reg) => !reginfo
-                        .class_members(class)
-                        .contains(RegOrRegGroup::single(reg)),
+                    AllocationKind::PhysReg(reg) => !reginfo.class_members(class).contains(reg),
                     AllocationKind::SpillSlot(_) => !reginfo.class_includes_spillslots(class),
                 };
                 if need_scratch {

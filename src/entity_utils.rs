@@ -192,18 +192,6 @@ where
         }
     }
 
-    /// Converts the set into another set with a different entity type.
-    ///
-    /// All set members are mapped to entities with equivalent indices.
-    #[inline]
-    #[must_use]
-    pub fn map_index<T2: EntityRef>(self) -> SmallEntitySet<T2, W, N> {
-        SmallEntitySet {
-            storage: self.storage,
-            marker: PhantomData,
-        }
-    }
-
     /// Internal function to convert an entity into an index.
     #[inline]
     fn index(entity: T) -> usize {

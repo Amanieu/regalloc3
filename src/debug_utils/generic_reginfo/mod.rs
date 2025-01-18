@@ -6,8 +6,8 @@ use core::fmt;
 
 use crate::entity::PrimaryMap;
 use crate::reginfo::{
-    AllocationOrderSet, PhysReg, RegBank, RegClass, RegClassSet, RegGroup, RegInfo, RegOrRegGroup,
-    RegOrRegGroupSet, RegUnit, SpillSlotSize,
+    AllocationOrderSet, PhysReg, PhysRegSet, RegBank, RegClass, RegClassSet, RegGroup, RegGroupSet,
+    RegInfo, RegUnit, SpillSlotSize,
 };
 
 #[cfg(feature = "arbitrary")]
@@ -34,12 +34,17 @@ struct RegClassData {
     includes_spillslots: bool,
     spill_cost: f32,
     group_size: u8,
-    members: RegOrRegGroupSet,
+    members: PhysRegSet,
+    group_members: RegGroupSet,
     sub_classes: RegClassSet,
-    preferred_regs: Vec<RegOrRegGroup>,
-    non_preferred_regs: Vec<RegOrRegGroup>,
-    callee_saved_preferred_regs: Vec<RegOrRegGroup>,
-    callee_saved_non_preferred_regs: Vec<RegOrRegGroup>,
+    preferred_regs: Vec<PhysReg>,
+    non_preferred_regs: Vec<PhysReg>,
+    callee_saved_preferred_regs: Vec<PhysReg>,
+    callee_saved_non_preferred_regs: Vec<PhysReg>,
+    group_preferred_regs: Vec<RegGroup>,
+    group_non_preferred_regs: Vec<RegGroup>,
+    group_callee_saved_preferred_regs: Vec<RegGroup>,
+    group_callee_saved_non_preferred_regs: Vec<RegGroup>,
 }
 
 #[derive(Clone)]
@@ -105,6 +110,7 @@ impl GenericRegInfo {
                 spill_cost: reginfo.class_spill_cost(class),
                 group_size: reginfo.class_group_size(class) as u8,
                 members: reginfo.class_members(class),
+                group_members: reginfo.class_group_members(class),
                 sub_classes: reginfo.sub_classes(class),
                 preferred_regs: reginfo
                     .allocation_order(class, AllocationOrderSet::Preferred)
@@ -117,6 +123,18 @@ impl GenericRegInfo {
                     .into(),
                 callee_saved_non_preferred_regs: reginfo
                     .allocation_order(class, AllocationOrderSet::CalleeSavedNonPreferred)
+                    .into(),
+                group_preferred_regs: reginfo
+                    .group_allocation_order(class, AllocationOrderSet::Preferred)
+                    .into(),
+                group_non_preferred_regs: reginfo
+                    .group_allocation_order(class, AllocationOrderSet::NonPreferred)
+                    .into(),
+                group_callee_saved_preferred_regs: reginfo
+                    .group_allocation_order(class, AllocationOrderSet::CalleeSavedPreferred)
+                    .into(),
+                group_callee_saved_non_preferred_regs: reginfo
+                    .group_allocation_order(class, AllocationOrderSet::CalleeSavedNonPreferred)
                     .into(),
             });
         }
@@ -180,8 +198,13 @@ impl RegInfo for GenericRegInfo {
     }
 
     #[inline]
-    fn class_members(&self, class: RegClass) -> RegOrRegGroupSet {
+    fn class_members(&self, class: RegClass) -> PhysRegSet {
         self.classes[class].members
+    }
+
+    #[inline]
+    fn class_group_members(&self, class: RegClass) -> RegGroupSet {
+        self.classes[class].group_members
     }
 
     #[inline]
@@ -195,7 +218,7 @@ impl RegInfo for GenericRegInfo {
     }
 
     #[inline]
-    fn allocation_order(&self, class: RegClass, set: AllocationOrderSet) -> &[RegOrRegGroup] {
+    fn allocation_order(&self, class: RegClass, set: AllocationOrderSet) -> &[PhysReg] {
         match set {
             AllocationOrderSet::Preferred => &self.classes[class].preferred_regs,
             AllocationOrderSet::NonPreferred => &self.classes[class].non_preferred_regs,
@@ -204,6 +227,20 @@ impl RegInfo for GenericRegInfo {
             }
             AllocationOrderSet::CalleeSavedNonPreferred => {
                 &self.classes[class].callee_saved_non_preferred_regs
+            }
+        }
+    }
+
+    #[inline]
+    fn group_allocation_order(&self, class: RegClass, set: AllocationOrderSet) -> &[RegGroup] {
+        match set {
+            AllocationOrderSet::Preferred => &self.classes[class].group_preferred_regs,
+            AllocationOrderSet::NonPreferred => &self.classes[class].group_non_preferred_regs,
+            AllocationOrderSet::CalleeSavedPreferred => {
+                &self.classes[class].group_callee_saved_preferred_regs
+            }
+            AllocationOrderSet::CalleeSavedNonPreferred => {
+                &self.classes[class].group_callee_saved_non_preferred_regs
             }
         }
     }
@@ -246,8 +283,7 @@ impl RegInfo for GenericRegInfo {
     #[inline]
     fn group_for_reg(&self, reg: PhysReg, group_index: usize, class: RegClass) -> Option<RegGroup> {
         debug_assert_ne!(self.classes[class].group_size, 1);
-        for group in &self.classes[class].members {
-            let group = group.as_multi();
+        for group in &self.classes[class].group_members {
             if self.groups[group].regs[group_index] == reg {
                 return Some(group);
             }

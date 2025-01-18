@@ -47,8 +47,53 @@ use crate::entity::packed_option::PackedOption;
 use crate::entity::SecondaryMap;
 use crate::function::Function;
 use crate::internal::reg_matrix::InterferenceKind;
-use crate::reginfo::{PhysReg, RegInfo, RegOrRegGroup};
+use crate::reginfo::{PhysReg, RegGroup, RegInfo};
 use crate::{RegAllocError, Stats};
+
+entity_def! {
+    /// This type represents either a [`PhysReg`] for groups of size 1 or a
+    /// [`RegGroup`] for larger group sizes. The group size is not encoded in
+    /// this type itself: it must instead be inferred from context.
+    entity RegOrRegGroup(u16, "r/rg");
+}
+
+impl RegOrRegGroup {
+    /// Creates a [`RegOrRegGroup`] representing a single [`PhysReg`].
+    #[inline]
+    #[must_use]
+    fn single(reg: PhysReg) -> Self {
+        Self::new(reg.index())
+    }
+
+    /// Creates a [`RegOrRegGroup`] representing a sequence of more than one
+    /// register through a [`RegGroup`].
+    #[inline]
+    #[must_use]
+    fn multi(group: RegGroup) -> Self {
+        Self::new(group.index())
+    }
+
+    /// For single registers, returns the [`PhysReg`].
+    ///
+    /// This should only be called for register groups created using
+    /// [`RegOrRegGroup::single`].
+    #[inline]
+    #[must_use]
+    fn as_single(self) -> PhysReg {
+        PhysReg::new(self.index())
+    }
+
+    /// For register groups, returns the [`RegGroup`] which describes
+    /// the sequence of registers in this group.
+    ///
+    /// This should only be called for register groups created using
+    /// [`RegOrRegGroup::multi`].
+    #[inline]
+    #[must_use]
+    fn as_multi(self) -> RegGroup {
+        RegGroup::new(self.index())
+    }
+}
 
 /// Abstraction over a virtual register group.
 ///

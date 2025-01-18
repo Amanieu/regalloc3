@@ -192,18 +192,6 @@ entity_def! {
     /// first register of the sequence in the instruction.
     pub entity RegGroup(u16, "rg");
 
-    /// A sequence of registers which are assigned together for a single operand.
-    ///
-    /// In most cases these only consist of a single [`PhysReg`], but some
-    /// instruction operands require a sequence of registers from a specific set.
-    /// An example of this is an AArch64 SIMD structured load which only encodes the
-    /// first register of the sequence in the instruction.
-    ///
-    /// This type represents either a [`PhysReg`] for groups of size 1 or a
-    /// [`RegGroup`] for larger group sizes. The group size is not encoded in
-    /// this type itself: it must instead be inferred from context.
-    pub entity RegOrRegGroup(u16, "r/rg");
-
     /// A set of [`PhysReg`] or [`RegGroup`] which can be allocated for an operand.
     pub entity RegClass(u8, "class");
 
@@ -212,52 +200,14 @@ entity_def! {
     pub entity RegBank(u8, "bank");
 }
 
-impl RegOrRegGroup {
-    /// Creates a [`RegOrRegGroup`] representing a single [`PhysReg`].
-    #[inline]
-    #[must_use]
-    pub fn single(reg: PhysReg) -> Self {
-        Self::new(reg.index())
-    }
-
-    /// Creates a [`RegOrRegGroup`] representing a sequence of more than one
-    /// register through a [`RegGroup`].
-    #[inline]
-    #[must_use]
-    pub fn multi(group: RegGroup) -> Self {
-        Self::new(group.index())
-    }
-
-    /// For single registers, returns the [`PhysReg`].
-    ///
-    /// This should only be called for register groups created using
-    /// [`RegOrRegGroup::single`].
-    #[inline]
-    #[must_use]
-    pub fn as_single(self) -> PhysReg {
-        PhysReg::new(self.index())
-    }
-
-    /// For register groups, returns the [`RegGroup`] which describes
-    /// the sequence of registers in this group.
-    ///
-    /// This should only be called for register groups created using
-    /// [`RegOrRegGroup::multi`].
-    #[inline]
-    #[must_use]
-    pub fn as_multi(self) -> RegGroup {
-        RegGroup::new(self.index())
-    }
-}
-
 /// A set of [`RegUnit`] encoded as a fixed-size bit set.
 pub type RegUnitSet = SmallEntitySet<RegUnit, u64, { MAX_REG_UNITS / 64 }>;
 
 /// A set of [`PhysReg`] encoded as a fixed-size bit set.
 pub type PhysRegSet = SmallEntitySet<PhysReg, u64, { MAX_PHYSREGS / 64 }>;
 
-/// A set of [`RegOrRegGroup`] encoded as a fixed-size bit set.
-pub type RegOrRegGroupSet = SmallEntitySet<RegOrRegGroup, u64, { MAX_REG_GROUPS / 64 }>;
+/// A set of [`RegGroup`] encoded as a fixed-size bit set.
+pub type RegGroupSet = SmallEntitySet<RegGroup, u64, { MAX_REG_GROUPS / 64 }>;
 
 /// A set of [`RegClass`] encoded as a fixed-size bit set.
 pub type RegClassSet = SmallEntitySet<RegClass, u64, { MAX_REG_CLASSES / 64 }>;
@@ -415,13 +365,23 @@ pub trait RegInfo {
         Keys::with_len(self.num_classes())
     }
 
-    /// Returns the set of [`PhysReg`] or [`RegGroup`] contained within a
-    /// register class.
+    /// Returns the set of [`PhysReg`] contained within a register class.
     ///
-    /// This indicates that `reg` may be assigned to an operand constrainted to
-    /// `class`. This is the case even if the register is not a part of the
-    /// allocation order.
-    fn class_members(&self, class: RegClass) -> RegOrRegGroupSet;
+    /// This indicates that one of these registers may be assigned to an operand
+    /// constrainted to `class`. This is the case even if the register is not a
+    /// part of the allocation order.
+    ///
+    /// This must be empty when `class_group_size > 1` for this class.
+    fn class_members(&self, class: RegClass) -> PhysRegSet;
+
+    /// Returns the set of [`RegGroup`] contained within a register class.
+    ///
+    /// This indicates that one of these register groups may be assigned to an
+    /// operand constrainted to `class`. This is the case even if the register
+    /// is not a part of the allocation order.
+    ///
+    /// This must be empty when `class_group_size == 1` for this class.
+    fn class_group_members(&self, class: RegClass) -> RegGroupSet;
 
     /// Whether an operand constrainted to this register class can be allocated
     /// to a [`SpillSlot`] instead of a [`PhysReg`].
@@ -451,8 +411,8 @@ pub trait RegInfo {
     /// GC roots) or for values that are only read by trap handlers.
     fn class_spill_cost(&self, class: RegClass) -> f32;
 
-    /// Returns a set of [`PhysReg`] or [`RegGroup`] to try allocating for
-    /// an operand constrained to the given register class.
+    /// Returns a set of [`PhysReg`] to try allocating for an operand
+    /// constrained to the given register class.
     ///
     /// Several sets of registers can be provided with different priority
     /// levels as determined by the [`AllocationOrderSet`] enum. The register
@@ -474,13 +434,23 @@ pub trait RegInfo {
     /// restored on function exit (but only if that cost hasn't already been
     /// paid).
     ///
-    /// All registers (or register groups) returned by this function must be a
-    /// member of the register class. However not all members need to be in the
-    /// allocation order. Registers outside the allocation order will only be
-    /// selected to satisfy a fixed-register operand constraint. This is useful
-    /// for "fake" registers such as fixed stack slots which are slower to
-    /// access than a register.
-    fn allocation_order(&self, class: RegClass, set: AllocationOrderSet) -> &[RegOrRegGroup];
+    /// All registers returned by this function must be a member of the register
+    /// class. However not all members need to be in the allocation order.
+    /// Registers outside the allocation order will only be selected to satisfy
+    /// a fixed-register operand constraint. This is useful for "fake" registers
+    /// such as fixed stack slots which are slower to access than a register.
+    ///
+    /// This must be empty when `class_group_size > 1` for this class.
+    fn allocation_order(&self, class: RegClass, set: AllocationOrderSet) -> &[PhysReg];
+
+    /// Returns a set of [`RegGroup`] to try allocating for an operand
+    /// constrained to the given register class.
+    ///
+    /// This is similar to [`RegInfo::allocation_order`] except that it returns
+    /// a list of [`RegGroup`] instead of [`PhysReg`].
+    ///
+    /// This must be empty when `class_group_size == 1` for this class.
+    fn group_allocation_order(&self, class: RegClass, set: AllocationOrderSet) -> &[RegGroup];
 
     /// Returns the set of sub-classes of `class`, including itself.
     ///
