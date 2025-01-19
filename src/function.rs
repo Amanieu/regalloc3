@@ -690,7 +690,7 @@ pub trait Function {
     ///
     /// Duplicate clobbers are not allowed and clobbers may not overlap with any
     /// fixed-def operands on the same instruction.
-    fn inst_clobbers(&self, inst: Inst) -> &[RegUnit];
+    fn inst_clobbers(&self, inst: Inst) -> impl ExactSizeIterator<Item = RegUnit>;
 
     // -----------------------
     // Values and value groups

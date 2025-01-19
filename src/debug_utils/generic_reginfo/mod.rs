@@ -144,7 +144,7 @@ impl GenericRegInfo {
             regs.push(PhysRegData {
                 bank,
                 is_fixed_stack,
-                units: reginfo.reg_units(reg).into(),
+                units: reginfo.reg_units(reg).collect(),
             });
         }
         for group in reginfo.reg_groups() {
@@ -261,8 +261,8 @@ impl RegInfo for GenericRegInfo {
     }
 
     #[inline]
-    fn reg_units(&self, reg: PhysReg) -> &[RegUnit] {
-        &self.regs[reg].units
+    fn reg_units(&self, reg: PhysReg) -> impl ExactSizeIterator<Item = RegUnit> {
+        self.regs[reg].units.iter().copied()
     }
 
     #[inline]

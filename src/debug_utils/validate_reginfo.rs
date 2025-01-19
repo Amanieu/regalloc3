@@ -320,7 +320,7 @@ impl<R: RegInfo> Context<'_, R> {
         if let Some(bank) = self.reginfo.bank_for_reg(reg) {
             self.check_entity(Entity::RegBank(bank))?;
             ensure!(
-                !self.reginfo.reg_units(reg).is_empty(),
+                self.reginfo.reg_units(reg).len() != 0,
                 "{reg}: Allocatable register must have at least 1 register unit"
             );
 
@@ -329,7 +329,7 @@ impl<R: RegInfo> Context<'_, R> {
                 "{reg} has too many register units (max is {MAX_UNITS_PER_REG})"
             );
 
-            for &unit in self.reginfo.reg_units(reg) {
+            for unit in self.reginfo.reg_units(reg) {
                 self.check_entity(Entity::RegUnit(unit))?;
                 ensure!(
                     !self.bank_units[bank].contains(unit),

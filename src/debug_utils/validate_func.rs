@@ -163,7 +163,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         } else {
             &mut self.late_fixed
         };
-        for &unit in self.reginfo.reg_units(reg) {
+        for unit in self.reginfo.reg_units(reg) {
             ensure!(!set.contains(unit), "{inst}: Conflicting uses of {reg}");
             set.insert(unit);
         }
@@ -380,7 +380,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         // Check that clobbers don't overlap with fixed defs or other clobbers.
         let mut clobbers = RegUnitSet::new();
-        for &unit in self.func.inst_clobbers(inst) {
+        for unit in self.func.inst_clobbers(inst) {
             ensure!(
                 !clobbers.contains(unit),
                 "{inst}: Clobber {unit} specified multiple times in same instruction"
@@ -526,7 +526,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                          multiple predecessors"
                     );
                     ensure!(
-                        self.func.inst_clobbers(inst).is_empty(),
+                        self.func.inst_clobbers(inst).len() == 0,
                         "{inst}: Terminator cannot have clobbers when the successor block has \
                          multiple predecessors"
                     );
@@ -554,7 +554,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         }
                     }
                     ensure!(
-                        self.func.inst_clobbers(inst).is_empty(),
+                        self.func.inst_clobbers(inst).len() == 0,
                         "{inst}: Ret terminators cannot have clobbers"
                     );
                 } else {

@@ -201,7 +201,7 @@ impl RegMatrix {
     /// Returns whether there are any active reservations on the given physical
     /// register.
     pub fn is_reg_used(&self, reg: PhysReg, reginfo: &impl RegInfo) -> bool {
-        reginfo.reg_units(reg).iter().all(|&unit| {
+        reginfo.reg_units(reg).all(|unit| {
             self.reservations[unit].fixed.is_empty() && self.reservations[unit].vregs.is_empty()
         })
     }
@@ -304,7 +304,7 @@ impl RegMatrix {
         reginfo: &'a impl RegInfo,
     ) -> impl Iterator<Item = Interference> + 'a {
         let segments = virt_regs.segments(vreg);
-        reginfo.reg_units(reg).iter().flat_map(move |&unit| {
+        reginfo.reg_units(reg).flat_map(move |unit| {
             let btree = &self.reservations[unit].vregs;
             let fixed = &self.reservations[unit].fixed;
             let cursor = btree.lower_bound(Bound::Excluded(&segments[0].live_range.from));
@@ -334,7 +334,7 @@ impl RegMatrix {
         trace!("Assigning {vreg} to {reg}");
 
         // We need to track reservations in each register unit separately.
-        for &unit in reginfo.reg_units(reg) {
+        for unit in reginfo.reg_units(reg) {
             for segment in virt_regs.segments(vreg) {
                 debug_assert!(!segment.live_range.is_empty());
 
@@ -360,7 +360,7 @@ impl RegMatrix {
         trace!("Evicting {vreg} from {reg}");
 
         // We need to track reservations in each register unit separately.
-        for &unit in reginfo.reg_units(reg) {
+        for unit in reginfo.reg_units(reg) {
             for segment in virt_regs.segments(vreg) {
                 debug_assert!(!segment.live_range.is_empty());
 

@@ -392,7 +392,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
                 // Clear any clobbers, except when the corresponding unit has
                 // been written to by a fixed def.
-                for &clobber in func.inst_clobbers(inst) {
+                for clobber in func.inst_clobbers(inst) {
                     if !self.fixed_def_units.contains(clobber) {
                         let unit = AllocationUnit::reg(clobber);
                         ensure!(
@@ -764,7 +764,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 );
 
                 // Track fixed definitions so we ignore clobbers for those units.
-                for &unit in self.output.reginfo().reg_units(reg) {
+                for unit in self.output.reginfo().reg_units(reg) {
                     self.fixed_def_units.insert(unit);
                 }
             }

@@ -181,7 +181,7 @@ impl ScratchAllocator {
     /// we are emitting moves in reverse order, means that the destination
     /// register will not be read by any moves earlier in program order.
     fn make_available(&mut self, reg: PhysReg, reginfo: &impl RegInfo) {
-        for &unit in reginfo.reg_units(reg) {
+        for unit in reginfo.reg_units(reg) {
             self.available.insert(unit);
             self.probed.insert(unit);
         }
@@ -193,7 +193,7 @@ impl ScratchAllocator {
     /// we are emitting moves in reverse order, means that the source
     /// register will not be overwritten by any moves earlier in program order.
     fn make_unavailable(&mut self, reg: PhysReg, reginfo: &impl RegInfo) {
-        for &unit in reginfo.reg_units(reg) {
+        for unit in reginfo.reg_units(reg) {
             self.available.remove(unit);
             self.probed.insert(unit);
         }
@@ -233,8 +233,7 @@ impl ScratchAllocator {
             // register.
             if !reginfo
                 .reg_units(reg)
-                .iter()
-                .any(|&unit| reginfo.reg_units(evicted_reg).contains(&unit))
+                .any(|a| reginfo.reg_units(evicted_reg).any(|b| a == b))
             {
                 return;
             }
@@ -274,7 +273,7 @@ impl ScratchAllocator {
         for reg in
             combined_allocation_order(|set| reginfo.allocation_order(class, set), 0, |_| false)
         {
-            if reginfo.reg_units(reg).iter().all(|&unit| {
+            if reginfo.reg_units(reg).all(|unit| {
                 // If we need the scratch register for resolving a cycle,
                 // don't select a move source involved in the cycle.
                 if let Some(cycle_move_sources) = cycle_move_sources {
@@ -393,7 +392,7 @@ impl ScratchAllocator {
             );
 
             if let AllocationKind::PhysReg(reg) = scratch.kind() {
-                for &unit in reginfo.reg_units(reg) {
+                for unit in reginfo.reg_units(reg) {
                     self.available.remove(unit);
                 }
             }
@@ -896,7 +895,7 @@ impl ParallelMoves {
                                 let mut cycle_move_sources = RegUnitSet::new();
                                 for move_ in self.moves.values() {
                                     if let AllocationKind::PhysReg(reg) = move_.source.kind() {
-                                        for &unit in reginfo.reg_units(reg) {
+                                        for unit in reginfo.reg_units(reg) {
                                             cycle_move_sources.insert(unit);
                                         }
                                     }

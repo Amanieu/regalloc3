@@ -413,17 +413,16 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
     /// constraint, and if successful, marks all of the register's sub-units as
     /// in-use for the current instruction.
     fn check_fixed_conflict(&mut self, reg: PhysReg, early: bool, late: bool) -> bool {
-        let units = self.reginfo.reg_units(reg);
-        if units.iter().any(|&unit| {
+        if self.reginfo.reg_units(reg).any(|unit| {
             (early && self.early_fixed.contains(unit)) || (late && self.late_fixed.contains(unit))
         }) {
             return false;
         }
         if early {
-            self.early_fixed.extend(units.iter().copied());
+            self.early_fixed.extend(self.reginfo.reg_units(reg));
         }
         if late {
-            self.late_fixed.extend(units.iter().copied());
+            self.late_fixed.extend(self.reginfo.reg_units(reg));
         }
         true
     }

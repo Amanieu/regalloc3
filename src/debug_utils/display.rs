@@ -143,7 +143,7 @@ impl<F: Function> fmt::Display for DisplayFunction<'_, F> {
                         }
                     }
                 }
-                for &unit in self.0.inst_clobbers(inst) {
+                for unit in self.0.inst_clobbers(inst) {
                     write!(f, " Clobber:{unit}")?;
                 }
 
@@ -415,7 +415,7 @@ impl<F: Function, R: RegInfo> fmt::Display for DisplayOutputInst<'_, F, R> {
                         OperandKind::NonAllocatable => write!(f, "NonAllocatable:{alloc}")?,
                     }
                 }
-                for &unit in func.inst_clobbers(inst) {
+                for unit in func.inst_clobbers(inst) {
                     write!(f, " Clobber:{unit}")?;
                 }
             }

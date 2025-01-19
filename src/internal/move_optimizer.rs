@@ -466,7 +466,7 @@ impl StateTracker {
         self.value_def_block[value] = block;
         match alloc.kind() {
             AllocationKind::PhysReg(reg) => {
-                for &unit in reginfo.reg_units(reg) {
+                for unit in reginfo.reg_units(reg) {
                     self.def_units.insert(unit);
                     self.clobber_unit(unit);
                     self.last_unit_write.insert(unit, (reg, value));
@@ -497,7 +497,7 @@ impl StateTracker {
     fn initial_value(&mut self, value: Value, alloc: Allocation, reginfo: &impl RegInfo) {
         match alloc.kind() {
             AllocationKind::PhysReg(reg) => {
-                for &unit in reginfo.reg_units(reg) {
+                for unit in reginfo.reg_units(reg) {
                     self.last_unit_write.insert_unique(unit, (reg, value));
                 }
                 self.value_regs.entry(value).or_default().insert(reg);
@@ -557,7 +557,7 @@ impl StateTracker {
             // a location for the given value.
             match to.kind() {
                 AllocationKind::PhysReg(reg) => {
-                    for &unit in reginfo.reg_units(reg) {
+                    for unit in reginfo.reg_units(reg) {
                         self.clobber_unit(unit);
                         self.last_unit_write.insert(unit, (reg, value));
                     }
@@ -580,7 +580,7 @@ impl StateTracker {
                 (AllocationKind::PhysReg(reg), AllocationKind::SpillSlot(slot)) => {
                     debug_assert!(!self.spillslot_values.contains_key(slot));
                     self.emergency_spill.clear();
-                    for &unit in reginfo.reg_units(reg) {
+                    for unit in reginfo.reg_units(reg) {
                         if let Some(&(reg, value)) = self.last_unit_write.get(unit) {
                             self.emergency_spill.push((unit, reg, value));
                         }
@@ -590,7 +590,7 @@ impl StateTracker {
                 // For emergency reloads, clobber the destination units and then
                 // restore the saved `last_unit_write` contents.
                 (AllocationKind::SpillSlot(_), AllocationKind::PhysReg(reg)) => {
-                    for &unit in reginfo.reg_units(reg) {
+                    for unit in reginfo.reg_units(reg) {
                         self.clobber_unit(unit);
                     }
                     for &(unit, reg, value) in &self.emergency_spill {
@@ -599,7 +599,7 @@ impl StateTracker {
                         // Mark the value as being located in a register only if
                         // all units have the same value.
                         if reginfo.reg_units(reg).len() == 1
-                            || reginfo.reg_units(reg).iter().all(|&unit| {
+                            || reginfo.reg_units(reg).all(|unit| {
                                 self.last_unit_write
                                     .get(unit)
                                     .is_some_and(|&(_, value2)| value2 == value)
@@ -674,7 +674,7 @@ impl StateTracker {
             }
 
             // Process clobbers.
-            for &unit in func.inst_clobbers(inst) {
+            for unit in func.inst_clobbers(inst) {
                 if !self.def_units.contains(unit) {
                     self.clobber_unit(unit);
                 }
@@ -880,7 +880,7 @@ impl StateTracker {
             }
 
             // Process clobbers.
-            for &unit in func.inst_clobbers(inst) {
+            for unit in func.inst_clobbers(inst) {
                 if !self.def_units.contains(unit) {
                     self.clobber_unit(unit);
                 }

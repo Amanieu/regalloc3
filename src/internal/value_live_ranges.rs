@@ -336,7 +336,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 }
 
                 // Reserve fixed ranges for instruction clobbers.
-                for &unit in self.func.inst_clobbers(inst) {
+                for unit in self.func.inst_clobbers(inst) {
                     self.reg_matrix.reserve_clobber(
                         unit,
                         LiveRangeSegment::new(
@@ -527,7 +527,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 stat!(self.stats, fixed_def);
                 self.allocations
                     .set_allocation(inst, slot, Allocation::reg(reg));
-                for &unit in self.reginfo.reg_units(reg) {
+                for unit in self.reginfo.reg_units(reg) {
                     self.reg_matrix.reserve_fixed(
                         unit,
                         LiveRangeSegment::new(
@@ -561,7 +561,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 stat!(self.stats, fixed_def);
                 self.allocations
                     .set_allocation(inst, slot, Allocation::reg(reg));
-                for &unit in self.reginfo.reg_units(reg) {
+                for unit in self.reginfo.reg_units(reg) {
                     self.reg_matrix.reserve_fixed(
                         unit,
                         LiveRangeSegment::new(
@@ -603,7 +603,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 stat!(self.stats, fixed_use);
                 self.allocations
                     .set_allocation(inst, slot, Allocation::reg(reg));
-                for &unit in self.reginfo.reg_units(reg) {
+                for unit in self.reginfo.reg_units(reg) {
                     self.reg_matrix.reserve_fixed(
                         unit,
                         LiveRangeSegment::new(inst.slot(Slot::Boundary), inst.slot(Slot::Normal)),

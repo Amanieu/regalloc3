@@ -130,13 +130,11 @@ impl Arbitrary<'_> for TestCase {
                     let reg = PhysReg::new(u.choose_index(reginfo.num_regs())?);
                     if reginfo
                         .reg_units(reg)
-                        .iter()
-                        .all(|&unit| !src_used_mask.contains(unit))
+                        .all(|unit| !src_used_mask.contains(unit))
                     {
                         reginfo
                             .reg_units(reg)
-                            .iter()
-                            .for_each(|&unit| src_used_mask.insert(unit));
+                            .for_each(|unit| src_used_mask.insert(unit));
                         let bank = reginfo.bank_for_reg(reg).unwrap();
                         return Ok((Some(Allocation::reg(reg)), bank));
                     }
@@ -201,13 +199,11 @@ impl Arbitrary<'_> for TestCase {
                     let reg = *u.choose(&regs_in_bank)?;
                     if reginfo
                         .reg_units(reg)
-                        .iter()
-                        .all(|&unit| !dest_used_mask.contains(unit))
+                        .all(|unit| !dest_used_mask.contains(unit))
                     {
                         reginfo
                             .reg_units(reg)
-                            .iter()
-                            .for_each(|&unit| dest_used_mask.insert(unit));
+                            .for_each(|unit| dest_used_mask.insert(unit));
                         return Ok(Allocation::reg(reg));
                     }
                 }
@@ -286,8 +282,8 @@ impl Function for TestCase {
         unreachable!()
     }
 
-    fn inst_clobbers(&self, _inst: Inst) -> &[RegUnit] {
-        unreachable!()
+    fn inst_clobbers(&self, _inst: Inst) -> impl ExactSizeIterator<Item = RegUnit> {
+        [].into_iter()
     }
 
     fn num_values(&self) -> usize {
@@ -408,7 +404,7 @@ fuzz_target!(|t: TestCase| {
         if let Some(alloc) = alloc {
             match alloc.kind() {
                 AllocationKind::PhysReg(reg) => {
-                    for &unit in t.reginfo.reg_units(reg) {
+                    for unit in t.reginfo.reg_units(reg) {
                         unit_values[unit] = Some(value);
                     }
                 }
@@ -451,8 +447,7 @@ fuzz_target!(|t: TestCase| {
                         assert_eq!(t.reginfo.bank_for_reg(reg).unwrap(), t.value_bank(value));
                         t.reginfo
                             .reg_units(reg)
-                            .iter()
-                            .for_each(|&unit| assert_eq!(unit_values[unit], Some(value)));
+                            .for_each(|unit| assert_eq!(unit_values[unit], Some(value)));
                     }
                     AllocationKind::SpillSlot(slot) => {
                         assert_eq!(spillslot_values[slot], SpillSlotContents::Value(value));
@@ -467,8 +462,7 @@ fuzz_target!(|t: TestCase| {
                         assert_eq!(t.reginfo.bank_for_reg(reg).unwrap(), t.value_bank(value));
                         t.reginfo
                             .reg_units(reg)
-                            .iter()
-                            .for_each(|&unit| unit_values[unit] = Some(value));
+                            .for_each(|unit| unit_values[unit] = Some(value));
                     }
                     AllocationKind::SpillSlot(slot) => {
                         spillslot_values[slot] = SpillSlotContents::Value(value);
@@ -486,17 +480,17 @@ fuzz_target!(|t: TestCase| {
                     (AllocationKind::SpillSlot(from), AllocationKind::PhysReg(to)) => {
                         match spillslot_values[from] {
                             SpillSlotContents::None => {
-                                for &unit in t.reginfo.reg_units(to) {
+                                for unit in t.reginfo.reg_units(to) {
                                     unit_values[unit] = None;
                                 }
                             }
                             SpillSlotContents::Value(value) => {
-                                for &unit in t.reginfo.reg_units(to) {
+                                for unit in t.reginfo.reg_units(to) {
                                     unit_values[unit] = Some(value);
                                 }
                             }
                             SpillSlotContents::Spill(ref values) => {
-                                for (&value, &unit) in values.iter().zip(t.reginfo.reg_units(to)) {
+                                for (&value, unit) in values.iter().zip(t.reginfo.reg_units(to)) {
                                     unit_values[unit] = value;
                                 }
                             }
@@ -511,8 +505,7 @@ fuzz_target!(|t: TestCase| {
                         let values = t
                             .reginfo
                             .reg_units(from)
-                            .iter()
-                            .map(|&unit| unit_values[unit])
+                            .map(|unit| unit_values[unit])
                             .collect();
                         spillslot_values[to] = SpillSlotContents::Spill(values);
                         assert_eq!(
@@ -535,7 +528,7 @@ fuzz_target!(|t: TestCase| {
             match edit.to.unwrap().kind() {
                 AllocationKind::PhysReg(reg) => {
                     assert!(t.reginfo.class_members(class).contains(reg));
-                    for &unit in t.reginfo.reg_units(reg) {
+                    for unit in t.reginfo.reg_units(reg) {
                         unit_values[unit] = Some(value);
                     }
                 }
@@ -558,8 +551,7 @@ fuzz_target!(|t: TestCase| {
             AllocationKind::PhysReg(reg) => t
                 .reginfo
                 .reg_units(reg)
-                .iter()
-                .for_each(|&unit| assert_eq!(unit_values[unit], Some(value))),
+                .for_each(|unit| assert_eq!(unit_values[unit], Some(value))),
             AllocationKind::SpillSlot(slot) => {
                 assert_eq!(spillslot_values[slot], SpillSlotContents::Value(value))
             }

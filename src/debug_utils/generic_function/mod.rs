@@ -98,7 +98,7 @@ impl GenericFunction {
         for inst in func.insts() {
             insts.push(InstData {
                 operands: func.inst_operands(inst).into(),
-                clobbers: func.inst_clobbers(inst).into(),
+                clobbers: func.inst_clobbers(inst).collect(),
                 block: func.inst_block(inst),
                 terminator_kind: func.terminator_kind(inst),
                 is_pure: func.can_eliminate_dead_inst(inst),
@@ -184,8 +184,8 @@ impl Function for GenericFunction {
     }
 
     #[inline]
-    fn inst_clobbers(&self, inst: Inst) -> &[RegUnit] {
-        &self.insts[inst].clobbers
+    fn inst_clobbers(&self, inst: Inst) -> impl ExactSizeIterator<Item = RegUnit> {
+        self.insts[inst].clobbers.iter().copied()
     }
 
     #[inline]
