@@ -800,11 +800,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     }
                 })
                 .unwrap_err();
-            self.virt_regs.virt_regs[vreg].segments = self.virt_regs[vreg].segments.insert_iter_at(
-                idx,
-                segments.iter().copied(),
-                &mut self.virt_regs.segment_pool,
-            );
+            self.virt_regs.virt_regs[vreg].segments =
+                self.virt_regs.virt_regs[vreg].segments.insert_iter_at(
+                    idx,
+                    segments.iter().copied(),
+                    &mut self.virt_regs.segment_pool,
+                );
 
             // Update spill_weight, class and has_fixed_use for the virtual
             // register.

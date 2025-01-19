@@ -18,13 +18,6 @@ pub struct CompactList<T> {
     marker: PhantomData<T>,
 }
 
-impl<T> Clone for CompactList<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T> Copy for CompactList<T> {}
-
 impl<T> CompactList<T> {
     /// Creates a new empty list.
     #[must_use]
@@ -53,24 +46,25 @@ impl<T> CompactList<T> {
 
     /// Returns whether the list is empty.
     #[must_use]
-    pub fn is_empty(self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.start == self.end
     }
 
     /// Get the number of elements in the list.
     #[must_use]
-    pub fn len(self) -> usize {
+    pub fn len(&self) -> usize {
         (self.end - self.start) as usize
     }
 
     /// Get the list as a slice.
     #[must_use]
-    pub fn as_slice(self, pool: &CompactListPool<T>) -> &[T] {
+    pub fn as_slice<'a>(&'a self, pool: &'a CompactListPool<T>) -> &'a [T] {
         &pool.elems[self.start as usize..self.end as usize]
     }
 
     /// Get the list as a mutable slice.
-    pub fn as_mut_slice(self, pool: &mut CompactListPool<T>) -> &mut [T] {
+    #[must_use]
+    pub fn as_mut_slice<'a>(&'a self, pool: &'a mut CompactListPool<T>) -> &'a mut [T] {
         &mut pool.elems[self.start as usize..self.end as usize]
     }
 
@@ -80,7 +74,7 @@ impl<T> CompactList<T> {
     ///
     /// The original list is not modified.
     #[must_use]
-    pub fn insert_iter_at<I>(self, index: usize, iter: I, pool: &mut CompactListPool<T>) -> Self
+    pub fn insert_iter_at<I>(&self, index: usize, iter: I, pool: &mut CompactListPool<T>) -> Self
     where
         I: IntoIterator<Item = T>,
         T: Clone,
@@ -97,6 +91,16 @@ impl<T> CompactList<T> {
             end,
             marker: PhantomData,
         }
+    }
+
+    /// Removes an element from the list at the given index.
+    ///
+    /// The removed element is replaced with the last element of the list and
+    /// the list is shrunk by one element.
+    pub fn swap_remove(&mut self, index: usize, pool: &mut CompactListPool<T>) {
+        let slice = self.as_mut_slice(pool);
+        slice.swap(index, slice.len() - 1);
+        self.end -= 1;
     }
 }
 
