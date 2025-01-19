@@ -57,6 +57,7 @@ entity_def! {
     ///
     /// Note that this is distinct from a fixed stack slot (e.g. argument or return
     /// value stack slot) which is instead represented using a `PhysReg`.
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity SpillSlot(u32, "spill");
 }
 

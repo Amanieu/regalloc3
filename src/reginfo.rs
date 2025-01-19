@@ -171,6 +171,7 @@ entity_def! {
     /// For simple cases, a [`PhysReg`] will directly map to a single register unit.
     /// However some ISAs have registers which overlap with others: this can be
     /// modeled by having that register cover more than one register unit.
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity RegUnit(u16, "unit");
 
     /// A location to which a value can be mapped to.
@@ -178,6 +179,7 @@ entity_def! {
     /// Note that despite the name, this doesn't have to be a machine register. A
     /// fixed stack slot (typically used for function arguments and return values)
     /// can also be represented as a `PhysReg`.
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity PhysReg(u16, "r");
 
     /// A sequence of multiple registers which are assigned together for a single
@@ -190,13 +192,16 @@ entity_def! {
     /// instruction operands require a sequence of registers from a specific set.
     /// An example of this is an AArch64 SIMD structured load which only encodes the
     /// first register of the sequence in the instruction.
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity RegGroup(u16, "rg");
 
     /// A set of [`PhysReg`] or [`RegGroup`] which can be allocated for an operand.
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity RegClass(u8, "class");
 
     /// A set of registers between which values can be copied with move
     /// instructions.
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity RegBank(u8, "bank");
 }
 

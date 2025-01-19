@@ -76,12 +76,30 @@ impl<T: EntityRef> EntityRange<T> {
 
 /// Internal helper macro to define a new entity type along with some trait
 /// implementations.
+///
+/// Helper macro to define an entity type around an integer index which
+/// implements [`EntityRef`] and [`ReservedValue`].
+///
+/// These traits are also implemented on the entity type: `Copy`, `Clone`, `Eq`,
+/// `PartialEq`, `Hash`, `PartialOrd`, `Ord`.
+///
+/// An optional string prefix can be provided which causes this macro to also
+/// implement `Display` and `Debug` using the prefix and the entity index.
+///
+/// # Example
+///
+/// ```
+/// regalloc3::entity_def! {
+///     /// An instruction index in the input function.
+///     pub entity Inst(u32, "inst");
+/// }
+/// ```
+#[macro_export]
 macro_rules! entity_def {
     ($($(#[$attr:meta])* $vis:vis entity $name:ident($int:ident);)*) => {
         $(
             $(#[$attr])*
             #[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-            #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
             $vis struct $name($int);
 
             // Inherent copies of the EntityRef methods that are const.
@@ -133,7 +151,7 @@ macro_rules! entity_def {
 
     // Same as above but also provides Display/Debug impls.
     ($($(#[$attr:meta])* $vis:vis entity $name:ident($int:ident, $display_prefix:expr);)*) => {
-        entity_def! {
+        $crate::entity_def! {
             $($(#[$attr])* $vis entity $name($int);)*
         }
         $(

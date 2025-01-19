@@ -142,6 +142,7 @@ entity_def! {
     /// The register allocator will work correctly with arbitrary block orderings,
     /// however it performs best if blocks are arranged in reverse post-order, and
     /// with loop back-edges ordered before loop exits.
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity Block(u32, "block");
 
 
@@ -156,15 +157,18 @@ entity_def! {
     ///
     /// Where an `Inst` represents a point between 2 instructions rather than an
     /// instruction, this always refers to the point *before* the given instruction.
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity Inst(u32, "inst");
 
     /// An opaque reference to an SSA value in the input function.
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity Value(u32, "%");
 
     /// A reference to a list of [`Value`]s.
     ///
     /// Each `ValueGroup` must only be used in a single [`Operand`] in a function,
     /// even if the same set of value is used multiple times.
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity ValueGroup(u32, "group");
 }
 
