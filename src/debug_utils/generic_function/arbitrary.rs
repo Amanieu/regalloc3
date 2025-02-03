@@ -173,7 +173,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
                 && (reginfo.class_includes_spillslots(class)
                     || reginfo
                         .class_members(class)
-                        .iter()
+                        .into_iter()
                         .all(|reg| !reginfo.is_memory(reg)))
             {
                 remat_class_per_bank[reginfo.bank_for_class(class)].push(class);

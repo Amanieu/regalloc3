@@ -365,7 +365,7 @@ fn resolve_subclasses(
     for class in classes.keys().rev() {
         classes[class].sub_classes.insert(class);
         let sub_classes = classes[class].sub_classes;
-        for superclass in &superclasses[class] {
+        for superclass in superclasses[class] {
             classes[superclass].sub_classes |= sub_classes;
         }
     }

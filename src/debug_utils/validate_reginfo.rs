@@ -137,7 +137,7 @@ impl<R: RegInfo> Context<'_, R> {
         ensure!(!empty, "{bank} has no registers");
 
         // Check stack_to_stack_class
-        for reg in &self.reginfo.class_members(stack_to_stack_class) {
+        for reg in self.reginfo.class_members(stack_to_stack_class) {
             ensure!(
                 !self.reginfo.is_memory(reg),
                 "{bank}: {reg} in stack-to-stack {stack_to_stack_class} cannot be in memory"
@@ -167,7 +167,7 @@ impl<R: RegInfo> Context<'_, R> {
 
         if group_size != 1 {
             let mut regs_per_index = [PhysRegSet::new(); MAX_GROUP_SIZE];
-            for group in &self.reginfo.class_group_members(class) {
+            for group in self.reginfo.class_group_members(class) {
                 // Check that class members have the same group size as the class.
                 let members = self.reginfo.reg_group_members(group);
                 ensure!(
@@ -201,7 +201,7 @@ impl<R: RegInfo> Context<'_, R> {
                 }
             }
         } else {
-            for reg in &self.reginfo.class_members(class) {
+            for reg in self.reginfo.class_members(class) {
                 // Check that class members are in the same bank as the class.
                 ensure!(
                     self.reginfo.bank_for_reg(reg) == Some(bank),
@@ -271,7 +271,7 @@ impl<R: RegInfo> Context<'_, R> {
             self.reginfo.sub_classes(class).contains(class),
             "{class} must be a subclass of itself"
         );
-        for subclass in &self.reginfo.sub_classes(class) {
+        for subclass in self.reginfo.sub_classes(class) {
             ensure!(
                 subclass.index() >= class.index(),
                 "{class} must not have any subclasses with a lower index than itself"
@@ -288,7 +288,7 @@ impl<R: RegInfo> Context<'_, R> {
             }
 
             if group_size == 1 && self.reginfo.class_group_size(subclass) > 1 {
-                for group in &self.reginfo.class_group_members(subclass) {
+                for group in self.reginfo.class_group_members(subclass) {
                     for &member in self.reginfo.reg_group_members(group) {
                         ensure!(
                             self.reginfo.class_members(class).contains(member),
@@ -302,7 +302,7 @@ impl<R: RegInfo> Context<'_, R> {
                     self.reginfo.class_group_size(subclass) == group_size,
                     "Subclass {subclass} must have same group size as {class}"
                 );
-                for reg in &self.reginfo.class_members(subclass) {
+                for reg in self.reginfo.class_members(subclass) {
                     ensure!(
                         self.reginfo.class_members(class).contains(reg),
                         "Subclass {subclass} of {class} doesn't contain {reg}"

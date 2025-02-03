@@ -477,7 +477,9 @@ pub trait RegInfo {
     fn common_subclass(&self, a: RegClass, b: RegClass) -> Option<RegClass> {
         // Since classes are ordered topologically, this is the lowest indexed
         // class which is a sub-class of both original classes.
-        (self.sub_classes(a) & self.sub_classes(b)).iter().next()
+        (self.sub_classes(a) & self.sub_classes(b))
+            .into_iter()
+            .next()
     }
 
     /// The group size of registers in this class.

@@ -203,12 +203,12 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
         // real registers.
         let mut members: Vec<_> = self.reginfo.classes[superclass]
             .members
-            .iter()
+            .into_iter()
             .filter(|&reg| !is_stack_to_stack_class || !self.reginfo.is_memory(reg))
             .collect();
         let mut group_members: Vec<_> = self.reginfo.classes[superclass]
             .group_members
-            .iter()
+            .into_iter()
             .collect();
 
         // Check if we should generate a group subclass from a non-group class.

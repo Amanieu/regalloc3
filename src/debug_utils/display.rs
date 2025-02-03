@@ -191,7 +191,7 @@ fn superclasses(class: RegClass, reginfo: &impl RegInfo) -> RegClassSet {
     // Only keep direct superclasses: if a superclass includes a different
     // superclass then it is redundant.
     let mut direct_superclasses = superclasses;
-    for superclass in &superclasses {
+    for superclass in superclasses {
         if (reginfo.sub_classes(superclass) & superclasses).count() > 1 {
             direct_superclasses.remove(superclass);
         }
@@ -255,7 +255,7 @@ impl<R: RegInfo> fmt::Display for DisplayRegInfo<'_, R> {
                     writeln!(
                         f,
                         "    {class}: {} {{",
-                        display_iter(superclasses.iter(), "")
+                        display_iter(superclasses.into_iter(), "")
                     )?;
                 }
 
@@ -273,13 +273,13 @@ impl<R: RegInfo> fmt::Display for DisplayRegInfo<'_, R> {
                     writeln!(
                         f,
                         "        members = {}",
-                        display_iter(self.0.class_members(class).iter(), "")
+                        display_iter(self.0.class_members(class).into_iter(), "")
                     )?;
                 } else {
                     writeln!(
                         f,
                         "        members = {}",
-                        display_iter(self.0.class_group_members(class).iter(), "")
+                        display_iter(self.0.class_group_members(class).into_iter(), "")
                     )?;
                 }
 

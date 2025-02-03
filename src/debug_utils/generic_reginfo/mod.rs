@@ -283,7 +283,7 @@ impl RegInfo for GenericRegInfo {
     #[inline]
     fn group_for_reg(&self, reg: PhysReg, group_index: usize, class: RegClass) -> Option<RegGroup> {
         debug_assert_ne!(self.classes[class].group_size, 1);
-        for group in &self.classes[class].group_members {
+        for group in self.classes[class].group_members {
             if self.groups[group].regs[group_index] == reg {
                 return Some(group);
             }

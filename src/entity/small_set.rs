@@ -149,11 +149,19 @@ where
     pub fn count(&self) -> usize {
         self.storage.iter().map(|word| word.count_ones()).sum()
     }
+}
 
-    /// Returns an iterator over all the elements in the set, starting from the
-    /// lowest index.
+impl<T, W, const N: usize> IntoIterator for SmallEntitySet<T, W, N>
+where
+    T: EntityRef,
+    W: SmallSetWord,
+{
+    type Item = T;
+
+    type IntoIter = Iter<T, W, N>;
+
     #[inline]
-    pub fn iter(&self) -> Iter<'_, T, W, N> {
+    fn into_iter(self) -> Self::IntoIter {
         Iter {
             current_word: W::ZERO,
             next_index: 0,
@@ -162,25 +170,12 @@ where
     }
 }
 
-impl<'a, T, W, const N: usize> IntoIterator for &'a SmallEntitySet<T, W, N>
-where
-    T: EntityRef,
-    W: SmallSetWord,
-{
-    type Item = T;
-
-    type IntoIter = Iter<'a, T, W, N>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
 impl<T, W, const N: usize> Default for SmallEntitySet<T, W, N>
 where
     T: EntityRef,
     W: SmallSetWord,
 {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
@@ -294,7 +289,7 @@ where
     W: SmallSetWord,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_set().entries(self.iter()).finish()
+        f.debug_set().entries(*self).finish()
     }
 }
 
@@ -309,7 +304,7 @@ where
     where
         S: serde::Serializer,
     {
-        serializer.collect_seq(self.iter())
+        serializer.collect_seq(*self)
     }
 }
 
@@ -365,17 +360,17 @@ where
 }
 
 /// Iterator over the elements in a [`SmallEntitySet`].
-pub struct Iter<'a, T, W, const N: usize>
+pub struct Iter<T, W, const N: usize>
 where
     T: EntityRef,
     W: SmallSetWord,
 {
     current_word: W,
     next_index: usize,
-    set: &'a SmallEntitySet<T, W, N>,
+    set: SmallEntitySet<T, W, N>,
 }
 
-impl<T, W, const N: usize> Iterator for Iter<'_, T, W, N>
+impl<T, W, const N: usize> Iterator for Iter<T, W, N>
 where
     T: EntityRef,
     W: SmallSetWord,

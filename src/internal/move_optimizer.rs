@@ -295,7 +295,7 @@ impl MoveOptimizer {
                     if succs.len() == 1 && self.state_tracker.value_def_block[value] >= succs[0] {
                         continue;
                     }
-                    for reg in &regs {
+                    for reg in regs {
                         state.push((Allocation::reg(reg), value));
                     }
                 }
@@ -380,7 +380,7 @@ impl fmt::Display for StateTracker {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut alloc_values = vec![];
         for &(value, regs) in &self.value_regs {
-            for reg in &regs {
+            for reg in regs {
                 alloc_values.push((Allocation::reg(reg), value));
             }
         }
@@ -761,8 +761,9 @@ impl StateTracker {
             if let Some(from) = edit.from.expand() {
                 if from.is_memory(reginfo) {
                     if let Some(&regs_with_value) = self.value_regs.get(value) {
-                        if let Some(reg) =
-                            regs_with_value.iter().find(|&reg| !reginfo.is_memory(reg))
+                        if let Some(reg) = regs_with_value
+                            .into_iter()
+                            .find(|&reg| !reginfo.is_memory(reg))
                         {
                             trace!("Optimizing reload to use {reg}");
                             stat!(stats, optimized_reload_to_move);
@@ -851,7 +852,7 @@ impl StateTracker {
                         if let Some(&regs_with_value) = self.value_regs.get(value) {
                             let class_members = reginfo.class_members(class);
                             if let Some(reg) = (class_members & regs_with_value)
-                                .iter()
+                                .into_iter()
                                 .find(|&reg| !reginfo.is_memory(reg))
                             {
                                 stat!(stats, optimized_stack_use);

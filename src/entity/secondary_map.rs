@@ -98,7 +98,7 @@ where
     /// index below `max_index`.
     ///
     /// Existing values are not modified. New values are constructed by calling
-    /// `f``.
+    /// `f`.
     #[inline]
     pub fn grow_to_with(&mut self, max_index: usize, f: impl FnMut() -> V) {
         if self.elems.len() < max_index {

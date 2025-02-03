@@ -166,7 +166,7 @@ impl Arbitrary<'_> for TestCase {
                             && (reginfo.class_includes_spillslots(class)
                                 || reginfo
                                     .class_members(class)
-                                    .iter()
+                                    .into_iter()
                                     .all(|reg| !reginfo.is_memory(reg)))
                     })
                     .collect();
