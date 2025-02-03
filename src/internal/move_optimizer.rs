@@ -598,7 +598,7 @@ impl StateTracker {
 
                         // Mark the value as being located in a register only if
                         // all units have the same value.
-                        if reginfo.reg_units(reg).len() == 1
+                        if reginfo.reg_units(reg).count() == 1
                             || reginfo.reg_units(reg).all(|unit| {
                                 self.last_unit_write
                                     .get(unit)

@@ -261,7 +261,7 @@ impl RegInfo for GenericRegInfo {
     }
 
     #[inline]
-    fn reg_units(&self, reg: PhysReg) -> impl ExactSizeIterator<Item = RegUnit> {
+    fn reg_units(&self, reg: PhysReg) -> impl Iterator<Item = RegUnit> {
         self.regs[reg].units.iter().copied()
     }
 

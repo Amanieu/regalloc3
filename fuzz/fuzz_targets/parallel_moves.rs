@@ -282,7 +282,7 @@ impl Function for TestCase {
         unreachable!()
     }
 
-    fn inst_clobbers(&self, _inst: Inst) -> impl ExactSizeIterator<Item = RegUnit> {
+    fn inst_clobbers(&self, _inst: Inst) -> impl Iterator<Item = RegUnit> {
         [].into_iter()
     }
 

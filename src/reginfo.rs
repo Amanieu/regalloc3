@@ -510,7 +510,7 @@ pub trait RegInfo {
     /// [`OperandKind::NonAllocatable`]. It can be an empty list in such cases.
     ///
     /// [`OperandKind::NonAllocatable`]: super::function::OperandKind::NonAllocatable
-    fn reg_units(&self, reg: PhysReg) -> impl ExactSizeIterator<Item = RegUnit>;
+    fn reg_units(&self, reg: PhysReg) -> impl Iterator<Item = RegUnit>;
 
     /// Returns whether this [`PhysReg`] represents a memory location (e.g. a
     /// fixed stack slot) instead of a register.

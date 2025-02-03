@@ -526,7 +526,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                          multiple predecessors"
                     );
                     ensure!(
-                        self.func.inst_clobbers(inst).len() == 0,
+                        self.func.inst_clobbers(inst).count() == 0,
                         "{inst}: Terminator cannot have clobbers when the successor block has \
                          multiple predecessors"
                     );
@@ -554,7 +554,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         }
                     }
                     ensure!(
-                        self.func.inst_clobbers(inst).len() == 0,
+                        self.func.inst_clobbers(inst).count() == 0,
                         "{inst}: Ret terminators cannot have clobbers"
                     );
                 } else {

@@ -184,7 +184,7 @@ impl Function for GenericFunction {
     }
 
     #[inline]
-    fn inst_clobbers(&self, inst: Inst) -> impl ExactSizeIterator<Item = RegUnit> {
+    fn inst_clobbers(&self, inst: Inst) -> impl Iterator<Item = RegUnit> {
         self.insts[inst].clobbers.iter().copied()
     }
 
