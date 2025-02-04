@@ -125,19 +125,6 @@ struct ValueInfo {
     blockparam_idx: Option<u32>,
 }
 
-impl Default for ValueInfo {
-    fn default() -> Self {
-        let zero_point = Inst::new(0).slot(Slot::Boundary);
-        Self {
-            def_range: LiveRangeSegment::new(zero_point, zero_point),
-            use_list_head: UseListIndex::new(0),
-            use_list_tail: UseListIndex::new(0),
-            fixed_def: false,
-            blockparam_idx: None,
-        }
-    }
-}
-
 /// Value live range calculation pass.
 pub struct ValueLiveRanges {
     /// `ValueSegment`s for each `ValueSet`.
@@ -149,7 +136,7 @@ pub struct ValueLiveRanges {
     value_sets: SecondaryMap<ValueSet, ValueSetData>,
 
     /// Information about a value collected while walking the IR.
-    value_info: SecondaryMap<Value, ValueInfo>,
+    value_info: SecondaryMap<Value, Option<ValueInfo>>,
 
     /// Set of blocks into which a value is known to be live-in, used by
     /// `build_segments`.
@@ -237,12 +224,8 @@ impl ValueLiveRanges {
         reg_matrix.clear();
         empty_segments.clear();
         self.value_sets.clear_and_resize(func.num_values());
+        self.value_info.clear_and_resize(func.num_values());
         self.use_list_entries.clear();
-
-        // We don't need to clear value_info: it is initialized on the
-        // definition of a value, which is guaranteed to appear before any other
-        // uses of that value.
-        self.value_info.grow_to(func.num_values());
 
         let mut ctx = Context {
             func,
@@ -610,13 +593,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         value,
                     );
                 }
-                let value_info = &self.value_live_ranges.value_info[value];
+                let value_info = self.value_use(value, inst, UseKind::FixedUse { reg });
                 let blockparam_idx = value_info
                     .blockparam_idx
                     .filter(|_| inst == value_info.def_range.from.inst());
                 self.hints
                     .add_fixed_use(value, inst, reg, blockparam_idx, self.func);
-                self.value_use(value, inst, UseKind::FixedUse { reg });
             }
             (
                 OperandKind::Def(value) | OperandKind::EarlyDef(value),
@@ -767,7 +749,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // Save the range of the defining instruction. This is needed when
         // generating live ranges since `ClassDef` doesn't record at which
         // point the def started.
-        self.value_live_ranges.value_info[value] = ValueInfo {
+        self.value_live_ranges.value_info[value] = Some(ValueInfo {
             def_range: live_range,
             use_list_head: self.value_live_ranges.use_list_entries.next_key(),
             use_list_tail: self.value_live_ranges.use_list_entries.next_key(),
@@ -777,7 +759,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             } else {
                 None
             },
-        };
+        });
 
         // Add the use to the linked list of uses for this value.
         self.value_live_ranges.use_list_entries.push(UseListEntry {
@@ -790,7 +772,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     }
 
     /// Visits a use of a value.
-    fn value_use(&mut self, value: Value, inst: Inst, use_kind: UseKind) {
+    fn value_use(&mut self, value: Value, inst: Inst, use_kind: UseKind) -> &ValueInfo {
         trace!("{value} use at {inst} with {use_kind}");
 
         // Add the use to the linked list of uses for this value.
@@ -801,11 +783,15 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             },
             next: None.into(),
         });
-        let value_info = &mut self.value_live_ranges.value_info[value];
+        let value_info = self.value_live_ranges.value_info[value]
+            .as_mut()
+            .expect("use before def");
         let tail = &mut self.value_live_ranges.use_list_entries[value_info.use_list_tail];
         debug_assert!(tail.next.is_none());
         tail.next = Some(next).into();
         value_info.use_list_tail = next;
+
+        value_info
     }
 
     /// Calculates the live-in/live-out bitsets for each block of the value's
@@ -880,8 +866,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
     /// Computes the live range for the given value.
     fn build_segments(&mut self, value: Value) {
+        // Ignore unused values.
+        let Some(value_info) = self.value_live_ranges.value_info[value].as_ref() else {
+            return;
+        };
+
         trace!("Building live range segments for {value}");
-        let value_info = &self.value_live_ranges.value_info[value];
         let has_fixed_hint = self.hints.has_fixed_hint(value);
 
         // Get the sorted list of all uses for this value by walking the linked

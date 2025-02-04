@@ -89,6 +89,12 @@ impl GenericFunction {
             builder.gen_block_insts(block)?;
         }
 
+        // Generate some unused values.
+        for _ in 0..builder.u.int_in_range(0..=10)? {
+            let bank = RegBank::new(builder.u.choose_index(reginfo.num_banks())?);
+            builder.new_value(bank)?;
+        }
+
         builder.finalize()?;
 
         Ok(builder.func)

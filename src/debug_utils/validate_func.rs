@@ -679,10 +679,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         // Check values.
         for value in self.func.values() {
-            // Used values without a definition are caught by the prior
-            // dominance check.
-            ensure!(self.value_defs[value].is_some(), "{value} is unused");
-
             if let Some((_cost, class)) = self.func.can_rematerialize(value) {
                 ensure!(
                     self.reginfo.class_group_size(class) == 1,
