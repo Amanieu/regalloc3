@@ -127,7 +127,7 @@ impl Allocation {
 
         match self.kind() {
             AllocationKind::PhysReg(reg) => {
-                EitherIter::A(reginfo.reg_units(reg).map(|unit| AllocationUnit::reg(unit)))
+                EitherIter::A(reginfo.reg_units(reg).map(AllocationUnit::reg))
             }
             AllocationKind::SpillSlot(slot) => {
                 EitherIter::B(iter::once(AllocationUnit::spillslot(slot)))

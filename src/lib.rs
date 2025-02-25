@@ -65,7 +65,8 @@
     clippy::too_many_lines,
     clippy::module_name_repetitions,
     clippy::missing_errors_doc,
-    clippy::doc_markdown
+    clippy::doc_markdown,
+    clippy::comparison_chain
 )]
 #![warn(
     clippy::explicit_iter_loop,

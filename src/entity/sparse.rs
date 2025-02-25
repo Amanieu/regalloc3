@@ -39,7 +39,7 @@ use crate::entity::{EntityRef, SecondaryMap};
 ///   while iterating over a `SparseMap` is linear in the number of elements in the mapping. This
 ///   is an advantage precisely when the mapping is sparse.
 /// - `SparseMap::clear()` is constant time and super-fast. `SecondaryMap::clear_and_resize()` is
-///    linear inthe size of the key space.
+///   linear inthe size of the key space.
 #[derive(Clone)]
 pub struct SparseMap<K, V>
 where

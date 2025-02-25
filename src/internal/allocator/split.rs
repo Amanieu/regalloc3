@@ -657,7 +657,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             create_vregs(split2.first_half(), self.uses, Some(hint));
             create_vregs(split2.into_second_half(), self.uses, None);
         } else {
-            create_vregs(segments, self.uses, Some(hint))
+            create_vregs(segments, self.uses, Some(hint));
         }
 
         // At least one of the new virtual registers must be able to evict the
