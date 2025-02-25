@@ -120,26 +120,17 @@ impl LiveRangePoint {
         }
     }
 
-    /// Fixed reservations only span a single Use/Def in one instruction, so we
-    /// can save space by only storing the start point and deriving the end
+    /// Fixed use reservations only span a single Use in one instruction, so
+    /// we can save space by only storing the start point and deriving the end
     /// point from it.
-    pub fn end_for_fixed_reservation(self) -> LiveRangePoint {
-        let expected = match self.slot() {
-            // Use
-            Slot::Boundary => self.inst().slot(Slot::Normal),
-            // EarlyDef/Def
-            Slot::Early | Slot::Normal => self.inst().next().slot(Slot::Boundary),
+    pub fn end_for_fixed_use_reservation(self) -> LiveRangePoint {
+        debug_assert_eq!(self.slot(), Slot::Boundary);
+        let end = Self {
+            bits: self.bits + 2,
         };
-
-        // Optimized implementation since this is in the hot path.
-        let optimized = Self {
-            // 0 => 3, then masked to 2
-            // 1 => 4
-            // 2 => 5, then masked to 4
-            bits: (self.bits + 3) & !1,
-        };
-        debug_assert_eq!(optimized, expected);
-        optimized
+        debug_assert_eq!(end.slot(), Slot::Normal);
+        debug_assert_eq!(end.inst(), self.inst());
+        end
     }
 }
 

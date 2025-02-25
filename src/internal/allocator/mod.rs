@@ -28,6 +28,7 @@ mod split;
 
 use alloc::vec;
 use alloc::vec::Vec;
+use core::ops::ControlFlow;
 use core::{fmt, iter};
 
 pub use order::combined_allocation_order;
@@ -653,9 +654,15 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 .all(|(vreg, reg)| {
                     stat!(self.stats, probe_for_free_reg);
                     self.reg_matrix
-                        .interference(vreg, reg, self.virt_regs, self.reginfo)
-                        .next()
-                        .is_none()
+                        .check_interference(
+                            self.virt_regs.segments(vreg),
+                            reg,
+                            self.reginfo,
+                            self.stats,
+                            false,
+                            |_| ControlFlow::Break(()),
+                        )
+                        .is_continue()
                 })
             {
                 return Some(cand);
@@ -665,31 +672,36 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 trace!("Interference found:");
                 for (vreg, reg) in vreg.zip_with_reg_group(cand.reg, self.virt_regs, self.reginfo) {
                     let mut first = true;
-                    for interference in
-                        self.reg_matrix
-                            .interference(vreg, reg, self.virt_regs, self.reginfo)
-                    {
-                        if first {
-                            trace!("- For {vreg} in {reg}:");
-                            first = false;
-                        }
-                        match interference.kind {
-                            InterferenceKind::Fixed => {
-                                trace!(
-                                    "  - Fixed interference at {} in {}",
-                                    interference.range, interference.unit
-                                );
+                    self.reg_matrix.check_interference(
+                        self.virt_regs.segments(vreg),
+                        reg,
+                        self.reginfo,
+                        self.stats,
+                        true,
+                        |interference| {
+                            if first {
+                                trace!("- For {vreg} in {reg}:");
+                                first = false;
                             }
-                            InterferenceKind::VirtReg(vreg) => {
-                                trace!(
-                                    "  - Interference with {vreg} at {} in {} (weight={})",
-                                    interference.range,
-                                    interference.unit,
-                                    self.virt_regs[vreg].spill_weight,
-                                );
+                            match interference.kind {
+                                InterferenceKind::Fixed => {
+                                    trace!(
+                                        "  - Fixed interference at {} in {}",
+                                        interference.range, interference.unit
+                                    );
+                                }
+                                InterferenceKind::VirtReg(vreg) => {
+                                    trace!(
+                                        "  - Interference with {vreg} at {} in {} (weight={})",
+                                        interference.range,
+                                        interference.unit,
+                                        self.virt_regs[vreg].spill_weight,
+                                    );
+                                }
                             }
-                        }
-                    }
+                            ControlFlow::<()>::Continue(())
+                        },
+                    );
                 }
             }
         }

@@ -495,6 +495,14 @@ pub struct Stats {
     isolated_group_vregs: usize,
     isolated_group_minimal_segments: usize,
 
+    // Stats from interference checking
+    interference_checks: usize,
+    interference_check_segments: usize,
+    vreg_interference: usize,
+    inlined_fixed_use_interference: usize,
+    fixed_use_interference: usize,
+    fixed_def_interference: usize,
+
     // Stats from spillslot allocation.
     spilled_sets: usize,
     spill_segments: usize,

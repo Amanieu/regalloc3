@@ -1,13 +1,15 @@
 //! Code related to evicting interference.
 
 use core::mem;
+use core::ops::ControlFlow;
 
 use super::order::CandidateReg;
 use super::{AbstractVirtRegGroup, Assignment, Context};
 use crate::function::Function;
 use crate::internal::allocator::Stage;
 use crate::internal::allocator::queue::VirtRegOrGroup;
-use crate::internal::reg_matrix::InterferenceKind;
+use crate::internal::live_range::ValueSegment;
+use crate::internal::reg_matrix::{Interference, InterferenceKind};
 use crate::reginfo::{PhysReg, RegInfo};
 
 impl<F: Function, R: RegInfo> Context<'_, F, R> {
@@ -31,28 +33,38 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             // register.
             let mut interference_weight = 0.0;
             self.allocator.interfering_vregs.clear();
-            for interference in vreg
-                .zip_with_reg_group(new_candidate.reg, self.virt_regs, self.reginfo)
-                .flat_map(|(vreg, reg)| {
-                    self.reg_matrix
-                        .interference(vreg, reg, self.virt_regs, self.reginfo)
-                })
+            for (vreg, reg) in
+                vreg.zip_with_reg_group(new_candidate.reg, self.virt_regs, self.reginfo)
             {
-                // Can't evict fixed interference.
-                let InterferenceKind::VirtReg(interfering_vreg) = interference.kind else {
-                    trace!("Found fixed interference, cannot evict");
-                    continue 'outer;
-                };
+                let result = self.reg_matrix.check_interference(
+                    self.virt_regs.segments(vreg),
+                    reg,
+                    self.reginfo,
+                    self.stats,
+                    false,
+                    |interference| {
+                        // Can't evict fixed interference.
+                        let InterferenceKind::VirtReg(interfering_vreg) = interference.kind else {
+                            trace!("Found fixed interference, cannot evict");
+                            return ControlFlow::Break(());
+                        };
 
-                // Stop if the cost of the eviction exceeds what we would gain
-                // from using this register ourselves.
-                interference_weight +=
-                    self.allocator.assignments[interfering_vreg].preference_weight();
-                if interference_weight >= new_candidate.preference_weight {
+                        // Stop if the cost of the eviction exceeds what we would gain
+                        // from using this register ourselves.
+                        interference_weight +=
+                            self.allocator.assignments[interfering_vreg].preference_weight();
+                        if interference_weight >= new_candidate.preference_weight {
+                            return ControlFlow::Break(());
+                        }
+
+                        self.allocator.interfering_vregs.push(interfering_vreg);
+                        ControlFlow::Continue(())
+                    },
+                );
+
+                if result.is_break() {
                     continue 'outer;
                 }
-
-                self.allocator.interfering_vregs.push(interfering_vreg);
             }
 
             return Some(new_candidate);
@@ -105,70 +117,96 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             };
             self.allocator.candidate_interfering_vregs.clear();
 
-            for interference in vreg
-                .zip_with_reg_group(candidate.reg, self.virt_regs, self.reginfo)
-                .flat_map(|(vreg, reg)| {
-                    self.reg_matrix
-                        .interference(vreg, reg, self.virt_regs, self.reginfo)
-                })
+            for (vreg, reg) in vreg.zip_with_reg_group(candidate.reg, self.virt_regs, self.reginfo)
             {
-                // Can't evict fixed interference.
-                let InterferenceKind::VirtReg(interfering_vreg) = interference.kind else {
-                    trace!("Found fixed interference, cannot evict");
-                    continue 'outer;
-                };
+                let f = |interference: Interference<ValueSegment>| {
+                    // Can't evict fixed interference.
+                    let InterferenceKind::VirtReg(interfering_vreg) = interference.kind else {
+                        trace!("Found fixed interference, cannot evict");
+                        return ControlFlow::Break(());
+                    };
 
-                let spill_weight = self.virt_regs[interfering_vreg].spill_weight;
-                let preference_weight =
-                    self.allocator.assignments[interfering_vreg].preference_weight();
-                trace!(
-                    "Interfering vreg {interfering_vreg} at {} in {} has cost {:?}",
-                    interference.range,
-                    interference.unit,
-                    EvictCost {
-                        preference_weight,
-                        spill_weight
+                    let spill_weight = self.virt_regs[interfering_vreg].spill_weight;
+                    let preference_weight =
+                        self.allocator.assignments[interfering_vreg].preference_weight();
+                    trace!(
+                        "Interfering vreg {interfering_vreg} at {} in {} has cost {:?}",
+                        interference.range,
+                        interference.unit,
+                        EvictCost {
+                            preference_weight,
+                            spill_weight
+                        }
+                    );
+
+                    // Don't double-count preference weight when we have
+                    // multiple interfering segments with the same register.
+                    if preference_weight != 0.0
+                        && self
+                            .allocator
+                            .candidate_interfering_vregs
+                            .contains(&interfering_vreg)
+                    {
+                        trace!(
+                            "Skipping preference weight from {interfering_vreg} which has already \
+                            been counted"
+                        );
+                        return ControlFlow::Continue(());
                     }
+
+                    cost.preference_weight += preference_weight;
+                    cost.spill_weight = cost.spill_weight.max(spill_weight);
+                    trace!("Total cost so far: {cost:?}");
+
+                    // Don't bother continuing with this candidate if we exceeded
+                    // the current best cost.
+                    if cost >= best_cost {
+                        trace!("Exceeded best cost {best_cost:?}");
+                        return ControlFlow::Break(());
+                    }
+
+                    // We can't evict virtual registers with a higher spill weight
+                    // than ours, *except* if our preference for the candidate is
+                    // higher than the total of those of all the evictees.
+                    if cost.spill_weight >= max_spill_weight
+                        && (candidate.preference_weight == 0.0 || strict_max_weight)
+                    {
+                        if strict_max_weight {
+                            trace!(
+                                "Exceeded maximum spill weight {max_spill_weight} and we already \
+                                evicted for preference"
+                            );
+                            return ControlFlow::Break(());
+                        }
+                        if cost.preference_weight >= candidate.preference_weight {
+                            trace!(
+                                "Exceeded maximum spill weight {max_spill_weight} and evictees have a \
+                                higher preference for this register"
+                            );
+                            return ControlFlow::Break(());
+                        }
+                    }
+
+                    // Build up the list of virtual registers to evict in
+                    // candidate_interfering_vregs.
+                    self.allocator
+                        .candidate_interfering_vregs
+                        .push(interfering_vreg);
+
+                    ControlFlow::Continue(())
+                };
+                let result = self.reg_matrix.check_interference(
+                    self.virt_regs.segments(vreg),
+                    reg,
+                    self.reginfo,
+                    self.stats,
+                    false,
+                    f,
                 );
 
-                cost.preference_weight += preference_weight;
-                cost.spill_weight = cost.spill_weight.max(spill_weight);
-                trace!("Total cost so far: {cost:?}");
-
-                // Don't bother continuing with this candidate if we exceeded
-                // the current best cost.
-                if cost >= best_cost {
-                    trace!("Exceeded best cost {best_cost:?}");
+                if result.is_break() {
                     continue 'outer;
                 }
-
-                // We can't evict virtual registers with a higher spill weight
-                // than ours, *except* if our preference for the candidate is
-                // higher than the total of those of all the evictees.
-                if cost.spill_weight >= max_spill_weight
-                    && (candidate.preference_weight == 0.0 || strict_max_weight)
-                {
-                    if strict_max_weight {
-                        trace!(
-                            "Exceeded maximum spill weight {max_spill_weight} and we already \
-                             evicted for preference"
-                        );
-                        continue 'outer;
-                    }
-                    if cost.preference_weight >= candidate.preference_weight {
-                        trace!(
-                            "Exceeded maximum spill weight {max_spill_weight} and evictees have a \
-                             higher preference for this register"
-                        );
-                        continue 'outer;
-                    }
-                }
-
-                // Build up the list of virtual registers to evict in
-                // candidate_interfering_vregs.
-                self.allocator
-                    .candidate_interfering_vregs
-                    .push(interfering_vreg);
             }
 
             // Promote candidate_interfering_vregs to interfering_vregs, which

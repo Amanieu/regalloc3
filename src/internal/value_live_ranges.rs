@@ -320,7 +320,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
                 // Reserve fixed ranges for instruction clobbers.
                 for unit in self.func.inst_clobbers(inst) {
-                    self.reg_matrix.reserve_clobber(
+                    self.reg_matrix.reserve_fixed_def(
                         unit,
                         LiveRangeSegment::new(
                             inst.slot(Slot::Normal),
@@ -511,13 +511,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 self.allocations
                     .set_allocation(inst, slot, Allocation::reg(reg));
                 for unit in self.reginfo.reg_units(reg) {
-                    self.reg_matrix.reserve_fixed(
+                    self.reg_matrix.reserve_fixed_def(
                         unit,
                         LiveRangeSegment::new(
                             inst.slot(Slot::Normal),
                             inst.next().slot(Slot::Boundary),
                         ),
-                        value,
                     );
                 }
                 self.hints.add_fixed_def(value, inst, reg, self.func);
@@ -545,13 +544,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 self.allocations
                     .set_allocation(inst, slot, Allocation::reg(reg));
                 for unit in self.reginfo.reg_units(reg) {
-                    self.reg_matrix.reserve_fixed(
+                    self.reg_matrix.reserve_fixed_def(
                         unit,
                         LiveRangeSegment::new(
                             inst.slot(Slot::Early),
                             inst.next().slot(Slot::Boundary),
                         ),
-                        value,
                     );
                 }
                 self.hints.add_fixed_def(value, inst, reg, self.func);
@@ -587,7 +585,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 self.allocations
                     .set_allocation(inst, slot, Allocation::reg(reg));
                 for unit in self.reginfo.reg_units(reg) {
-                    self.reg_matrix.reserve_fixed(
+                    self.reg_matrix.reserve_fixed_use(
                         unit,
                         LiveRangeSegment::new(inst.slot(Slot::Boundary), inst.slot(Slot::Normal)),
                         value,

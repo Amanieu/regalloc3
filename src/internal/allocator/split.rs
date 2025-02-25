@@ -1,17 +1,19 @@
 //! Live range splitting and spilling.
 
+use core::ops::ControlFlow;
+
 use alloc::vec;
 use alloc::vec::Vec;
 
 use super::queue::VirtRegOrGroup;
 use super::{AbstractVirtRegGroup, Assignment, Context, Stage};
-use crate::SplitStrategy;
-use crate::function::{Function, Inst, InstRange, OperandKind};
-use crate::internal::live_range::{Slot, ValueSegment};
-use crate::internal::reg_matrix::{InterferenceKind, RegMatrix};
+use crate::function::{Function, Inst, InstRange, OperandKind, Value};
+use crate::internal::live_range::{LiveRangeSegment, Slot, ValueSegment};
+use crate::internal::reg_matrix::{InterferenceKind, InterferenceSegment, RegMatrix};
 use crate::internal::uses::{UseKind, Uses};
 use crate::internal::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
 use crate::reginfo::{PhysReg, RegInfo};
+use crate::{SplitStrategy, Stats};
 
 /// Information about a use that we may want to include or exclude from a split.
 ///
@@ -46,8 +48,14 @@ struct SplitUse {
 /// register in this gap.
 #[derive(Debug)]
 struct SplitGap {
+    /// Range of instructions covered by the gap.
+    ///
+    /// The "initial" gap only covers a single instruction with the best use.
+    /// Other gaps cover the gap between 2 uses and the use instruction that is
+    /// away from the best use.
     range: InstRange,
 
+    /// Unnormalized total spill weight of all uses covered by this gap.
     weight: f32,
 
     /// Number live instructions in this gap.
@@ -55,6 +63,29 @@ struct SplitGap {
 
     /// Lowest block frequency of all blocks in this gap.
     min_freq: f32,
+}
+
+/// Live range segment to be checked against interference.
+#[derive(Debug, Copy, Clone)]
+struct GapSegment {
+    /// Live range for this segment.
+    live_range: LiveRangeSegment,
+
+    /// Value from the original `ValueSegment`.
+    value: Value,
+
+    /// Index of the `SplitGap` corresponding to this segment.
+    gap_idx: u32,
+}
+
+impl InterferenceSegment for GapSegment {
+    fn live_range(&self) -> LiveRangeSegment {
+        self.live_range
+    }
+
+    fn value(&self) -> Value {
+        self.value
+    }
 }
 
 /// A proposal for splitting based on the interference patterns of the current
@@ -123,7 +154,11 @@ pub struct Splitter {
     /// Information about gaps between uses.
     gaps: Vec<SplitGap>,
 
-    /// Maximum spill weights of inteferences in gaps.
+    /// Live range segments corresponding to each gap.
+    gap_segments: Vec<GapSegment>,
+
+    /// Maximum spill weights of inteferences in gaps for the current register
+    /// being checked.
     gap_interference_weights: Vec<f32>,
 }
 
@@ -133,8 +168,9 @@ impl Splitter {
             segments: vec![],
             minimal_segments: vec![],
             new_vregs: vec![],
-            gaps: vec![],
             uses: vec![],
+            gaps: vec![],
+            gap_segments: vec![],
             gap_interference_weights: vec![],
         }
     }
@@ -402,8 +438,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         initial_gap.unwrap()
     }
 
-    /// Counts the number of live instruction in each gap.
-    fn count_gap_live_insts(&mut self, vreg: VirtReg, initial_gap: usize) {
+    /// Builds the `GapSegments` by splitting the vreg's segments at gap
+    /// boundaries.
+    ///
+    /// This also counts the number of live instructions in each gap.
+    fn build_gap_segments(&mut self, vreg: VirtReg, initial_gap: usize) {
         let splitter = &mut self.allocator.splitter;
         let mut gaps = &mut splitter.gaps[..];
         let mut prev_segment_end = Inst::new(0);
@@ -431,6 +470,44 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             prev_segment_end = seg_end;
         }
 
+        let splitter = &mut self.allocator.splitter;
+        splitter.gap_segments.clear();
+        let mut gaps = &mut splitter.gaps[..];
+        let mut gap_idx = 0;
+        for segment in self.virt_regs.segments(vreg) {
+            while !gaps.is_empty() {
+                if gaps[0].range.to.slot(Slot::Boundary) <= segment.live_range.from {
+                    gaps = &mut gaps[1..];
+                    gap_idx += 1;
+                    continue;
+                }
+                if gaps[0].range.from.slot(Slot::Boundary) >= segment.live_range.to {
+                    break;
+                }
+                let start = segment
+                    .live_range
+                    .from
+                    .max(gaps[0].range.from.slot(Slot::Boundary));
+                let end = segment
+                    .live_range
+                    .to
+                    .min(gaps[0].range.to.slot(Slot::Boundary));
+                debug_assert!(start < end);
+
+                splitter.gap_segments.push(GapSegment {
+                    live_range: LiveRangeSegment::new(start, end),
+                    value: segment.value,
+                    gap_idx,
+                });
+
+                if gaps[0].range.to.slot(Slot::Boundary) > segment.live_range.to {
+                    break;
+                }
+                gaps = &mut gaps[1..];
+                gap_idx += 1;
+            }
+        }
+
         trace!("Gaps after counting live instructions:");
         for (idx, gap) in splitter.gaps.iter().enumerate() {
             trace!(
@@ -440,6 +517,14 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 gap.min_freq,
                 gap.live_insts,
                 if idx == initial_gap { " <==" } else { "" },
+            );
+        }
+
+        trace!("Segment gaps:");
+        for (idx, gap) in splitter.gap_segments.iter().enumerate() {
+            trace!(
+                "  {idx}: {} value={} gap_idx={}",
+                gap.live_range, gap.value, gap.gap_idx,
             );
         }
 
@@ -455,36 +540,36 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// evicted from a virtual register in order to allocate each gap.
     fn collect_gap_interference(
         reg: PhysReg,
-        vreg: VirtReg,
         splitter: &mut Splitter,
         reg_matrix: &RegMatrix,
         virt_regs: &VirtRegs,
         reginfo: &impl RegInfo,
+        stats: &mut Stats,
     ) {
         splitter.gap_interference_weights.clear();
         splitter
             .gap_interference_weights
             .resize(splitter.gaps.len(), 0.0);
 
-        for interference in reg_matrix.interference(vreg, reg, virt_regs, reginfo) {
-            // Fixed interference has a infinite spill weight since it cannot be
-            // evicted.
-            let weight = match interference.kind {
-                InterferenceKind::Fixed => f32::INFINITY,
-                InterferenceKind::VirtReg(virt_reg) => virt_regs[virt_reg].spill_weight,
-            };
-
-            let from = splitter
-                .gaps
-                .partition_point(|gap| gap.range.to <= interference.range.from.inst());
-            for (idx, gap) in splitter.gaps.iter().enumerate().skip(from) {
-                if gap.range.from >= interference.range.to.round_to_next_inst().inst() {
-                    break;
-                }
-                splitter.gap_interference_weights[idx] =
-                    splitter.gap_interference_weights[idx].max(weight);
-            }
-        }
+        reg_matrix.check_interference(
+            &splitter.gap_segments,
+            reg,
+            reginfo,
+            stats,
+            true,
+            |interference| {
+                // Fixed interference has a infinite spill weight since it cannot be
+                // evicted.
+                let weight = match interference.kind {
+                    InterferenceKind::Fixed => f32::INFINITY,
+                    InterferenceKind::VirtReg(virt_reg) => virt_regs[virt_reg].spill_weight,
+                };
+                let gap_interference_weight =
+                    &mut splitter.gap_interference_weights[interference.segment.gap_idx as usize];
+                *gap_interference_weight = gap_interference_weight.max(weight);
+                ControlFlow::<()>::Continue(())
+            },
+        );
 
         trace!("Gap interference for {reg}:");
         for (idx, weight) in splitter.gap_interference_weights.iter().enumerate() {
@@ -727,18 +812,18 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             self.allocator.splitter.gaps.len()
         );
 
-        // Count the number of live instructions in each gap.
-        self.count_gap_live_insts(vreg, initial_gap);
+        // Build the list of segments that we want to check interference against.
+        self.build_gap_segments(vreg, initial_gap);
 
         let mut best_split = None;
         for candidate in self.allocator.allocation_order.order() {
             Self::collect_gap_interference(
                 candidate.reg.as_single(),
-                vreg,
                 &mut self.allocator.splitter,
                 self.reg_matrix,
                 self.virt_regs,
                 self.reginfo,
+                self.stats,
             );
             if let Some(new_split) = self.find_split_region(candidate.reg.as_single(), initial_gap)
             {
