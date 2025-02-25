@@ -59,11 +59,7 @@ impl<T: ReservedValue> PackedOption<T> {
     /// Expands the packed option into a normal `Option`.
     #[inline]
     pub fn expand(self) -> Option<T> {
-        if self.is_none() {
-            None
-        } else {
-            Some(self.0)
-        }
+        if self.is_none() { None } else { Some(self.0) }
     }
 
     /// Maps a `PackedOption<T>` to `Option<U>` by applying a function to a

@@ -4,14 +4,14 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::{fmt, slice};
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 
 use crate::debug_utils::dominator_tree::DominatorTree;
 use crate::debug_utils::postorder::PostOrder;
 use crate::entity::{EntitySet, SecondaryMap};
 use crate::function::{
-    Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, TerminatorKind,
-    Value, ValueGroup, MAX_BLOCKS, MAX_BLOCK_PARAMS, MAX_INSTS, MAX_INST_OPERANDS, MAX_VALUES,
+    Block, Function, Inst, InstRange, MAX_BLOCK_PARAMS, MAX_BLOCKS, MAX_INST_OPERANDS, MAX_INSTS,
+    MAX_VALUES, Operand, OperandConstraint, OperandKind, TerminatorKind, Value, ValueGroup,
 };
 use crate::reginfo::{AllocationOrderSet, PhysReg, RegInfo, RegUnitSet};
 

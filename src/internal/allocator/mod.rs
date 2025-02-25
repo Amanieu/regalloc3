@@ -44,8 +44,8 @@ use super::split_placement::SplitPlacement;
 use super::uses::Uses;
 use super::virt_regs::builder::VirtRegBuilder;
 use super::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
-use crate::entity::packed_option::PackedOption;
 use crate::entity::SecondaryMap;
+use crate::entity::packed_option::PackedOption;
 use crate::function::Function;
 use crate::internal::reg_matrix::InterferenceKind;
 use crate::reginfo::{PhysReg, RegGroup, RegInfo};
@@ -153,8 +153,7 @@ impl AbstractVirtRegGroup for VirtReg {
         let vreg_data = &virt_regs[self];
         trace!(
             "  {self} ({}, spill_weight={}):",
-            vreg_data.class,
-            vreg_data.spill_weight,
+            vreg_data.class, vreg_data.spill_weight,
         );
         for segment in virt_regs.segments(self) {
             segment.dump(uses);
@@ -679,8 +678,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             InterferenceKind::Fixed => {
                                 trace!(
                                     "  - Fixed interference at {} in {}",
-                                    interference.range,
-                                    interference.unit
+                                    interference.range, interference.unit
                                 );
                             }
                             InterferenceKind::VirtReg(vreg) => {

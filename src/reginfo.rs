@@ -141,8 +141,8 @@
 
 use core::fmt;
 
-use crate::entity::iter::Keys;
 use crate::entity::SmallEntitySet;
+use crate::entity::iter::Keys;
 
 /// Maximum number of register units.
 pub const MAX_REG_UNITS: usize = 512;

@@ -20,8 +20,8 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::entity::packed_option::PackedOption;
 use crate::entity::SecondaryMap;
+use crate::entity::packed_option::PackedOption;
 use crate::function::{Block, Function, Inst};
 
 /// Optimal placement of live range split points.

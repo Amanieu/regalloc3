@@ -4,7 +4,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 use super::move_resolver::Edit;
 use crate::allocation_unit::AllocationUnit;
@@ -14,7 +14,7 @@ use crate::function::{Function, RematCost, Value};
 use crate::internal::allocator::combined_allocation_order;
 use crate::output::{Allocation, AllocationKind, SpillSlot};
 use crate::reginfo::{
-    PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet, SpillSlotSize, MAX_REG_UNITS,
+    MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet, SpillSlotSize,
 };
 
 /// Cache for reusing emergency spill slots.
@@ -169,10 +169,11 @@ impl ScratchAllocator {
         // Clearing the diversion list is expensive, but it's not needed since
         // all diversions should end up with a reference count of 0 at the end
         // of parallel move processing.
-        debug_assert!(self
-            .diverted
-            .values()
-            .all(|diversion| diversion.ref_count == 0));
+        debug_assert!(
+            self.diverted
+                .values()
+                .all(|diversion| diversion.ref_count == 0)
+        );
     }
 
     /// Makes the given register available for use as a scratch register.

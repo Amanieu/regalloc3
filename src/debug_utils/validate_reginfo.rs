@@ -2,13 +2,13 @@
 
 use core::fmt;
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 
 use crate::entity::SecondaryMap;
 use crate::reginfo::{
-    AllocationOrderSet, PhysReg, PhysRegSet, RegBank, RegClass, RegGroup, RegInfo, RegUnit,
-    RegUnitSet, MAX_GROUP_SIZE, MAX_PHYSREGS, MAX_REG_BANKS, MAX_REG_CLASSES, MAX_REG_GROUPS,
-    MAX_REG_UNITS, MAX_UNITS_PER_REG,
+    AllocationOrderSet, MAX_GROUP_SIZE, MAX_PHYSREGS, MAX_REG_BANKS, MAX_REG_CLASSES,
+    MAX_REG_GROUPS, MAX_REG_UNITS, MAX_UNITS_PER_REG, PhysReg, PhysRegSet, RegBank, RegClass,
+    RegGroup, RegInfo, RegUnit, RegUnitSet,
 };
 
 /// Checks `reginfo` to ensure it satisfies all of the pre-conditions required

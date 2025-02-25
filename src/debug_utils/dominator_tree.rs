@@ -9,8 +9,8 @@ use core::cmp::{self, Ordering};
 use core::mem;
 
 use super::postorder::PostOrder;
-use crate::entity::packed_option::PackedOption;
 use crate::entity::SecondaryMap;
+use crate::entity::packed_option::PackedOption;
 use crate::function::{Block, Function};
 
 #[derive(Default, Clone)]

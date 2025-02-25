@@ -22,6 +22,7 @@ use alloc::vec::Vec;
 use core::array;
 use core::cmp::Ordering;
 
+use crate::Stats;
 use crate::entity::packed_option::{PackedOption, ReservedValue};
 use crate::entity::{CompactList, SecondaryMap};
 use crate::function::{Function, OperandKind, Value, ValueGroup};
@@ -32,8 +33,7 @@ use crate::internal::split_placement::SplitPlacement;
 use crate::internal::uses::{Use, UseIndex, UseKind, Uses};
 use crate::internal::value_live_ranges::ValueSet;
 use crate::internal::virt_regs::{VirtReg, VirtRegData, VirtRegGroup, VirtRegs};
-use crate::reginfo::{RegBank, RegClass, RegInfo, MAX_GROUP_SIZE};
-use crate::Stats;
+use crate::reginfo::{MAX_GROUP_SIZE, RegBank, RegClass, RegInfo};
 
 /// Utility type for building a virtual register from value live ranges.
 pub struct VirtRegBuilder {
@@ -431,9 +431,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         if let Some(group) = &self.constraints.group {
                             trace!(
                                 "-> {} group_index={} existing_group={:?}",
-                                self.constraints.class,
-                                group.index,
-                                group.existing_group,
+                                self.constraints.class, group.index, group.existing_group,
                             );
                         } else {
                             trace!("-> {}", self.constraints.class);
@@ -744,13 +742,14 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // group.
         if let Some(vreg) = self.constraints.merge_into_existing_vreg {
             debug_assert!(self.constraints.group.is_some());
-            debug_assert!(self
-                .constraints
-                .group
-                .as_ref()
-                .unwrap()
-                .existing_group
-                .is_some());
+            debug_assert!(
+                self.constraints
+                    .group
+                    .as_ref()
+                    .unwrap()
+                    .existing_group
+                    .is_some()
+            );
 
             // Add the segments to the virtual register.
             //

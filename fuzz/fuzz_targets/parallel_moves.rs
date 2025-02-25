@@ -15,7 +15,7 @@ use regalloc3::function::{
 use regalloc3::output::{Allocation, AllocationKind, SpillSlot};
 use regalloc3::parallel_moves::ParallelMoves;
 use regalloc3::reginfo::{
-    PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet, SpillSlotSize, MAX_REG_UNITS,
+    MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet, SpillSlotSize,
 };
 
 /// Alternate between a simple register description with 2 banks that overlap,

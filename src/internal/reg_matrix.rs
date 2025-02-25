@@ -1,5 +1,5 @@
-use alloc::collections::btree_map::Cursor;
 use alloc::collections::BTreeMap;
+use alloc::collections::btree_map::Cursor;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::mem;
@@ -8,10 +8,10 @@ use core::ops::Bound;
 use super::live_range::ValueSegment;
 use super::live_range::{LiveRangePoint, LiveRangeSegment, Slot};
 use super::virt_regs::{VirtReg, VirtRegs};
-use crate::entity::packed_option::PackedOption;
 use crate::entity::SecondaryMap;
+use crate::entity::packed_option::PackedOption;
 use crate::function::Value;
-use crate::reginfo::{PhysReg, RegInfo, RegUnit, MAX_REG_UNITS};
+use crate::reginfo::{MAX_REG_UNITS, PhysReg, RegInfo, RegUnit};
 
 /// The kind of interference detected.
 #[derive(Debug, Clone, Copy)]
@@ -236,10 +236,12 @@ impl RegMatrix {
                 mem::swap(&mut to_insert, last);
 
                 // Check that all elements are still sorted.
-                debug_assert!(self.reservations[unit]
-                    .fixed
-                    .windows(2)
-                    .all(|window| window[0].0.end_for_fixed_reservation() <= window[1].0));
+                debug_assert!(
+                    self.reservations[unit]
+                        .fixed
+                        .windows(2)
+                        .all(|window| window[0].0.end_for_fixed_reservation() <= window[1].0)
+                );
             }
         }
 

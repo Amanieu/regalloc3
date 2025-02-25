@@ -120,8 +120,7 @@ impl SpillAllocator {
         );
         trace!(
             "Spilling segment for {} at {} to {set}",
-            segment.value,
-            segment.live_range
+            segment.value, segment.live_range
         );
         self.spilled_segments.push((set, segment));
         if !self.sets[set].spilled {
@@ -194,8 +193,7 @@ impl SpillAllocator {
         for &set in &self.sets_to_allocate {
             trace!(
                 "- {set}: {} {}",
-                self.sets[set].size,
-                self.sets[set].live_range_union
+                self.sets[set].size, self.sets[set].live_range_union
             );
         }
 

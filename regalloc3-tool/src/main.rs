@@ -193,7 +193,7 @@ fn main() -> Result<()> {
                 clobbers_per_inst: 0..=clobbers_per_inst,
             };
             let mut bytes = [0; 4096];
-            rand::thread_rng().fill_bytes(&mut bytes);
+            rand::rng().fill_bytes(&mut bytes);
             let function = GenericFunction::arbitrary_with_config(
                 &reginfo,
                 &mut Unstructured::new(&bytes),
@@ -216,7 +216,7 @@ fn main() -> Result<()> {
                 units_per_reg: 1..=units_per_reg,
             };
             let mut bytes = [0; 4096];
-            rand::thread_rng().fill_bytes(&mut bytes);
+            rand::rng().fill_bytes(&mut bytes);
             let reginfo =
                 GenericRegInfo::arbitrary_with_config(&mut Unstructured::new(&bytes), config)
                     .context("failed to generate arbitrary function")?;
@@ -238,7 +238,7 @@ fn main() -> Result<()> {
             println!("{}", debug_utils::DisplayRegInfo(&reginfo));
         }
         Args::ExampleReginfo { fixed_stack, arch } => {
-            let reginfo = arch.gen(fixed_stack);
+            let reginfo = arch.gen_reginfo(fixed_stack);
             let mut reginfo_text = String::new();
             reginfo.emit(&mut reginfo_text).unwrap();
 

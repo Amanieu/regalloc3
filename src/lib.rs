@@ -100,8 +100,8 @@ use internal::spill_allocator::SpillAllocator;
 use internal::split_placement::SplitPlacement;
 use internal::uses::Uses;
 use internal::value_live_ranges::ValueLiveRanges;
-use internal::virt_regs::builder::VirtRegBuilder;
 use internal::virt_regs::VirtRegs;
+use internal::virt_regs::builder::VirtRegBuilder;
 use output::Output;
 use reginfo::RegInfo;
 

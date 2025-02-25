@@ -5,13 +5,13 @@ use alloc::vec::Vec;
 
 use super::queue::VirtRegOrGroup;
 use super::{AbstractVirtRegGroup, Assignment, Context, Stage};
+use crate::SplitStrategy;
 use crate::function::{Function, Inst, InstRange, OperandKind};
 use crate::internal::live_range::{Slot, ValueSegment};
 use crate::internal::reg_matrix::{InterferenceKind, RegMatrix};
 use crate::internal::uses::{UseKind, Uses};
 use crate::internal::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
 use crate::reginfo::{PhysReg, RegInfo};
-use crate::SplitStrategy;
 
 /// Information about a use that we may want to include or exclude from a split.
 ///
@@ -231,10 +231,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         for (idx, u) in splitter.uses.iter().enumerate() {
             trace!(
                 "  {idx}: {} weight={} left_weight={} right_weight={}",
-                u.inst,
-                u.weight,
-                u.left_weight,
-                u.right_weight,
+                u.inst, u.weight, u.left_weight, u.right_weight,
             );
         }
 
@@ -393,9 +390,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             );
         }
 
-        debug_assert!(splitter
-            .gaps
-            .is_sorted_by(|a, b| a.range.to == b.range.from && a.range.from < b.range.to));
+        debug_assert!(
+            splitter
+                .gaps
+                .is_sorted_by(|a, b| a.range.to == b.range.from && a.range.from < b.range.to)
+        );
         for gap in &splitter.gaps {
             debug_assert!(gap.range.from < gap.range.to);
         }
@@ -516,7 +515,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // If the initial gap has too much inteference to allocate then we can't
         // split around it with this register.
         if weight * FLOAT_PRECISION_ADJUST <= interference_weight {
-            trace!("Can't split around initial gap: weight={weight} interference_weight={interference_weight}");
+            trace!(
+                "Can't split around initial gap: weight={weight} interference_weight={interference_weight}"
+            );
             return None;
         }
 
@@ -908,8 +909,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             // minimal segment.
                             trace!(
                                 "Generating minimal segment for {} at {}",
-                                segment.value,
-                                segment.live_range
+                                segment.value, segment.live_range
                             );
                             splitter.minimal_segments.push(segment);
                             break 'outer;
@@ -922,8 +922,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 segment.split_at(u.pos.next(), self.uses, self.hints);
                             trace!(
                                 "Generating minimal segment for {} at {}",
-                                before.value,
-                                before.live_range
+                                before.value, before.live_range
                             );
                             splitter.minimal_segments.push(before);
                             segment = after;
@@ -1052,9 +1051,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         if can_spill {
                             trace!(
                                 "Spillable use of {} at {}: {}",
-                                segment.value,
-                                u.pos,
-                                u.kind
+                                segment.value, u.pos, u.kind
                             );
                             continue;
                         }
@@ -1071,8 +1068,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             } else {
                                 trace!(
                                     "Rematerializing segment for {} at {}",
-                                    before.value,
-                                    before.live_range
+                                    before.value, before.live_range
                                 );
                                 self.allocator.remat_segments.push(before);
                             }
@@ -1085,8 +1081,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             // minimal segment.
                             trace!(
                                 "Generating minimal segment for {} at {}",
-                                segment.value,
-                                segment.live_range
+                                segment.value, segment.live_range
                             );
                             splitter.minimal_segments.push(segment);
                             break 'outer;
@@ -1099,8 +1094,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 segment.split_at(u.pos.next(), self.uses, self.hints);
                             trace!(
                                 "Generating minimal segment for {} at {}",
-                                before.value,
-                                before.live_range
+                                before.value, before.live_range
                             );
                             splitter.minimal_segments.push(before);
                             segment = after;
@@ -1117,8 +1111,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     } else {
                         trace!(
                             "Rematerializing segment for {} at {}",
-                            segment.value,
-                            segment.live_range
+                            segment.value, segment.live_range
                         );
                         self.allocator.remat_segments.push(segment);
                     }

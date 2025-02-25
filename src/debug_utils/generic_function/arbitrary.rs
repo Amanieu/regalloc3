@@ -14,7 +14,7 @@ use crate::function::{
     TerminatorKind, Value,
 };
 use crate::reginfo::{
-    AllocationOrderSet, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet, MAX_REG_UNITS,
+    AllocationOrderSet, MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet,
 };
 
 /// Configuration options for [`GenericFunction::arbitrary_with_config`].

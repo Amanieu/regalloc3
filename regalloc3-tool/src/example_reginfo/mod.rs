@@ -19,7 +19,7 @@ pub enum Arch {
 }
 
 impl Arch {
-    pub fn gen(self, num_fixed_stack: usize) -> RegInfo {
+    pub fn gen_reginfo(self, num_fixed_stack: usize) -> RegInfo {
         match self {
             Arch::Aarch64 => aarch64::make_aarch64_reginfo(num_fixed_stack),
             Arch::Riscv => riscv::make_riscv_reginfo(num_fixed_stack),

@@ -3,7 +3,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use regalloc3::{debug_utils, RegisterAllocator};
+use regalloc3::{RegisterAllocator, debug_utils};
 use regalloc3_fuzz::TestCase;
 
 fuzz_target!(|ts: [TestCase; 4]| {

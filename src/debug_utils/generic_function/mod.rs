@@ -4,8 +4,8 @@
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::entity::packed_option::PackedOption;
 use crate::entity::PrimaryMap;
+use crate::entity::packed_option::PackedOption;
 use crate::function::{
     Block, Function, Inst, InstRange, Operand, RematCost, TerminatorKind, Value, ValueGroup,
 };

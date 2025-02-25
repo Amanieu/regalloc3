@@ -20,12 +20,12 @@ use smallvec::SmallVec;
 use super::live_range::ValueSegment;
 use super::uses::Uses;
 use super::value_live_ranges::ValueLiveRanges;
-use crate::entity::packed_option::PackedOption;
+use crate::Stats;
 use crate::entity::SecondaryMap;
+use crate::entity::packed_option::PackedOption;
 use crate::function::{Block, Function, OperandConstraint, OperandKind, Value, ValueGroup};
 use crate::internal::value_live_ranges::ValueSet;
 use crate::union_find::UnionFind;
-use crate::Stats;
 
 pub struct Coalescing {
     /// Mapping of `Value` to `ValueSet`.
@@ -315,8 +315,7 @@ impl Coalescing {
                 } else {
                     trace!(
                         "-> overlap between {set_a} ({}) and {set_b} ({})",
-                        seg_a.live_range,
-                        seg_b.live_range
+                        seg_a.live_range, seg_b.live_range
                     );
                     return false;
                 }

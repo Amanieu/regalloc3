@@ -14,6 +14,7 @@ use super::spill_allocator::SpillAllocator;
 use super::split_placement::SplitPlacement;
 use super::uses::Uses;
 use super::value_live_ranges::ValueLiveRanges;
+use crate::Stats;
 use crate::debug_utils::display_iter;
 use crate::entity::iter::Keys;
 use crate::entity::packed_option::PackedOption;
@@ -21,7 +22,6 @@ use crate::entity::{CompactList, CompactListPool, PrimaryMap};
 use crate::function::Function;
 use crate::internal::live_range::LiveRangeSegment;
 use crate::reginfo::{RegClass, RegInfo};
-use crate::Stats;
 
 pub mod builder;
 
@@ -242,8 +242,7 @@ impl VirtRegs {
             }
             trace!(
                 "  {vreg} ({}, spill_weight={}):",
-                vreg_data.class,
-                vreg_data.spill_weight,
+                vreg_data.class, vreg_data.spill_weight,
             );
             for segment in vreg_data.segments.as_slice(&self.segment_pool) {
                 segment.dump(uses);

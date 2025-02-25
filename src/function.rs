@@ -116,10 +116,10 @@
 
 use core::fmt;
 
+use crate::entity::EntityRange;
 use crate::entity::iter::Keys;
 use crate::entity::packed_option::ReservedValue as _;
-use crate::entity::EntityRange;
-use crate::reginfo::{PhysReg, RegBank, RegClass, RegUnit, MAX_PHYSREGS};
+use crate::reginfo::{MAX_PHYSREGS, PhysReg, RegBank, RegClass, RegUnit};
 
 /// Maximum number of basic blocks.
 pub const MAX_BLOCKS: usize = 1 << 28;

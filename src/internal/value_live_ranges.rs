@@ -29,6 +29,7 @@ use super::hints::Hints;
 use super::live_range::{LiveRangeSegment, Slot, ValueSegment};
 use super::reg_matrix::RegMatrix;
 use super::uses::{Use, UseKind, Uses};
+use crate::Stats;
 use crate::entity::{EntitySet, PackedOption, PrimaryMap, SecondaryMap};
 use crate::function::{
     Block, Function, Inst, Operand, OperandConstraint, OperandKind, TerminatorKind, Value,
@@ -37,7 +38,6 @@ use crate::function::{
 use crate::internal::uses::UseList;
 use crate::output::Allocation;
 use crate::reginfo::{RegClass, RegInfo};
-use crate::Stats;
 
 entity_def! {
     /// A value set corresponds to a set of [`Value`]s whose live range do not

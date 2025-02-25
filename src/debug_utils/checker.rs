@@ -5,7 +5,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 use smallvec::SmallVec;
 
 use crate::allocation_unit::AllocationUnit;
@@ -13,7 +13,7 @@ use crate::debug_utils::DisplayOutputInst;
 use crate::entity::{EntitySet, SecondaryMap, SparseMap};
 use crate::function::{Block, Function, Inst, Operand, OperandConstraint, OperandKind, Value};
 use crate::output::{Allocation, AllocationKind, Output, OutputInst, SpillSlot};
-use crate::reginfo::{PhysReg, RegBank, RegClass, RegGroup, RegInfo, RegUnitSet, MAX_REG_UNITS};
+use crate::reginfo::{MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegGroup, RegInfo, RegUnitSet};
 
 /// Type representing a set of values. A `SmallVec` is used instead of a
 /// `HashSet` for efficiency since sets tend to be small (1-2 elements).

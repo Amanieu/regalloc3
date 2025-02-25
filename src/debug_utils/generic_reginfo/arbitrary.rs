@@ -7,8 +7,8 @@ use arbitrary::{Arbitrary, Result, Unstructured};
 use super::{GenericRegInfo, PhysRegData, RegBankData, RegClassData, RegGroupData};
 use crate::entity::PrimaryMap;
 use crate::reginfo::{
-    PhysReg, RegBank, RegClass, RegClassSet, RegGroup, RegGroupSet, RegInfo, RegUnit,
-    SpillSlotSize, MAX_GROUP_SIZE, MAX_REG_UNITS,
+    MAX_GROUP_SIZE, MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegClassSet, RegGroup, RegGroupSet,
+    RegInfo, RegUnit, SpillSlotSize,
 };
 
 /// Configuration options for [`GenericRegInfo::arbitrary_with_config`].
@@ -122,8 +122,12 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
         self.reginfo.regs[regs[0]].is_fixed_stack = false;
 
         // Generate a top-level class.
-        let [preferred_regs, non_preferred_regs, callee_saved_preferred_regs, callee_saved_non_preferred_regs] =
-            self.gen_allocation_order(&regs, true)?;
+        let [
+            preferred_regs,
+            non_preferred_regs,
+            callee_saved_preferred_regs,
+            callee_saved_non_preferred_regs,
+        ] = self.gen_allocation_order(&regs, true)?;
         let top_level_class = RegClassData {
             bank,
             includes_spillslots: true,

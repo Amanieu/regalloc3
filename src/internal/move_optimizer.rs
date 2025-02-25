@@ -37,7 +37,7 @@ use alloc::vec::Vec;
 use core::cmp::Reverse;
 use core::fmt;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 use super::allocations::Allocations;
 use super::coalescing::Coalescing;
@@ -50,7 +50,7 @@ use crate::function::{
     Block, Function, Inst, Operand, OperandConstraint, OperandKind, Value, ValueGroup,
 };
 use crate::output::{Allocation, AllocationKind, SpillSlot};
-use crate::reginfo::{PhysReg, PhysRegSet, RegInfo, RegUnit, RegUnitSet, MAX_REG_UNITS};
+use crate::reginfo::{MAX_REG_UNITS, PhysReg, PhysRegSet, RegInfo, RegUnit, RegUnitSet};
 use crate::{MoveOptimizationLevel, Stats};
 
 entity_def! {

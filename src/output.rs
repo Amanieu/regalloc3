@@ -37,9 +37,9 @@
 
 use core::fmt;
 
+use crate::entity::PrimaryMap;
 use crate::entity::iter::Keys;
 use crate::entity::packed_option::ReservedValue;
-use crate::entity::PrimaryMap;
 use crate::function::{Block, Function, Inst, InstRange, Value};
 use crate::internal::move_resolver::Edit;
 use crate::reginfo::{PhysReg, RegInfo, SpillSlotSize};

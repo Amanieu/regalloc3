@@ -3,8 +3,8 @@ use std::sync::OnceLock;
 
 use arbitrary::{Arbitrary, Result, Unstructured};
 use regalloc3::{
-    debug_utils::{self, GenericFunction, GenericRegInfo},
     Options,
+    debug_utils::{self, GenericFunction, GenericRegInfo},
 };
 
 /// Example register descriptions that are parsed and validated once.

@@ -4,7 +4,7 @@ use core::{fmt, iter};
 
 use crate::entity::{EntityRef, ReservedValue};
 use crate::output::{Allocation, AllocationKind, SpillSlot};
-use crate::reginfo::{RegInfo, RegUnit, MAX_REG_UNITS};
+use crate::reginfo::{MAX_REG_UNITS, RegInfo, RegUnit};
 
 /// Entity type which can represent either a [`RegUnit`] or a [`SpillSlot`].
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

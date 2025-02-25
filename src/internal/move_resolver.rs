@@ -272,8 +272,7 @@ impl MoveResolver {
 
             trace!(
                 "Dest half-move at {}: {} to {def_alloc}",
-                tied.move_pos,
-                tied.value
+                tied.move_pos, tied.value
             );
             self.dest_half_moves
                 .push((tied.move_pos, tied.value, def_alloc));
@@ -424,8 +423,7 @@ impl MoveResolver {
     fn process_remat_segment(&mut self, segment: &ValueSegment, uses: &Uses) {
         trace!(
             "Processing rematerialized segment {} ({})",
-            segment.live_range,
-            segment.value
+            segment.live_range, segment.value
         );
 
         for &u in &uses[segment.use_list] {
@@ -999,8 +997,7 @@ impl<F: Function> Context<'_, F> {
     fn process_segment(&mut self, segment: &ValueSegment, alloc: Option<Allocation>) {
         trace!(
             "Processing segment {} ({}) with allocation {alloc:?}",
-            segment.live_range,
-            segment.value
+            segment.live_range, segment.value
         );
 
         self.live_in = None;

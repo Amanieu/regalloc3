@@ -5,8 +5,8 @@ use core::mem;
 use super::order::CandidateReg;
 use super::{AbstractVirtRegGroup, Assignment, Context};
 use crate::function::Function;
-use crate::internal::allocator::queue::VirtRegOrGroup;
 use crate::internal::allocator::Stage;
+use crate::internal::allocator::queue::VirtRegOrGroup;
 use crate::internal::reg_matrix::InterferenceKind;
 use crate::reginfo::{PhysReg, RegInfo};
 
