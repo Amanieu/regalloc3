@@ -198,14 +198,6 @@ impl RegMatrix {
         }
     }
 
-    /// Returns whether there are any active reservations on the given physical
-    /// register.
-    pub fn is_reg_used(&self, reg: PhysReg, reginfo: &impl RegInfo) -> bool {
-        reginfo.reg_units(reg).all(|unit| {
-            self.reservations[unit].fixed.is_empty() && self.reservations[unit].vregs.is_empty()
-        })
-    }
-
     /// Indicates that a portion of the given register is reserved for a fixed
     /// constraint for the given live range and the given `Value`.
     ///

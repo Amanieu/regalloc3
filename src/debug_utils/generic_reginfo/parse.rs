@@ -157,8 +157,6 @@ fn parse_class_def(
     let mut members = None;
     let mut preferred_regs = None;
     let mut non_preferred_regs = None;
-    let mut callee_saved_preferred_regs = None;
-    let mut callee_saved_non_preferred_regs = None;
     let mut is_group = None;
     for pair in pair.into_inner() {
         match pair.as_rule() {
@@ -213,22 +211,6 @@ fn parse_class_def(
                 non_preferred_regs =
                     Some(parse_reg_group_list(reg_or_reg_group_list, &mut is_group)?);
             }
-            Rule::callee_saved_preferred_regs => {
-                if callee_saved_preferred_regs.is_some() {
-                    Err(custom_error(pair.as_span(), "duplicate attribute"))?;
-                }
-                let [reg_or_reg_group_list] = extract(pair, [Rule::reg_or_reg_group_list]);
-                callee_saved_preferred_regs =
-                    Some(parse_reg_group_list(reg_or_reg_group_list, &mut is_group)?);
-            }
-            Rule::callee_saved_non_preferred_regs => {
-                if callee_saved_non_preferred_regs.is_some() {
-                    Err(custom_error(pair.as_span(), "duplicate attribute"))?;
-                }
-                let [reg_or_reg_group_list] = extract(pair, [Rule::reg_or_reg_group_list]);
-                callee_saved_non_preferred_regs =
-                    Some(parse_reg_group_list(reg_or_reg_group_list, &mut is_group)?);
-            }
             _ => unreachable!(),
         }
     }
@@ -279,12 +261,8 @@ fn parse_class_def(
         sub_classes: RegClassSet::new(),
         preferred_regs: map_single(&preferred_regs),
         non_preferred_regs: map_single(&non_preferred_regs),
-        callee_saved_preferred_regs: map_single(&callee_saved_preferred_regs),
-        callee_saved_non_preferred_regs: map_single(&callee_saved_non_preferred_regs),
         group_preferred_regs: map_group(&preferred_regs),
         group_non_preferred_regs: map_group(&non_preferred_regs),
-        group_callee_saved_preferred_regs: map_group(&callee_saved_preferred_regs),
-        group_callee_saved_non_preferred_regs: map_group(&callee_saved_non_preferred_regs),
     });
     Ok(())
 }

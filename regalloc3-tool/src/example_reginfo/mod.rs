@@ -169,20 +169,6 @@ impl RegInfo {
                         classdata.non_preferred_regs
                     )?;
                 }
-                if !classdata.callee_saved_preferred_regs.is_empty() {
-                    writeln!(
-                        f,
-                        "        callee_saved_preferred_regs = {}",
-                        classdata.callee_saved_preferred_regs
-                    )?;
-                }
-                if !classdata.callee_saved_non_preferred_regs.is_empty() {
-                    writeln!(
-                        f,
-                        "        callee_saved_non_preferred_regs = {}",
-                        classdata.callee_saved_non_preferred_regs
-                    )?;
-                }
                 writeln!(f, "    }}")?;
             }
 
@@ -247,6 +233,4 @@ struct RegClassData {
     members: RegGroupList,
     preferred_regs: RegGroupList,
     non_preferred_regs: RegGroupList,
-    callee_saved_preferred_regs: RegGroupList,
-    callee_saved_non_preferred_regs: RegGroupList,
 }

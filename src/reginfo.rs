@@ -53,20 +53,14 @@
 //! the register allocator will attempt to select a suitable register for a
 //! constraint of this class.
 //!
-//! The [`RegInfo`] trait specifies the allocation order as 4 sets of registers:
+//! The [`RegInfo`] trait specifies the allocation order as 2 sets of registers:
 //! - [`AllocationOrderSet::Preferred`]
 //! - [`AllocationOrderSet::NonPreferred`]
-//! - [`AllocationOrderSet::CalleeSavedPreferred`]
-//! - [`AllocationOrderSet::CalleeSavedNonPreferred`]
 //!
 //! Preferred registers generally have a more compact or efficient encoding than
-//! non-preferred registers. Callee-saved registers are treated as normal
-//! registers if they have already been used at least once in the function, and
-//! are otherwise given the lowest priority. This minimizes the need for saving
-//! and restoring these registers on function entry and exit.
-//!
-//! For a minimal implementation, it is possible to only specify registers as
-//! [`AllocationOrderSet::Preferred`] and leave the other sets empty.
+//! non-preferred registers. Also, callee-saved registers should not be placed
+//! in the preferred set since they are reserved throughout the entire function
+//! by default.
 //!
 //! Any registers that are members of a class but not in the allocation order
 //! are only selected by the register allocator if it helps to satisfy a `Fixed`
@@ -280,26 +274,12 @@ pub enum AllocationOrderSet {
     /// Registers that are free to use and have a longer or less efficient
     /// instruction encoding.
     NonPreferred,
-
-    /// Registers that have a one-time cost on their first use in a function,
-    /// but should otherwise be treated as `Preferred`.
-    CalleeSavedPreferred,
-
-    /// Registers that have a one-time cost on their first use in a function,
-    /// but should otherwise be treated as `NonPreferred`.
-    CalleeSavedNonPreferred,
 }
 
 impl AllocationOrderSet {
     /// Iterator for each set.
     pub(crate) fn each() -> impl DoubleEndedIterator<Item = Self> {
-        [
-            Self::Preferred,
-            Self::NonPreferred,
-            Self::CalleeSavedPreferred,
-            Self::CalleeSavedNonPreferred,
-        ]
-        .into_iter()
+        [Self::Preferred, Self::NonPreferred].into_iter()
     }
 }
 
@@ -424,15 +404,7 @@ pub trait RegInfo {
     /// allocator will attempt to select an available registers by probing the
     /// sets in this order:
     /// * Preferred registers.
-    /// * Preferred callee-saved registers that have already been used in the
-    ///   function.
     /// * Non-preferred registers.
-    /// * Non-preferred callee-saved registers that have already been used in
-    ///   the function.
-    /// * Preferred callee-saved registers that have not yet been used in the
-    ///   function.
-    /// * Non-preferred callee-saved registers that have not yet been used in
-    ///   the function.
     ///
     /// This arrangement prioritizes registers with smaller encodings and
     /// penalizes registers that need to be saved on function entry and

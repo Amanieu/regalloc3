@@ -39,12 +39,8 @@ struct RegClassData {
     sub_classes: RegClassSet,
     preferred_regs: Vec<PhysReg>,
     non_preferred_regs: Vec<PhysReg>,
-    callee_saved_preferred_regs: Vec<PhysReg>,
-    callee_saved_non_preferred_regs: Vec<PhysReg>,
     group_preferred_regs: Vec<RegGroup>,
     group_non_preferred_regs: Vec<RegGroup>,
-    group_callee_saved_preferred_regs: Vec<RegGroup>,
-    group_callee_saved_non_preferred_regs: Vec<RegGroup>,
 }
 
 #[derive(Clone)]
@@ -118,23 +114,11 @@ impl GenericRegInfo {
                 non_preferred_regs: reginfo
                     .allocation_order(class, AllocationOrderSet::NonPreferred)
                     .into(),
-                callee_saved_preferred_regs: reginfo
-                    .allocation_order(class, AllocationOrderSet::CalleeSavedPreferred)
-                    .into(),
-                callee_saved_non_preferred_regs: reginfo
-                    .allocation_order(class, AllocationOrderSet::CalleeSavedNonPreferred)
-                    .into(),
                 group_preferred_regs: reginfo
                     .group_allocation_order(class, AllocationOrderSet::Preferred)
                     .into(),
                 group_non_preferred_regs: reginfo
                     .group_allocation_order(class, AllocationOrderSet::NonPreferred)
-                    .into(),
-                group_callee_saved_preferred_regs: reginfo
-                    .group_allocation_order(class, AllocationOrderSet::CalleeSavedPreferred)
-                    .into(),
-                group_callee_saved_non_preferred_regs: reginfo
-                    .group_allocation_order(class, AllocationOrderSet::CalleeSavedNonPreferred)
                     .into(),
             });
         }
@@ -222,12 +206,6 @@ impl RegInfo for GenericRegInfo {
         match set {
             AllocationOrderSet::Preferred => &self.classes[class].preferred_regs,
             AllocationOrderSet::NonPreferred => &self.classes[class].non_preferred_regs,
-            AllocationOrderSet::CalleeSavedPreferred => {
-                &self.classes[class].callee_saved_preferred_regs
-            }
-            AllocationOrderSet::CalleeSavedNonPreferred => {
-                &self.classes[class].callee_saved_non_preferred_regs
-            }
         }
     }
 
@@ -236,12 +214,6 @@ impl RegInfo for GenericRegInfo {
         match set {
             AllocationOrderSet::Preferred => &self.classes[class].group_preferred_regs,
             AllocationOrderSet::NonPreferred => &self.classes[class].group_non_preferred_regs,
-            AllocationOrderSet::CalleeSavedPreferred => {
-                &self.classes[class].group_callee_saved_preferred_regs
-            }
-            AllocationOrderSet::CalleeSavedNonPreferred => {
-                &self.classes[class].group_callee_saved_non_preferred_regs
-            }
         }
     }
 

@@ -122,12 +122,7 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
         self.reginfo.regs[regs[0]].is_fixed_stack = false;
 
         // Generate a top-level class.
-        let [
-            preferred_regs,
-            non_preferred_regs,
-            callee_saved_preferred_regs,
-            callee_saved_non_preferred_regs,
-        ] = self.gen_allocation_order(&regs, true)?;
+        let [preferred_regs, non_preferred_regs] = self.gen_allocation_order(&regs, true)?;
         let top_level_class = RegClassData {
             bank,
             includes_spillslots: true,
@@ -138,12 +133,8 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
             sub_classes: RegClassSet::from_iter([self.reginfo.classes.next_key()]),
             preferred_regs,
             non_preferred_regs,
-            callee_saved_preferred_regs,
-            callee_saved_non_preferred_regs,
             group_preferred_regs: vec![],
             group_non_preferred_regs: vec![],
-            group_callee_saved_preferred_regs: vec![],
-            group_callee_saved_non_preferred_regs: vec![],
         };
         let top_level_class = self.reginfo.classes.push(top_level_class);
 
@@ -174,14 +165,14 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
         &mut self,
         members: &[T],
         allows_spillslots: bool,
-    ) -> Result<[Vec<T>; 4]> {
-        let mut out = [vec![], vec![], vec![], vec![]];
+    ) -> Result<[Vec<T>; 2]> {
+        let mut out = [vec![], vec![]];
         for &member in members {
-            // 20% chance of omitting from the allocation order, otherwise
+            // 33% chance of omitting from the allocation order, otherwise
             // randomly assign to one of the categories.
-            match self.u.int_in_range(0..=4)? {
-                idx @ 0..4 => out[idx].push(member),
-                4 => {}
+            match self.u.int_in_range(0..=2)? {
+                idx @ 0..2 => out[idx].push(member),
+                2 => {}
                 _ => unreachable!(),
             }
         }
@@ -189,7 +180,7 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
         // Can't have an empty allocation order if spillslots aren't allowed.
         if !allows_spillslots && out.iter().all(|v| v.is_empty()) {
             let member = *self.u.choose(members)?;
-            out[self.u.int_in_range(0..=3)?].push(member);
+            out[self.u.int_in_range(0..=1)?].push(member);
         }
 
         Ok(out)
@@ -253,27 +244,17 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
             sub_classes: RegClassSet::from_iter([class]),
             preferred_regs: vec![],
             non_preferred_regs: vec![],
-            callee_saved_preferred_regs: vec![],
-            callee_saved_non_preferred_regs: vec![],
             group_preferred_regs: vec![],
             group_non_preferred_regs: vec![],
-            group_callee_saved_preferred_regs: vec![],
-            group_callee_saved_non_preferred_regs: vec![],
         };
 
         if group_size == 1 {
-            [
-                class_data.preferred_regs,
-                class_data.non_preferred_regs,
-                class_data.callee_saved_preferred_regs,
-                class_data.callee_saved_non_preferred_regs,
-            ] = self.gen_allocation_order(&members, includes_spillslots)?;
+            [class_data.preferred_regs, class_data.non_preferred_regs] =
+                self.gen_allocation_order(&members, includes_spillslots)?;
         } else {
             [
                 class_data.group_preferred_regs,
                 class_data.group_non_preferred_regs,
-                class_data.group_callee_saved_preferred_regs,
-                class_data.group_callee_saved_non_preferred_regs,
             ] = self.gen_allocation_order(&group_members, includes_spillslots)?;
         }
 

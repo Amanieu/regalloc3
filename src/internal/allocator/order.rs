@@ -9,14 +9,6 @@
 //!   try that one first.
 //! - Otherwise defer to the register class for its allocation order.
 //!
-//! The register class allocation order is defined by the client, but will
-//! typically consider several factors as well:
-//! - Caller-saved registers are preferred over callee-saved register since they
-//!   don't require saving/restoring in the function prologue/epilogue.
-//! - However if a callee-saved register is already in use, then the cost for
-//!   saving/restoring it has already been paid and it can be treated as a
-//!   callee-saved register.
-//!
 //! Finally, we want to randomize the register probing a bit to maximize the
 //! chance of successfully allocating with as few probes as possible. This helps
 //! improve allocation times.
@@ -30,7 +22,6 @@ use super::AbstractVirtRegGroup;
 use super::RegOrRegGroup;
 use crate::entity::SparseMap;
 use crate::internal::hints::Hints;
-use crate::internal::reg_matrix::RegMatrix;
 use crate::internal::virt_regs::{VirtReg, VirtRegs};
 use crate::reginfo::{AllocationOrderSet, PhysReg, RegClass, RegInfo};
 
@@ -39,36 +30,16 @@ use crate::reginfo::{AllocationOrderSet, PhysReg, RegClass, RegInfo};
 ///
 /// `random_seed` perturbs the order in a deterministic way to increase the
 /// likelyhood of finding a free register on the first try.
-///
-/// `is_reg_used` is a callback which checks if a given register currently has
-/// any live ranges allocated to it. This is used to de-prioritize callee-saved
-/// registers that haven't been allocated yet.
 pub fn combined_allocation_order<'a, T: Copy + 'a>(
     get_slice: impl Fn(AllocationOrderSet) -> &'a [T] + Copy,
     random_seed: usize,
-    is_reg_used: impl Fn(T) -> bool + Copy + 'a,
 ) -> impl DoubleEndedIterator<Item = T> + 'a {
     let iter = move |set| {
         let slice = get_slice(set);
         let (a, b) = slice.split_at(random_seed.checked_rem(slice.len()).unwrap_or(0));
         b.iter().copied().chain(a.iter().copied())
     };
-    let iter_if_used = move |set, used| iter(set).filter(move |&reg| is_reg_used(reg) == used);
-    iter(AllocationOrderSet::Preferred)
-        .chain(iter_if_used(AllocationOrderSet::CalleeSavedPreferred, true))
-        .chain(iter(AllocationOrderSet::NonPreferred))
-        .chain(iter_if_used(
-            AllocationOrderSet::CalleeSavedNonPreferred,
-            true,
-        ))
-        .chain(iter_if_used(
-            AllocationOrderSet::CalleeSavedPreferred,
-            false,
-        ))
-        .chain(iter_if_used(
-            AllocationOrderSet::CalleeSavedNonPreferred,
-            false,
-        ))
+    iter(AllocationOrderSet::Preferred).chain(iter(AllocationOrderSet::NonPreferred))
 }
 
 /// A candidate physical register to which a virtual register can be assigned.
@@ -120,7 +91,6 @@ impl AllocationOrder {
         vreg: impl AbstractVirtRegGroup,
         virt_regs: &VirtRegs,
         hints: &Hints,
-        reg_matrix: &RegMatrix,
         reginfo: &impl RegInfo,
         hint: Option<PhysReg>,
     ) {
@@ -182,15 +152,6 @@ impl AllocationOrder {
             for group in combined_allocation_order(
                 |set| reginfo.group_allocation_order(class, set),
                 random_seed,
-                |group| {
-                    // For groups, check whether *all* regs are already in use
-                    // so that using this group doesn't require any new
-                    // callee-saved registers to be preserved.
-                    reginfo
-                        .reg_group_members(group)
-                        .iter()
-                        .all(|&reg| reg_matrix.is_reg_used(reg, reginfo))
-                },
             ) {
                 // Insert remaining candidates with a preference weight of 0.
                 self.candidates
@@ -198,11 +159,9 @@ impl AllocationOrder {
                     .or_insert(0.0);
             }
         } else {
-            for reg in combined_allocation_order(
-                |set| reginfo.allocation_order(class, set),
-                random_seed,
-                |reg| reg_matrix.is_reg_used(reg, reginfo),
-            ) {
+            for reg in
+                combined_allocation_order(|set| reginfo.allocation_order(class, set), random_seed)
+            {
                 // Insert remaining candidates with a preference weight of 0.
                 self.candidates
                     .entry(RegOrRegGroup::single(reg))

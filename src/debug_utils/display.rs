@@ -301,14 +301,6 @@ impl<R: RegInfo> fmt::Display for DisplayRegInfo<'_, R> {
                 };
                 write_order("preferred_regs", AllocationOrderSet::Preferred)?;
                 write_order("non_preferred_regs", AllocationOrderSet::NonPreferred)?;
-                write_order(
-                    "callee_saved_preferred_regs",
-                    AllocationOrderSet::CalleeSavedPreferred,
-                )?;
-                write_order(
-                    "callee_saved_non_preferred_regs",
-                    AllocationOrderSet::CalleeSavedNonPreferred,
-                )?;
 
                 writeln!(f, "    }}")?;
             }

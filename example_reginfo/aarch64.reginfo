@@ -343,7 +343,7 @@ bank0 {
         spill_cost = 0.5
         members = r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 r23 r24 r25 r26 r27 r28 r29 r30 r33 r34 r35 r36 r37 r38 r39 r40
         preferred_regs = r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11 r12 r13 r14 r15 r16 r17 r18 r30
-        callee_saved_preferred_regs = r19 r20 r21 r22 r23 r24 r25 r26 r27 r28 r29
+        non_preferred_regs = r19 r20 r21 r22 r23 r24 r25 r26 r27 r28 r29
     }
 
     ; General-purpose stack only
@@ -358,7 +358,7 @@ bank0 {
         spill_cost = 1
         members = r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 r23 r24 r25 r26 r27 r28 r29 r30
         preferred_regs = r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11 r12 r13 r14 r15 r16 r17 r18 r30
-        callee_saved_preferred_regs = r19 r20 r21 r22 r23 r24 r25 r26 r27 r28 r29
+        non_preferred_regs = r19 r20 r21 r22 r23 r24 r25 r26 r27 r28 r29
     }
 
     ; Aligned register pairs for CASP
@@ -367,7 +367,7 @@ bank0 {
         spill_cost = 1
         members = rg0 rg1 rg2 rg3 rg4 rg5 rg6 rg7 rg8 rg9 rg10 rg11 rg12 rg13 rg14
         preferred_regs = rg0 rg1 rg2 rg3 rg4 rg5 rg6 rg7 rg8
-        callee_saved_preferred_regs = rg9 rg10 rg11 rg12 rg13 rg14
+        non_preferred_regs = rg9 rg10 rg11 rg12 rg13 rg14
     }
 }
 
@@ -383,7 +383,7 @@ bank1 {
         spill_cost = 0.5
         members = r41 r42 r43 r44 r45 r46 r47 r48 r49 r50 r51 r52 r53 r54 r55 r56 r57 r58 r59 r60 r61 r62 r63 r64 r65 r66 r67 r68 r69 r70 r71 r72 r73 r74 r75 r76 r77 r78 r79 r80
         preferred_regs = r41 r42 r43 r44 r45 r46 r47 r48 r57 r58 r59 r60 r61 r62 r63 r64 r65 r66 r67 r68 r69 r70 r71 r72
-        callee_saved_preferred_regs = r49 r50 r51 r52 r53 r54 r55 r56
+        non_preferred_regs = r49 r50 r51 r52 r53 r54 r55 r56
     }
 
     ; 64-bit FP/SIMD stack only
@@ -398,7 +398,7 @@ bank1 {
         spill_cost = 1
         members = r41 r42 r43 r44 r45 r46 r47 r48 r49 r50 r51 r52 r53 r54 r55 r56 r57 r58 r59 r60 r61 r62 r63 r64 r65 r66 r67 r68 r69 r70 r71 r72
         preferred_regs = r41 r42 r43 r44 r45 r46 r47 r48 r57 r58 r59 r60 r61 r62 r63 r64 r65 r66 r67 r68 r69 r70 r71 r72
-        callee_saved_preferred_regs = r49 r50 r51 r52 r53 r54 r55 r56
+        non_preferred_regs = r49 r50 r51 r52 r53 r54 r55 r56
     }
 
     ; 64-bit FP/SIMD register pairs
@@ -407,7 +407,7 @@ bank1 {
         spill_cost = 1
         members = rg15 rg16 rg17 rg18 rg19 rg20 rg21 rg22 rg23 rg24 rg25 rg26 rg27 rg28 rg29 rg30 rg31 rg32 rg33 rg34 rg35 rg36 rg37 rg38 rg39 rg40 rg41 rg42 rg43 rg44 rg45 rg46
         preferred_regs = rg15 rg16 rg17 rg18 rg19 rg20 rg21 rg31 rg32 rg33 rg34 rg35 rg36 rg37 rg38 rg39 rg40 rg41 rg42 rg43 rg44 rg45 rg46
-        callee_saved_preferred_regs = rg22 rg23 rg24 rg25 rg26 rg27 rg28 rg29 rg30
+        non_preferred_regs = rg22 rg23 rg24 rg25 rg26 rg27 rg28 rg29 rg30
     }
 
     ; 64-bit FP/SIMD register triples
@@ -416,7 +416,7 @@ bank1 {
         spill_cost = 1
         members = rg47 rg48 rg49 rg50 rg51 rg52 rg53 rg54 rg55 rg56 rg57 rg58 rg59 rg60 rg61 rg62 rg63 rg64 rg65 rg66 rg67 rg68 rg69 rg70 rg71 rg72 rg73 rg74 rg75 rg76 rg77 rg78
         preferred_regs = rg47 rg48 rg49 rg50 rg51 rg52 rg63 rg64 rg65 rg66 rg67 rg68 rg69 rg70 rg71 rg72 rg73 rg74 rg75 rg76 rg77 rg78
-        callee_saved_preferred_regs = rg53 rg54 rg55 rg56 rg57 rg58 rg59 rg60 rg61 rg62
+        non_preferred_regs = rg53 rg54 rg55 rg56 rg57 rg58 rg59 rg60 rg61 rg62
     }
 
     ; 64-bit FP/SIMD register quads
@@ -425,7 +425,7 @@ bank1 {
         spill_cost = 1
         members = rg79 rg80 rg81 rg82 rg83 rg84 rg85 rg86 rg87 rg88 rg89 rg90 rg91 rg92 rg93 rg94 rg95 rg96 rg97 rg98 rg99 rg100 rg101 rg102 rg103 rg104 rg105 rg106 rg107 rg108 rg109 rg110
         preferred_regs = rg79 rg80 rg81 rg82 rg83 rg95 rg96 rg97 rg98 rg99 rg100 rg101 rg102 rg103 rg104 rg105 rg106 rg107 rg108 rg109 rg110
-        callee_saved_preferred_regs = rg84 rg85 rg86 rg87 rg88 rg89 rg90 rg91 rg92 rg93 rg94
+        non_preferred_regs = rg84 rg85 rg86 rg87 rg88 rg89 rg90 rg91 rg92 rg93 rg94
     }
 }
 

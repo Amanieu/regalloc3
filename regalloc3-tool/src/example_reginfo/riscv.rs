@@ -76,11 +76,11 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
                 &all_x_regs[5..=7],
                 &all_x_regs[16..=17],
                 &all_x_regs[28..=31],
+                &all_x_regs[8..=9],
+                &all_x_regs[18..=27],
             ]
             .concat(),
         ),
-        callee_saved_preferred_regs: RegGroupList::Single(all_x_regs[8..=9].into()),
-        callee_saved_non_preferred_regs: RegGroupList::Single(all_x_regs[18..=27].into()),
     });
     let x_stack_only_class = reginfo.classes.push(RegClassData {
         desc: "General-purpose stack only".to_string(),
@@ -91,8 +91,6 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         members: RegGroupList::Single(x_fixed_stack.clone()),
         preferred_regs: RegGroupList::Single(vec![]),
         non_preferred_regs: RegGroupList::Single(vec![]),
-        callee_saved_preferred_regs: RegGroupList::Single(vec![]),
-        callee_saved_non_preferred_regs: RegGroupList::Single(vec![]),
     });
     let x_class = reginfo.classes.push(RegClassData {
         desc: "General-purpose registers".to_string(),
@@ -108,11 +106,11 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
                 &all_x_regs[5..=7],
                 &all_x_regs[16..=17],
                 &all_x_regs[28..=31],
+                &all_x_regs[8..=9],
+                &all_x_regs[18..=27],
             ]
             .concat(),
         ),
-        callee_saved_preferred_regs: RegGroupList::Single(all_x_regs[8..=9].into()),
-        callee_saved_non_preferred_regs: RegGroupList::Single(all_x_regs[18..=27].into()),
     });
     let casp_class = reginfo.classes.push(RegClassData {
         desc: "Aligned register pairs for Zacas".to_string(),
@@ -124,11 +122,7 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         preferred_regs: RegGroupList::Multi(
             [&zacas_regs[0..=0], &zacas_regs[2..=5], &zacas_regs[11..=12]].concat(),
         ),
-        non_preferred_regs: RegGroupList::Multi(vec![]),
-        callee_saved_preferred_regs: RegGroupList::Multi(
-            [&zacas_regs[1..=1], &zacas_regs[6..=10]].concat(),
-        ),
-        callee_saved_non_preferred_regs: RegGroupList::Multi(vec![]),
+        non_preferred_regs: RegGroupList::Multi([&zacas_regs[1..=1], &zacas_regs[6..=10]].concat()),
     });
     reginfo.banks.push(RegBankData {
         desc: "General-purpose registers".to_string(),
@@ -160,10 +154,15 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         members: RegGroupList::Single([&f_regs[..], &f_fixed_stack[..]].concat()),
         preferred_regs: RegGroupList::Single(f_regs[10..=15].into()),
         non_preferred_regs: RegGroupList::Single(
-            [&f_regs[0..=7], &f_regs[16..=17], &f_regs[28..=31]].concat(),
+            [
+                &f_regs[0..=7],
+                &f_regs[16..=17],
+                &f_regs[28..=31],
+                &f_regs[8..=9],
+                &f_regs[18..=27],
+            ]
+            .concat(),
         ),
-        callee_saved_preferred_regs: RegGroupList::Single(f_regs[8..=9].into()),
-        callee_saved_non_preferred_regs: RegGroupList::Single(f_regs[18..=27].into()),
     });
     let f_stack_only_class = reginfo.classes.push(RegClassData {
         desc: "Float stack only".to_string(),
@@ -174,8 +173,6 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         members: RegGroupList::Single(f_fixed_stack.clone()),
         preferred_regs: RegGroupList::Single(vec![]),
         non_preferred_regs: RegGroupList::Single(vec![]),
-        callee_saved_preferred_regs: RegGroupList::Single(vec![]),
-        callee_saved_non_preferred_regs: RegGroupList::Single(vec![]),
     });
     let f_class = reginfo.classes.push(RegClassData {
         desc: "Float registers".to_string(),
@@ -186,10 +183,15 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         members: RegGroupList::Single(f_regs.clone()),
         preferred_regs: RegGroupList::Single(f_regs[10..=15].into()),
         non_preferred_regs: RegGroupList::Single(
-            [&f_regs[0..=7], &f_regs[16..=17], &f_regs[28..=31]].concat(),
+            [
+                &f_regs[0..=7],
+                &f_regs[16..=17],
+                &f_regs[28..=31],
+                &f_regs[8..=9],
+                &f_regs[18..=27],
+            ]
+            .concat(),
         ),
-        callee_saved_preferred_regs: RegGroupList::Single(f_regs[8..=9].into()),
-        callee_saved_non_preferred_regs: RegGroupList::Single(f_regs[18..=27].into()),
     });
     reginfo.banks.push(RegBankData {
         desc: "Float registers".to_string(),
@@ -231,8 +233,6 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
             members: RegGroupList::Single([&v_regs[..], &v_fixed_stack[..]].concat()),
             preferred_regs: RegGroupList::Single(v_regs.clone()),
             non_preferred_regs: RegGroupList::Single(vec![]),
-            callee_saved_preferred_regs: RegGroupList::Single(vec![]),
-            callee_saved_non_preferred_regs: RegGroupList::Single(vec![]),
         });
         let v_stack_only_class = reginfo.classes.push(RegClassData {
             desc: format!("Vector stack only LMUL={lmul}"),
@@ -243,8 +243,6 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
             members: RegGroupList::Single(v_fixed_stack.clone()),
             preferred_regs: RegGroupList::Single(vec![]),
             non_preferred_regs: RegGroupList::Single(vec![]),
-            callee_saved_preferred_regs: RegGroupList::Single(vec![]),
-            callee_saved_non_preferred_regs: RegGroupList::Single(vec![]),
         });
         let v_class = reginfo.classes.push(RegClassData {
             desc: format!("Vector registers LMUL={lmul}"),
@@ -255,8 +253,6 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
             members: RegGroupList::Single(v_regs.clone()),
             preferred_regs: RegGroupList::Single(v_regs.clone()),
             non_preferred_regs: RegGroupList::Single(vec![]),
-            callee_saved_preferred_regs: RegGroupList::Single(vec![]),
-            callee_saved_non_preferred_regs: RegGroupList::Single(vec![]),
         });
 
         // Register groups for segment load/store.
@@ -281,8 +277,6 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
                 members: RegGroupList::Multi(segment_regs.clone()),
                 preferred_regs: RegGroupList::Multi(segment_regs.clone()),
                 non_preferred_regs: RegGroupList::Multi(vec![]),
-                callee_saved_preferred_regs: RegGroupList::Multi(vec![]),
-                callee_saved_non_preferred_regs: RegGroupList::Multi(vec![]),
             });
             classes.push(segment_class);
         }

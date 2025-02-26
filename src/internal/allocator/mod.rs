@@ -529,7 +529,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             vreg,
             self.virt_regs,
             self.hints,
-            self.reg_matrix,
             self.reginfo,
             hint,
         );

@@ -27,9 +27,7 @@ allows_spillslots               =  { "allows_spillslots" }
 spill_cost                      =  { "spill_cost" ~ "=" ~ float }
 preferred_regs                  =  { "preferred_regs" ~ "=" ~ reg_or_reg_group_list }
 non_preferred_regs              =  { "non_preferred_regs" ~ "=" ~ reg_or_reg_group_list }
-callee_saved_preferred_regs     =  { "callee_saved_preferred_regs" ~ "=" ~ reg_or_reg_group_list }
-callee_saved_non_preferred_regs =  { "callee_saved_non_preferred_regs" ~ "=" ~ reg_or_reg_group_list }
-class_statement                 = _{ group_size | class_members | allows_spillslots | spill_cost | preferred_regs | non_preferred_regs | callee_saved_preferred_regs | callee_saved_non_preferred_regs }
+class_statement                 = _{ group_size | class_members | allows_spillslots | spill_cost | preferred_regs | non_preferred_regs }
 class_list                      =  { class+ }
 superclasses                    =  { ":" ~ class_list }
 class_def                       =  { class ~ superclasses? ~ "{" ~ (class_statement? ~ NEWLINE)* ~ "}" }

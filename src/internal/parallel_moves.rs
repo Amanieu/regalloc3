@@ -271,9 +271,7 @@ impl ScratchAllocator {
         alloc_emergency_spillslot: &mut impl FnMut(SpillSlotSize) -> SpillSlot,
     ) -> Allocation {
         trace!("Searching for scratch register in {class}");
-        for reg in
-            combined_allocation_order(|set| reginfo.allocation_order(class, set), 0, |_| false)
-        {
+        for reg in combined_allocation_order(|set| reginfo.allocation_order(class, set), 0) {
             if reginfo.reg_units(reg).all(|unit| {
                 // If we need the scratch register for resolving a cycle,
                 // don't select a move source involved in the cycle.
@@ -336,10 +334,9 @@ impl ScratchAllocator {
         let spillslot = self
             .emergency_spillslot_cache
             .acquire(size, alloc_emergency_spillslot);
-        let reg =
-            combined_allocation_order(|set| reginfo.allocation_order(class, set), 0, |_| false)
-                .next_back()
-                .unwrap();
+        let reg = combined_allocation_order(|set| reginfo.allocation_order(class, set), 0)
+            .next_back()
+            .unwrap();
         trace!("-> evicted {reg} to emergency spillslot {spillslot}");
 
         // Since we are emitting moves in reverse order, this is after the
