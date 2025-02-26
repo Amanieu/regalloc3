@@ -37,13 +37,13 @@
 
 use core::fmt;
 
+use crate::RegisterAllocator;
 use crate::entity::PrimaryMap;
 use crate::entity::iter::Keys;
 use crate::entity::packed_option::ReservedValue;
 use crate::function::{Block, Function, Inst, InstRange, Value};
 use crate::internal::move_resolver::Edit;
 use crate::reginfo::{PhysReg, RegInfo, SpillSlotSize};
-use crate::{RegisterAllocator, Stats};
 
 /// Maximum size of the spill area.
 pub const MAX_SPILL_AREA_SIZE: u32 = 1 << 29;
@@ -194,7 +194,8 @@ where
     /// process.
     #[inline]
     #[must_use]
-    pub fn stats(&self) -> &Stats {
+    #[cfg(feature = "stats")]
+    pub fn stats(&self) -> &crate::Stats {
         &self.regalloc.stats
     }
 

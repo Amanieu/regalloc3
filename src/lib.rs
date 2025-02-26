@@ -120,15 +120,17 @@ macro_rules! trace_enabled {
     };
 }
 
-// Macro for collecting statistics.
-//
-// If this turns out to be too much overhead then we can put it under a cfg().
+// Macro for collecting statistics if the "stats" feature is enabled.
 macro_rules! stat {
     ($stats:expr, $field:ident) => {
-        $stats.$field += 1
+        if cfg!(feature = "stats") {
+            $stats.$field += 1;
+        }
     };
     ($stats:expr, $field:ident, $count:expr) => {
-        $stats.$field += $count
+        if cfg!(feature = "stats") {
+            $stats.$field += $count;
+        }
     };
 }
 

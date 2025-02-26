@@ -47,6 +47,9 @@ trace-log = []
 # Adds `#[derive(Args)]` for register allocator options. Requires std.
 clap = ["dep:clap"]
 
+# Collects statistics from the register allocator internals.
+stats = []
+
 # Exposes internal APIs for fuzzing. Only for use by the fuzzer.
 fuzzing = []
 
