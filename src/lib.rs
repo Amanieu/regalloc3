@@ -319,7 +319,9 @@ impl RegisterAllocator {
             reginfo,
         };
         trace!("Output:\n{output}");
-        trace!("{}", self.stats);
+        if cfg!(feature = "stats") {
+            trace!("{}", self.stats);
+        }
         Ok(output)
     }
 }
