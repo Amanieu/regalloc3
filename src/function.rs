@@ -661,6 +661,15 @@ pub trait Function {
     /// overflowing into infinity and precision loss.
     fn block_frequency(&self, block: Block) -> f32;
 
+    /// Indicates whether this block only exists to split a critical edge.
+    ///
+    /// This indicates that the block can be eliminated by jump chaining after
+    /// register allocation if no additional instructions are placed in it.
+    ///
+    /// This is used as a hint by the register allocation to avoid placing
+    /// moves and rematerializations in this block if possible.
+    fn block_is_critical_edge(&self, block: Block) -> bool;
+
     // --------------------------
     // Instruction register slots
     // --------------------------

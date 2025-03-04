@@ -77,9 +77,14 @@ impl<F: Function> fmt::Display for DisplayFunction<'_, F> {
             writeln!(f)?;
             writeln!(
                 f,
-                "{block}({}) freq({}):",
+                "{block}({}) freq({}){}:",
                 display_iter(self.0.block_params(block), ","),
                 self.0.block_frequency(block),
+                if self.0.block_is_critical_edge(block) {
+                    " critical_edge"
+                } else {
+                    ""
+                }
             )?;
 
             // Predecessors are emitted as a comment. They are recomputed after

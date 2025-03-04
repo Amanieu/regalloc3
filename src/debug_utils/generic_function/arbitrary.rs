@@ -231,6 +231,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             block_params_out: vec![],
             immediate_dominator: None.into(),
             frequency: entry_frequency,
+            is_critical_edge: false,
         });
 
         // To avoid critical edges, we need to ensure that blocks with multiple
@@ -280,6 +281,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
                     block_params_out: vec![],
                     immediate_dominator: None.into(),
                     frequency,
+                    is_critical_edge: self.u.arbitrary()?,
                 });
                 self.func.blocks[from].succs.push(to);
 

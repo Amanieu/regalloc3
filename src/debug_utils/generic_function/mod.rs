@@ -30,6 +30,7 @@ struct BlockData {
     block_params_out: Vec<Value>,
     immediate_dominator: PackedOption<Block>,
     frequency: f32,
+    is_critical_edge: bool,
 }
 
 #[derive(Clone)]
@@ -93,6 +94,7 @@ impl GenericFunction {
                 block_params_out: func.jump_blockparams(block).into(),
                 frequency: func.block_frequency(block),
                 immediate_dominator: func.block_immediate_dominator(block).into(),
+                is_critical_edge: func.block_is_critical_edge(block),
             });
         }
         for inst in func.insts() {
@@ -176,6 +178,11 @@ impl Function for GenericFunction {
     #[inline]
     fn block_frequency(&self, block: Block) -> f32 {
         self.blocks[block].frequency
+    }
+
+    #[inline]
+    fn block_is_critical_edge(&self, block: Block) -> bool {
+        self.blocks[block].is_critical_edge
     }
 
     #[inline]

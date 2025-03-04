@@ -119,11 +119,6 @@ impl Coalescing {
                 Ordering::Equal
             }
         };
-        let is_split_edge = |block: Block| {
-            // A split critical edge is an artifical block which only exists for
-            // the sake of passing blockparams to another block.
-            func.block_insts(block).len() == 1 && func.block_succs(block).len() == 1
-        };
         let num_connections =
             |block: Block| func.block_succs(block).len() + func.block_preds(block).len();
 
@@ -132,7 +127,11 @@ impl Coalescing {
             cmp_freq(a, b)
                 .reverse()
                 // Prioritize critical edges to enable jump threading.
-                .then_with(|| is_split_edge(a).cmp(&is_split_edge(b)).reverse())
+                .then_with(|| {
+                    func.block_is_critical_edge(a)
+                        .cmp(&func.block_is_critical_edge(b))
+                        .reverse()
+                })
                 // Prioritize blocks which are more connected in the CFG.
                 .then_with(|| num_connections(a).cmp(&num_connections(b)).reverse())
             // Otherwise follow the original block order.

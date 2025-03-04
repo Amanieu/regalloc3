@@ -278,6 +278,10 @@ impl Function for TestCase {
         unreachable!()
     }
 
+    fn block_is_critical_edge(&self, _block: Block) -> bool {
+        unreachable!()
+    }
+
     fn inst_operands(&self, _inst: Inst) -> &[Operand] {
         unreachable!()
     }

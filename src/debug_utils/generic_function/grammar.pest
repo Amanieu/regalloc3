@@ -20,8 +20,9 @@ value_attribute   = _{ regbank | remat }
 value_declaration =  { value ~ "=" ~ value_attribute+ }
 
 // Start of block label
-frequency   = { "freq" ~ "(" ~ float ~ ")" }
-block_label = { block ~ ("(" ~ value_list ~ ")")? ~ frequency ~ ":" }
+frequency     = { "freq" ~ "(" ~ float ~ ")" }
+critical_edge = { "critical_edge"? }
+block_label   = { block ~ ("(" ~ value_list ~ ")")? ~ frequency ~ critical_edge ~ ":" }
 
 // Instruction operand
 reuse                  =  { "reuse" ~ "(" ~ number ~ ")" }
@@ -39,7 +40,7 @@ branch      = { "branch" ~ "(" ~ block_list ~ ")" }
 jump        = { "jump" ~ block ~ ("(" ~ value_list ~ ")")? }
 ret         = { "ret" }
 opcode      = { normal_inst | branch | jump | ret }
-inst_label = { inst ~ ":" }
+inst_label  = { inst ~ ":" }
 instruction = { inst_label? ~ opcode ~ attribute* ~ operand* ~ clobber* }
 
 // Declarations come before the body

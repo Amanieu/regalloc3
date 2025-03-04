@@ -128,12 +128,24 @@ fn parse_block_label(
     blocks: &mut PrimaryMap<Block, BlockData>,
     insts: &mut PrimaryMap<Inst, InstData>,
 ) -> Result<()> {
-    let [block, value_list, frequency] =
-        extract(pair, [Rule::block, Rule::value_list, Rule::frequency]);
+    let [block, value_list, frequency, critical_edge] = extract(
+        pair,
+        [
+            Rule::block,
+            Rule::value_list,
+            Rule::frequency,
+            Rule::critical_edge,
+        ],
+    );
     parse_expected_entity(block, blocks.next_key())?;
     let block_params_in = parse_entity_list(value_list)?;
     let [float] = extract(frequency, [Rule::float]);
     let frequency = parse_number(float)?;
+    let is_critical_edge = match critical_edge.as_str() {
+        "critical_edge" => true,
+        "" => false,
+        _ => unreachable!(),
+    };
     blocks.push(BlockData {
         insts: InstRange::new(insts.next_key(), insts.next_key()),
         preds: vec![],
@@ -142,6 +154,7 @@ fn parse_block_label(
         block_params_out: vec![],
         immediate_dominator: None.into(),
         frequency,
+        is_critical_edge,
     });
     Ok(())
 }
