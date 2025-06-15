@@ -672,11 +672,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 trace!("Interference found:");
                 for (vreg, reg) in vreg.zip_with_reg_group(cand.reg, self.virt_regs, self.reginfo) {
                     let mut first = true;
-                    self.reg_matrix.check_interference(
+                    _ = self.reg_matrix.check_interference(
                         self.virt_regs.segments(vreg),
                         reg,
                         self.reginfo,
-                        self.stats,
+                        &mut Default::default(),
                         true,
                         |interference| {
                             if first {

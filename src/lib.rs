@@ -55,7 +55,6 @@
 
 #![no_std]
 #![warn(rust_2018_idioms, missing_docs)]
-#![feature(btree_cursors)]
 #![allow(
     clippy::too_many_arguments,
     clippy::collapsible_if,

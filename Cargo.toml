@@ -28,6 +28,7 @@ serde = { version = "1.0.193", optional = true, default-features = false, featur
     "alloc",
 ] }
 clap = { version = "4.5.22", features = ["derive"], optional = true }
+brie-tree = "0.1.0"
 
 [features]
 # Support for parsing a GenericFunction from a text representation.

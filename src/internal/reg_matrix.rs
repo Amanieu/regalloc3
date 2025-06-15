@@ -1,5 +1,6 @@
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+use brie_tree::nonmax::NonMaxU32;
+use brie_tree::{BTree, BTreeKey, Cursor, Iter};
 use core::fmt::Debug;
 use core::ops::{Bound, ControlFlow};
 
@@ -10,7 +11,7 @@ use crate::Stats;
 use crate::entity::SecondaryMap;
 use crate::entity::packed_option::PackedOption;
 use crate::function::Value;
-use crate::reginfo::{MAX_REG_UNITS, PhysReg, RegInfo, RegUnit};
+use crate::reginfo::{MAX_REG_UNITS, MAX_UNITS_PER_REG, PhysReg, RegInfo, RegUnit};
 
 /// The kind of interference detected.
 #[derive(Debug, Clone, Copy)]
@@ -55,7 +56,19 @@ impl InterferenceSegment for ValueSegment {
     }
 }
 
-/// An entry in the `BTreeMap` for each register unit.
+impl BTreeKey for LiveRangePoint {
+    type Int = NonMaxU32;
+
+    fn to_int(self) -> Self::Int {
+        NonMaxU32::new(self.bits).unwrap()
+    }
+
+    fn from_int(int: Self::Int) -> Self {
+        LiveRangePoint { bits: int.get() }
+    }
+}
+
+/// An entry in the `BTree` for each register unit.
 ///
 /// The key is the end point of the live range.
 #[derive(Debug, Clone, Copy)]
@@ -88,7 +101,7 @@ struct Entry {
 #[derive(Default)]
 struct UnitReservations {
     /// B-Tree of allocations on the register unit.
-    btree: BTreeMap<LiveRangePoint, Entry>,
+    btree: BTree<LiveRangePoint, Entry>,
 
     /// Reservations for fixed-register uses, sorted by start point.
     ///
@@ -112,19 +125,19 @@ impl UnitReservations {
 
         // Find the first reservation that ends after the start of the first
         // segment. This is the starting point for our scan.
-        let mut cursor = self
+        let mut iter = self
             .btree
-            .lower_bound(Bound::Excluded(&segments[0].live_range().from));
-        let Some(mut current_entry) = cursor.next() else {
+            .iter_from(Bound::Excluded(segments[0].live_range().from));
+        let Some(mut current_entry) = iter.next() else {
             return ControlFlow::Continue(());
         };
 
         'outer: for segment in segments {
             // Skip live range reservations that end before the start of the
             // current segment.
-            while *current_entry.0 <= segment.live_range().from {
+            while current_entry.0 <= segment.live_range().from {
                 // TODO(perf): Integrate with btree to seek more efficiently.
-                match cursor.next() {
+                match iter.next() {
                     Some(entry) => current_entry = entry,
                     None => return ControlFlow::Continue(()),
                 }
@@ -132,7 +145,7 @@ impl UnitReservations {
 
             // Loop over all entries that overlap the segment.
             loop {
-                let (&to, entry) = current_entry;
+                let (to, entry) = current_entry;
 
                 // If the live range reservation starts after the end of the current
                 // segment then there is no overlap. Continue to the next segment.
@@ -220,7 +233,7 @@ impl UnitReservations {
                 }
 
                 // Advance the cursor to the next entry.
-                match cursor.next() {
+                match iter.next() {
                     Some(entry) => current_entry = entry,
                     None => return ControlFlow::Continue(()),
                 }
@@ -318,8 +331,8 @@ impl RegMatrix {
     pub fn is_unit_free(&self, unit: RegUnit, check_range: LiveRangeSegment) -> bool {
         if let Some((_to, entry)) = self.reservations[unit]
             .btree
-            .lower_bound(Bound::Excluded(&check_range.from))
-            .peek_next()
+            .iter_from(Bound::Excluded(check_range.from))
+            .next()
         {
             if entry.from <= check_range.to {
                 return false;
@@ -380,16 +393,16 @@ impl RegMatrix {
                 // checks can still take the fixed reservation into account.
                 let mut cursor = reservations
                     .btree
-                    .lower_bound_mut(Bound::Excluded(&segment.live_range().from));
+                    .cursor_mut_at(Bound::Excluded(segment.live_range().from));
                 let mut overlaps_fixed = false;
-                while let Some((_to, entry)) = cursor.peek_next() {
+                while let Some((_to, &entry)) = cursor.entry() {
                     if entry.from >= segment.live_range.to {
                         break;
                     }
                     debug_assert_eq!(entry.vreg.expand(), None);
                     debug_assert_ne!(entry.fixed_use, !0);
                     overlaps_fixed = true;
-                    cursor.remove_next();
+                    cursor.remove();
                 }
                 let fixed_use = if overlaps_fixed {
                     reservations
@@ -400,16 +413,14 @@ impl RegMatrix {
                     !0
                 };
 
-                cursor
-                    .insert_after(
-                        segment.live_range.to,
-                        Entry {
-                            from: segment.live_range.from,
-                            vreg: Some(vreg).into(),
-                            fixed_use,
-                        },
-                    )
-                    .unwrap();
+                cursor.insert_before(
+                    segment.live_range.to,
+                    Entry {
+                        from: segment.live_range.from,
+                        vreg: Some(vreg).into(),
+                        fixed_use,
+                    },
+                );
             }
         }
     }
@@ -431,7 +442,7 @@ impl RegMatrix {
             for segment in virt_regs.segments(vreg) {
                 debug_assert!(!segment.live_range.is_empty());
 
-                let entry = reservations.btree.remove(&segment.live_range.to).unwrap();
+                let entry = reservations.btree.remove(segment.live_range.to).unwrap();
 
                 // Ensure the entry contained the expected virtual register.
                 debug_assert_eq!(entry.from, segment.live_range.from);
@@ -468,7 +479,7 @@ impl RegMatrix {
                 continue;
             }
             trace!("{unit}:");
-            for (&to, entry) in &reservations.btree {
+            for (to, entry) in &reservations.btree {
                 let segment = LiveRangeSegment::new(entry.from, to);
                 if let Some(vreg) = entry.vreg.expand() {
                     trace!("- {segment}: {vreg}");
@@ -490,5 +501,392 @@ impl RegMatrix {
                 }
             }
         }
+    }
+}
+
+/// Cursor which scans the reservations in a unit for interference in the
+/// forwards direction.
+struct UnitInterferenceForwardCursor<'a> {
+    /// The next entry to check for interfereence.
+    current_entry: (LiveRangePoint, Entry),
+
+    /// B-Tree iterator pointing after `current_entry`.
+    iter: Iter<'a, LiveRangePoint, Entry>,
+}
+
+impl<'a> UnitInterferenceForwardCursor<'a> {
+    fn advance_right<B, S: InterferenceSegment>(
+        cursor: &mut Option<Self>,
+        segment: &S,
+        unit: RegUnit,
+        full_results: bool,
+        reservations: &UnitReservations,
+        stats: &mut Stats,
+        mut f: impl FnMut(Interference<S>) -> ControlFlow<B>,
+    ) -> ControlFlow<B> {
+        stat!(stats, interference_check_segments);
+
+        // If the cursor is None then we have reached the end of the tree and
+        // there is no more interference.
+        let Some(inner) = cursor.as_mut() else {
+            return ControlFlow::Continue(());
+        };
+
+        // Skip live range reservations that end before the start of the
+        // current segment.
+        while inner.current_entry.0 <= segment.live_range().from {
+            // TODO(perf): Integrate with btree to seek more efficiently.
+            match inner.iter.next() {
+                Some((key, &value)) => inner.current_entry = (key, value),
+                None => {
+                    *cursor = None;
+                    return ControlFlow::Continue(());
+                }
+            }
+        }
+
+        // Loop over all entries that overlap the segment.
+        loop {
+            let (to, entry) = inner.current_entry;
+
+            // If the live range reservation starts after the end of the current
+            // segment then there is no overlap. Continue to the next segment.
+            if entry.from >= segment.live_range().to {
+                return ControlFlow::Continue(());
+            }
+
+            // Calculate the overlap range. This is currently only used for
+            // debug logging and is optimized out otherwise.
+            let range = LiveRangeSegment::new(
+                entry.from.max(segment.live_range().from),
+                to.min(segment.live_range().to),
+            );
+            debug_assert!(range.from < range.to);
+
+            // Invoke the callback to report any interference.
+            if let Some(vreg) = entry.vreg.expand() {
+                stat!(stats, vreg_interference);
+                f(Interference {
+                    range,
+                    kind: InterferenceKind::VirtReg(vreg),
+                    unit,
+                    segment: *segment,
+                })?;
+
+                // If this vreg overlaps with one or more fixed use reservations
+                // then also check if the current segment overlaps any of those
+                // reservations. This is important for calculating eviction
+                // costs since fixed uses cannot be evicted.
+                if entry.fixed_use != !0 {
+                    for &(from, value) in &reservations.fixed_uses[entry.fixed_use as usize..] {
+                        if from >= segment.live_range().to {
+                            break;
+                        }
+                        let to = from.end_for_fixed_use_reservation();
+                        if to <= segment.live_range().from {
+                            continue;
+                        }
+                        if value != segment.value() {
+                            stat!(stats, inlined_fixed_use_interference);
+                            f(Interference {
+                                range: LiveRangeSegment::new(from, to),
+                                kind: InterferenceKind::Fixed,
+                                unit,
+                                segment: *segment,
+                            })?;
+                        }
+                    }
+
+                    // If this entry ends after the end of the segment then
+                    // it may still have fixed conflicts that interfere with
+                    // the next segment. Continue to the next segment
+                    // without advancing the cursor in this case.
+                    if to > segment.live_range().to {
+                        return ControlFlow::Continue(());
+                    }
+                }
+            } else {
+                // If fixed_use_idx is !0 then this indicates a fixed def
+                // which can never overlap a vreg segment. Otherwise this is
+                // a fixed use reservation which can overlap vreg segments
+                // that have the same value as the reservation.
+                if segment.value().index() != entry.fixed_use as usize {
+                    if entry.fixed_use == !0 {
+                        stat!(stats, fixed_def_interference);
+                    } else {
+                        stat!(stats, fixed_use_interference);
+                    }
+                    f(Interference {
+                        range,
+                        kind: InterferenceKind::Fixed,
+                        unit,
+                        segment: *segment,
+                    })?;
+                }
+            }
+
+            // If this entry ends after the end of the segment then it may
+            // also interfere with the next segment. Continue to the next
+            // segment without advancing the cursor in this case.
+            //
+            // We only do this if full interference results are needed.
+            if full_results && to > segment.live_range().to {
+                return ControlFlow::Continue(());
+            }
+
+            // Advance the cursor to the next entry.
+            match inner.iter.next() {
+                Some((key, &value)) => inner.current_entry = (key, value),
+                None => {
+                    *cursor = None;
+                    return ControlFlow::Continue(());
+                }
+            }
+        }
+    }
+}
+
+/// Cursor which scans the reservations in a unit for interference in the
+/// backwards direction.
+struct UnitInterferenceBackwardCursor<'a> {
+    /// The next entry to check for interfereence.
+    current_entry: (LiveRangePoint, Entry),
+
+    /// B-Tree cursor pointing after `current_entry`.
+    cursor: Cursor<'a, LiveRangePoint, Entry>,
+}
+
+impl<'a> UnitInterferenceBackwardCursor<'a> {
+    fn advance_left<B, S: InterferenceSegment>(
+        cursor: &mut Option<Self>,
+        segment: &S,
+        unit: RegUnit,
+        full_results: bool,
+        reservations: &UnitReservations,
+        stats: &mut Stats,
+        mut f: impl FnMut(Interference<S>) -> ControlFlow<B>,
+    ) -> ControlFlow<B> {
+        stat!(stats, interference_check_segments);
+
+        // If the cursor is None then we have reached the end of the tree and
+        // there is no more interference.
+        let Some(inner) = cursor.as_mut() else {
+            return ControlFlow::Continue(());
+        };
+
+        // Skip live range reservations that start after the end of the
+        // current segment.
+        while inner.current_entry.1.from >= segment.live_range().to {
+            // TODO(perf): Integrate with btree to seek more efficiently.
+            if inner.cursor.prev() {
+                let (key, &value) = inner.cursor.entry().unwrap();
+                inner.current_entry = (key, value);
+            } else {
+                *cursor = None;
+                return ControlFlow::Continue(());
+            }
+        }
+
+        // Loop over all entries that overlap the segment.
+        loop {
+            let (to, entry) = inner.current_entry;
+
+            // If the live range reservation ends before the start of the current
+            // segment then there is no overlap. Continue to the next segment.
+            if to <= segment.live_range().from {
+                return ControlFlow::Continue(());
+            }
+
+            // Calculate the overlap range. This is currently only used for
+            // debug logging and is optimized out otherwise.
+            let range = LiveRangeSegment::new(
+                entry.from.max(segment.live_range().from),
+                to.min(segment.live_range().to),
+            );
+            debug_assert!(range.from < range.to);
+
+            // Invoke the callback to report any interference.
+            if let Some(vreg) = entry.vreg.expand() {
+                stat!(stats, vreg_interference);
+                f(Interference {
+                    range,
+                    kind: InterferenceKind::VirtReg(vreg),
+                    unit,
+                    segment: *segment,
+                })?;
+
+                // If this vreg overlaps with one or more fixed use reservations
+                // then also check if the current segment overlaps any of those
+                // reservations. This is important for calculating eviction
+                // costs since fixed uses cannot be evicted.
+                if entry.fixed_use != !0 {
+                    for &(from, value) in &reservations.fixed_uses[entry.fixed_use as usize..] {
+                        if from >= segment.live_range().to {
+                            break;
+                        }
+                        let to = from.end_for_fixed_use_reservation();
+                        if to <= segment.live_range().from {
+                            continue;
+                        }
+                        if value != segment.value() {
+                            stat!(stats, inlined_fixed_use_interference);
+                            f(Interference {
+                                range: LiveRangeSegment::new(from, to),
+                                kind: InterferenceKind::Fixed,
+                                unit,
+                                segment: *segment,
+                            })?;
+                        }
+                    }
+
+                    // If this entry starts before the start of the segment then
+                    // it may still have fixed conflicts that interfere with
+                    // the next segment. Continue to the next segment
+                    // without advancing the cursor in this case.
+                    if entry.from < segment.live_range().from {
+                        return ControlFlow::Continue(());
+                    }
+                }
+            } else {
+                // If fixed_use_idx is !0 then this indicates a fixed def
+                // which can never overlap a vreg segment. Otherwise this is
+                // a fixed use reservation which can overlap vreg segments
+                // that have the same value as the reservation.
+                if segment.value().index() != entry.fixed_use as usize {
+                    if entry.fixed_use == !0 {
+                        stat!(stats, fixed_def_interference);
+                    } else {
+                        stat!(stats, fixed_use_interference);
+                    }
+                    f(Interference {
+                        range,
+                        kind: InterferenceKind::Fixed,
+                        unit,
+                        segment: *segment,
+                    })?;
+                }
+            }
+
+            // If this entry starts before the start of the segment then it may
+            // also interfere with the next segment. Continue to the next
+            // segment without advancing the cursor in this case.
+            //
+            // We only do this if full interference results are needed.
+            if full_results && entry.from < segment.live_range().from {
+                return ControlFlow::Continue(());
+            }
+
+            // Advance the cursor to the next entry.
+            if inner.cursor.prev() {
+                let (key, &value) = inner.cursor.entry().unwrap();
+                inner.current_entry = (key, value);
+            } else {
+                *cursor = None;
+                return ControlFlow::Continue(());
+            }
+        }
+    }
+}
+
+/// Cursor for incremental interference checking.
+///
+/// This works by starting from the initial segment and then expanding backwards
+/// and forwards from that point.
+pub struct InterferenceCursor<'a, R: RegInfo> {
+    reg: PhysReg,
+    reginfo: &'a R,
+    reg_matrix: &'a RegMatrix,
+    cursors: [(
+        Option<UnitInterferenceBackwardCursor<'a>>,
+        Option<UnitInterferenceForwardCursor<'a>>,
+    ); MAX_UNITS_PER_REG],
+}
+
+impl<'a, R: RegInfo> InterferenceCursor<'a, R> {
+    pub fn new(
+        initial_segment: &impl InterferenceSegment,
+        reg_matrix: &'a RegMatrix,
+        reg: PhysReg,
+        reginfo: &'a R,
+        stats: &mut Stats,
+    ) -> Self {
+        let mut cursors = [const { (None, None) }; MAX_UNITS_PER_REG];
+        for (i, unit) in reginfo.reg_units(reg).enumerate() {
+            stat!(stats, interference_checks);
+
+            // Find the first reservation that ends after the start of the first
+            // segment. This is the starting point for our scan.
+            let mut cursor = reg_matrix.reservations[unit]
+                .btree
+                .cursor_at(Bound::Excluded(initial_segment.live_range().from));
+            let mut right_iter = cursor.iter();
+            let right_entry = right_iter.next();
+
+            let left_entry = if right_entry
+                .is_none_or(|(_to, entry)| entry.from >= initial_segment.live_range().from)
+            {
+                if cursor.prev() { cursor.entry() } else { None }
+            } else {
+                right_entry
+            };
+
+            let left = left_entry.map(|(key, &value)| UnitInterferenceBackwardCursor {
+                cursor,
+                current_entry: (key, value),
+            });
+            let right = right_entry.map(|(key, &value)| UnitInterferenceForwardCursor {
+                iter: right_iter,
+                current_entry: (key, value),
+            });
+
+            cursors[i] = (left, right);
+        }
+
+        Self {
+            reg,
+            reginfo,
+            reg_matrix,
+            cursors,
+        }
+    }
+
+    pub fn advance_left<B, S: InterferenceSegment>(
+        &mut self,
+        segment: &S,
+        stats: &mut Stats,
+        mut f: impl FnMut(Interference<S>) -> ControlFlow<B>,
+    ) -> ControlFlow<B> {
+        for (i, unit) in self.reginfo.reg_units(self.reg).enumerate() {
+            UnitInterferenceBackwardCursor::advance_left(
+                &mut self.cursors[i].0,
+                segment,
+                unit,
+                true,
+                &self.reg_matrix.reservations[unit],
+                stats,
+                &mut f,
+            )?;
+        }
+        ControlFlow::Continue(())
+    }
+
+    pub fn advance_right<B, S: InterferenceSegment>(
+        &mut self,
+        segment: &S,
+        stats: &mut Stats,
+        mut f: impl FnMut(Interference<S>) -> ControlFlow<B>,
+    ) -> ControlFlow<B> {
+        for (i, unit) in self.reginfo.reg_units(self.reg).enumerate() {
+            UnitInterferenceForwardCursor::advance_right(
+                &mut self.cursors[i].1,
+                segment,
+                unit,
+                true,
+                &self.reg_matrix.reservations[unit],
+                stats,
+                &mut f,
+            )?;
+        }
+        ControlFlow::Continue(())
     }
 }

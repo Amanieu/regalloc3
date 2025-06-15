@@ -9,7 +9,9 @@ use super::queue::VirtRegOrGroup;
 use super::{AbstractVirtRegGroup, Assignment, Context, Stage};
 use crate::function::{Function, Inst, InstRange, OperandKind, Value};
 use crate::internal::live_range::{LiveRangeSegment, Slot, ValueSegment};
-use crate::internal::reg_matrix::{InterferenceKind, InterferenceSegment, RegMatrix};
+use crate::internal::reg_matrix::{
+    InterferenceCursor, InterferenceKind, InterferenceSegment, RegMatrix,
+};
 use crate::internal::uses::{UseKind, Uses};
 use crate::internal::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
 use crate::reginfo::{PhysReg, RegInfo};
@@ -156,10 +158,6 @@ pub struct Splitter {
 
     /// Live range segments corresponding to each gap.
     gap_segments: Vec<GapSegment>,
-
-    /// Maximum spill weights of inteferences in gaps for the current register
-    /// being checked.
-    gap_interference_weights: Vec<f32>,
 }
 
 impl Splitter {
@@ -171,7 +169,6 @@ impl Splitter {
             uses: vec![],
             gaps: vec![],
             gap_segments: vec![],
-            gap_interference_weights: vec![],
         }
     }
 }
@@ -403,6 +400,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 });
             }
 
+            // The best use gets its own 1-instruction gap.
             if idx == best_use {
                 initial_gap = Some(splitter.gaps.len());
                 splitter.gaps.push(SplitGap {
@@ -438,11 +436,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         initial_gap.unwrap()
     }
 
-    /// Builds the `GapSegments` by splitting the vreg's segments at gap
-    /// boundaries.
+    /// Counts the number of instructions in each gap.
     ///
-    /// This also counts the number of live instructions in each gap.
-    fn build_gap_segments(&mut self, vreg: VirtReg, initial_gap: usize) {
+    /// This is needed to correctly estimate the spill weight of a vreg covering
+    /// this gap.
+    fn count_live_insts(&mut self, vreg: VirtReg, initial_gap: usize) {
         let splitter = &mut self.allocator.splitter;
         let mut gaps = &mut splitter.gaps[..];
         let mut prev_segment_end = Inst::new(0);
@@ -470,6 +468,30 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             prev_segment_end = seg_end;
         }
 
+        trace!("Gaps after counting live instructions:");
+        for (idx, gap) in splitter.gaps.iter().enumerate() {
+            trace!(
+                "  {idx}: {} weight={} min_freq={} live_insts={}{}",
+                gap.range,
+                gap.weight,
+                gap.min_freq,
+                gap.live_insts,
+                if idx == initial_gap { " <==" } else { "" },
+            );
+        }
+
+        // Ensure the total live instruction count matches the one used by the
+        // spill cost calculation function.
+        debug_assert_eq!(
+            splitter.gaps.iter().map(|gap| gap.live_insts).sum::<u32>(),
+            ValueSegment::live_insts(self.virt_regs.segments(vreg))
+        );
+    }
+
+    /// Builds the `GapSegments` by splitting the vreg's segments at gap
+    /// boundaries. The new `GapSegments` only cover the parts of a gap where
+    /// the vreg is actually live.
+    fn build_gap_segments(&mut self, vreg: VirtReg) {
         let splitter = &mut self.allocator.splitter;
         splitter.gap_segments.clear();
         let mut gaps = &mut splitter.gaps[..];
@@ -508,18 +530,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             }
         }
 
-        trace!("Gaps after counting live instructions:");
-        for (idx, gap) in splitter.gaps.iter().enumerate() {
-            trace!(
-                "  {idx}: {} weight={} min_freq={} live_insts={}{}",
-                gap.range,
-                gap.weight,
-                gap.min_freq,
-                gap.live_insts,
-                if idx == initial_gap { " <==" } else { "" },
-            );
-        }
-
         trace!("Segment gaps:");
         for (idx, gap) in splitter.gap_segments.iter().enumerate() {
             trace!(
@@ -527,35 +537,28 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 gap.live_range, gap.value, gap.gap_idx,
             );
         }
-
-        // Ensure the total live instruction count matches the one used by the
-        // spill cost calculation function.
-        debug_assert_eq!(
-            splitter.gaps.iter().map(|gap| gap.live_insts).sum::<u32>(),
-            ValueSegment::live_insts(self.virt_regs.segments(vreg))
-        );
     }
 
-    /// Collects the maximum spill weight of interference that needs to be
+    /// Prints the maximum spill weight of interference that needs to be
     /// evicted from a virtual register in order to allocate each gap.
-    fn collect_gap_interference(
+    fn dump_gap_interference(
         reg: PhysReg,
-        splitter: &mut Splitter,
+        splitter: &Splitter,
         reg_matrix: &RegMatrix,
         virt_regs: &VirtRegs,
         reginfo: &impl RegInfo,
-        stats: &mut Stats,
     ) {
-        splitter.gap_interference_weights.clear();
-        splitter
-            .gap_interference_weights
-            .resize(splitter.gaps.len(), 0.0);
+        if !trace_enabled!() {
+            return;
+        }
 
-        reg_matrix.check_interference(
+        let mut gap_interference_weights = vec![0.0; splitter.gaps.len()];
+
+        _ = reg_matrix.check_interference(
             &splitter.gap_segments,
             reg,
             reginfo,
-            stats,
+            &mut Default::default(),
             true,
             |interference| {
                 // Fixed interference has a infinite spill weight since it cannot be
@@ -565,41 +568,151 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     InterferenceKind::VirtReg(virt_reg) => virt_regs[virt_reg].spill_weight,
                 };
                 let gap_interference_weight =
-                    &mut splitter.gap_interference_weights[interference.segment.gap_idx as usize];
-                *gap_interference_weight = gap_interference_weight.max(weight);
+                    &mut gap_interference_weights[interference.segment.gap_idx as usize];
+                *gap_interference_weight = weight.max(*gap_interference_weight);
                 ControlFlow::<()>::Continue(())
             },
         );
 
         trace!("Gap interference for {reg}:");
-        for (idx, weight) in splitter.gap_interference_weights.iter().enumerate() {
+        for (idx, weight) in gap_interference_weights.iter().enumerate() {
             trace!("  {idx}: {weight}");
         }
     }
 
     /// Builds a proposed split region starting from the best use that is small
     /// enough to evict any interference in the given physical register.
-    fn find_split_region(&self, reg: PhysReg, initial_gap: usize) -> Option<SplitProposal> {
-        let splitter = &self.allocator.splitter;
-
-        let mut left = initial_gap;
-        let mut right = initial_gap;
-        let mut can_grow_left = left != 0;
-        let mut can_grow_right = right != splitter.gaps.len() - 1;
-        let mut insts = 1;
-        let mut weight = splitter.gaps[initial_gap].weight;
-        debug_assert_ne!(weight, 0.0);
-        let mut interference_weight = splitter.gap_interference_weights[initial_gap];
-
+    fn find_split_region(
+        reg: PhysReg,
+        initial_gap: usize,
+        splitter: &Splitter,
+        reg_matrix: &RegMatrix,
+        virt_regs: &VirtRegs,
+        reginfo: &impl RegInfo,
+        stats: &mut Stats,
+    ) -> Option<SplitProposal> {
         // Adjustment to apply to our estimated spill weight to avoid issues
         // with float precision. It's fine to under-estimate our spill
         // weight but we mustn't over-estimate it otherwise the new split
         // won't actually be able to evict interference.
         const FLOAT_PRECISION_ADJUST: f32 = 2007.0 / 2048.0; // 0.97998046875
 
-        // If the initial gap has too much inteference to allocate then we can't
-        // split around it with this register.
-        if weight * FLOAT_PRECISION_ADJUST <= interference_weight {
+        // Cursor which incrementally checks for interference as the split
+        // region grows.
+        struct GapCursor<'a, R: RegInfo> {
+            cursor: InterferenceCursor<'a, R>,
+            splitter: &'a Splitter,
+            virt_regs: &'a VirtRegs,
+            left: usize,
+            right: usize,
+        }
+        impl<'a, R: RegInfo> GapCursor<'a, R> {
+            fn advance_left(
+                &mut self,
+                gap_idx: usize,
+                interference_weight: &mut f32,
+                max_weight: f32,
+                stats: &mut Stats,
+            ) -> ControlFlow<()> {
+                while self.left != 0 {
+                    let gap = &self.splitter.gap_segments[self.left - 1];
+                    if gap.gap_idx as usize != gap_idx {
+                        break;
+                    }
+                    trace!("Including gap segment {}", self.left - 1);
+                    self.cursor.advance_left(gap, stats, |interference| {
+                        // Fixed interference has a infinite spill weight since it cannot be
+                        // evicted.
+                        match interference.kind {
+                            InterferenceKind::Fixed => {
+                                *interference_weight = f32::INFINITY;
+                                return ControlFlow::Break(());
+                            }
+                            InterferenceKind::VirtReg(virt_reg) => {
+                                *interference_weight =
+                                    interference_weight.max(self.virt_regs[virt_reg].spill_weight);
+                            }
+                        }
+                        ControlFlow::Continue(())
+                    })?;
+                    self.left -= 1;
+                }
+                if max_weight * FLOAT_PRECISION_ADJUST <= *interference_weight {
+                    return ControlFlow::Break(());
+                }
+                ControlFlow::Continue(())
+            }
+
+            fn advance_right(
+                &mut self,
+                gap_idx: usize,
+                interference_weight: &mut f32,
+                max_weight: f32,
+                stats: &mut Stats,
+            ) -> ControlFlow<()> {
+                while let Some(gap) = self.splitter.gap_segments.get(self.right) {
+                    if gap.gap_idx as usize != gap_idx {
+                        break;
+                    }
+                    trace!("Including gap segment {}", self.right);
+                    self.cursor.advance_right(gap, stats, |interference| {
+                        // Fixed interference has a infinite spill weight since it cannot be
+                        // evicted.
+                        match interference.kind {
+                            InterferenceKind::Fixed => ControlFlow::Break(()),
+                            InterferenceKind::VirtReg(virt_reg) => {
+                                *interference_weight =
+                                    interference_weight.max(self.virt_regs[virt_reg].spill_weight);
+                                ControlFlow::Continue(())
+                            }
+                        }
+                    })?;
+                    self.right += 1;
+                }
+                if max_weight * FLOAT_PRECISION_ADJUST <= *interference_weight {
+                    return ControlFlow::Break(());
+                }
+                ControlFlow::Continue(())
+            }
+        }
+
+        Self::dump_gap_interference(reg, splitter, reg_matrix, virt_regs, reginfo);
+
+        let mut left_gap = initial_gap;
+        let mut right_gap = initial_gap;
+        let mut can_grow_left = left_gap != 0;
+        let mut can_grow_right = right_gap != splitter.gaps.len() - 1;
+        let mut insts = 1;
+        let mut weight = splitter.gaps[initial_gap].weight;
+        debug_assert_ne!(weight, 0.0);
+        let mut interference_weight = 0.0;
+
+        let initial_segment = splitter
+            .gap_segments
+            .partition_point(|seg| (seg.gap_idx as usize) < initial_gap);
+        debug_assert_eq!(
+            splitter.gap_segments[initial_segment].gap_idx as usize,
+            initial_gap
+        );
+        let mut cursor = GapCursor {
+            cursor: InterferenceCursor::new(
+                &splitter.gap_segments[initial_segment],
+                reg_matrix,
+                reg,
+                reginfo,
+                stats,
+            ),
+            splitter,
+            virt_regs,
+            left: initial_segment,
+            right: initial_segment,
+        };
+        if cursor
+            .advance_right(initial_gap, &mut interference_weight, weight, stats)
+            .is_break()
+        {
+            // If the initial gap has too much inteference to allocate then we can't
+            // split around it with this register.
             trace!(
                 "Can't split around initial gap: weight={weight} interference_weight={interference_weight}"
             );
@@ -611,43 +724,75 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             // highest minimum frequency. Stop once we can't grow any more.
             let grow_left = match (can_grow_left, can_grow_right) {
                 (true, true) => {
-                    if splitter.gaps[left - 1].min_freq == splitter.gaps[right + 1].min_freq {
+                    if splitter.gaps[left_gap - 1].min_freq == splitter.gaps[right_gap + 1].min_freq
+                    {
                         // In case of a tie, prefer growing to the gap with
                         // more instructions first. This empirically produces
                         // better allocation results.
-                        splitter.gaps[left - 1].live_insts >= splitter.gaps[right + 1].live_insts
+                        splitter.gaps[left_gap - 1].live_insts
+                            >= splitter.gaps[right_gap + 1].live_insts
                     } else {
-                        splitter.gaps[left - 1].min_freq >= splitter.gaps[right + 1].min_freq
+                        splitter.gaps[left_gap - 1].min_freq
+                            >= splitter.gaps[right_gap + 1].min_freq
                     }
                 }
                 (true, false) => true,
                 (false, true) => false,
                 (false, false) => break,
             };
-            let gap_idx = if grow_left { left - 1 } else { right + 1 };
+            let gap_idx = if grow_left {
+                left_gap - 1
+            } else {
+                right_gap + 1
+            };
+            trace!(
+                "Attempting to grow {} to gap {gap_idx}",
+                if grow_left { "left" } else { "right" }
+            );
+            trace!("weight = {weight}, interference_weight = {interference_weight}");
 
             // Compute the weights for the extended split.
             let new_insts = insts + splitter.gaps[gap_idx].live_insts;
             let new_weight = weight + splitter.gaps[gap_idx].weight;
-            let estimated_spill_weight =
-                (new_weight / new_insts as f32).min(f32::MAX) * FLOAT_PRECISION_ADJUST;
-            let new_interference_weight =
-                interference_weight.max(splitter.gap_interference_weights[gap_idx]);
+            let new_spill_weight = (new_weight / new_insts as f32).min(f32::MAX);
+
+            // Update the interference weight for the gap we are growing to.
+            let mut new_interference_weight = interference_weight;
+            let result = if grow_left {
+                cursor.advance_left(
+                    gap_idx,
+                    &mut new_interference_weight,
+                    new_spill_weight,
+                    stats,
+                )
+            } else {
+                cursor.advance_right(
+                    gap_idx,
+                    &mut new_interference_weight,
+                    new_spill_weight,
+                    stats,
+                )
+            };
+            trace!(
+                "new_spill_weight = {new_spill_weight}, new_interference_weight = {new_interference_weight}"
+            );
 
             // Check if we can grow the region: we must be able to evict any
             // interfering virtual registers in the selected region.
-            if estimated_spill_weight > new_interference_weight {
+            if result.is_continue() {
+                trace!("Grew to include gap {gap_idx}");
                 if grow_left {
-                    left -= 1;
-                    can_grow_left = left != 0;
+                    left_gap -= 1;
+                    can_grow_left = left_gap != 0;
                 } else {
-                    right += 1;
-                    can_grow_right = right != splitter.gaps.len() - 1;
+                    right_gap += 1;
+                    can_grow_right = right_gap != splitter.gaps.len() - 1;
                 }
                 weight = new_weight;
                 interference_weight = new_interference_weight;
                 insts = new_insts;
             } else {
+                trace!("Could not grow to gap {gap_idx}");
                 if grow_left {
                     can_grow_left = false;
                 } else {
@@ -658,18 +803,18 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         // Estimate the split cost based on the block frequencies just before
         // and after the split.
-        let (left, left_split_cost) = if left != 0 {
+        let (left, left_split_cost) = if left_gap != 0 {
             (
-                Some(splitter.gaps[left].range.from),
-                splitter.gaps[left - 1].min_freq,
+                Some(splitter.gaps[left_gap].range.from),
+                splitter.gaps[left_gap - 1].min_freq,
             )
         } else {
             (None, 0.0)
         };
-        let (right, right_split_cost) = if right != splitter.gaps.len() - 1 {
+        let (right, right_split_cost) = if right_gap != splitter.gaps.len() - 1 {
             (
-                Some(splitter.gaps[right].range.to),
-                splitter.gaps[right + 1].min_freq,
+                Some(splitter.gaps[right_gap].range.to),
+                splitter.gaps[right_gap + 1].min_freq,
             )
         } else {
             (None, 0.0)
@@ -812,21 +957,23 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             self.allocator.splitter.gaps.len()
         );
 
+        // Count the number of live instructions in each gap.
+        self.count_live_insts(vreg, initial_gap);
+
         // Build the list of segments that we want to check interference against.
-        self.build_gap_segments(vreg, initial_gap);
+        self.build_gap_segments(vreg);
 
         let mut best_split = None;
         for candidate in self.allocator.allocation_order.order() {
-            Self::collect_gap_interference(
+            if let Some(new_split) = Self::find_split_region(
                 candidate.reg.as_single(),
-                &mut self.allocator.splitter,
+                initial_gap,
+                &self.allocator.splitter,
                 self.reg_matrix,
                 self.virt_regs,
                 self.reginfo,
                 self.stats,
-            );
-            if let Some(new_split) = self.find_split_region(candidate.reg.as_single(), initial_gap)
-            {
+            ) {
                 trace!("Proposed split: {new_split:?}");
                 if best_split
                     .as_ref()
