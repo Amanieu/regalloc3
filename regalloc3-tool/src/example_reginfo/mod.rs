@@ -45,9 +45,9 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (i, val) in self.0.clone().enumerate() {
             if i == 0 {
-                write!(f, "{}", val)?;
+                write!(f, "{val}")?;
             } else {
-                write!(f, " {}", val)?;
+                write!(f, " {val}")?;
             }
         }
         Ok(())
