@@ -1,9 +1,8 @@
 //! Live range splitting and spilling.
 
-use core::ops::ControlFlow;
-
 use alloc::vec;
 use alloc::vec::Vec;
+use core::ops::ControlFlow;
 
 use super::queue::VirtRegOrGroup;
 use super::{AbstractVirtRegGroup, Assignment, Context, Stage};
@@ -714,7 +713,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             // If the initial gap has too much inteference to allocate then we can't
             // split around it with this register.
             trace!(
-                "Can't split around initial gap: weight={weight} interference_weight={interference_weight}"
+                "Can't split around initial gap: weight={weight} \
+                 interference_weight={interference_weight}"
             );
             return None;
         }
@@ -774,7 +774,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 )
             };
             trace!(
-                "new_spill_weight = {new_spill_weight}, new_interference_weight = {new_interference_weight}"
+                "new_spill_weight = {new_spill_weight}, new_interference_weight = \
+                 {new_interference_weight}"
             );
 
             // Check if we can grow the region: we must be able to evict any

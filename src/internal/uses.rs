@@ -145,8 +145,8 @@ pub enum UseKind {
         reg: PhysReg,
     },
 
-    /// A use of the value that is tied to the same allocation as another
-    /// definition in the same instruction.
+    /// A use of the value that is tied to the same allocation as a definition
+    /// in the same instruction.
     ///
     /// A move is emitted from the allocation for this live range to the
     /// allocation for the live range of the output operand. Then the allocation

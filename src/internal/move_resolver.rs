@@ -24,8 +24,7 @@ use rustc_hash::FxBuildHasher;
 
 use super::allocations::Allocations;
 use super::allocator::Allocator;
-use super::live_range::Slot;
-use super::live_range::ValueSegment;
+use super::live_range::{Slot, ValueSegment};
 use super::parallel_moves::ParallelMoves;
 use super::reg_matrix::RegMatrix;
 use super::spill_allocator::SpillAllocator;

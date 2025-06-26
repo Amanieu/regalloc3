@@ -11,12 +11,9 @@
 
 use core::fmt;
 
+use super::hints::Hints;
+use super::uses::{Use, UseList, Uses};
 use crate::function::{Block, Function, Inst, Value};
-
-use super::{
-    hints::Hints,
-    uses::{Use, UseList, Uses},
-};
 
 /// A slot within an instruction at which a live range starts or end.
 ///

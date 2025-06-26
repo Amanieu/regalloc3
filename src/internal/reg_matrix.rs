@@ -1,11 +1,11 @@
 use alloc::vec::Vec;
-use brie_tree::nonmax::NonMaxU32;
-use brie_tree::{BTree, BTreeKey, Cursor, Iter};
 use core::fmt::Debug;
 use core::ops::{Bound, ControlFlow};
 
-use super::live_range::ValueSegment;
-use super::live_range::{LiveRangePoint, LiveRangeSegment, Slot};
+use brie_tree::nonmax::NonMaxU32;
+use brie_tree::{BTree, BTreeKey, Cursor, Iter};
+
+use super::live_range::{LiveRangePoint, LiveRangeSegment, Slot, ValueSegment};
 use super::virt_regs::{VirtReg, VirtRegs};
 use crate::Stats;
 use crate::entity::SecondaryMap;

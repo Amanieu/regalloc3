@@ -145,7 +145,6 @@ entity_def! {
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity Block(u32, "block");
 
-
     /// An instruction index in the input function.
     ///
     /// An instruction is opaque: it only interacts with the register allocator

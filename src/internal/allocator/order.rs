@@ -18,8 +18,7 @@ use core::fmt;
 
 use ordered_float::OrderedFloat;
 
-use super::AbstractVirtRegGroup;
-use super::RegOrRegGroup;
+use super::{AbstractVirtRegGroup, RegOrRegGroup};
 use crate::entity::SparseMap;
 use crate::internal::hints::Hints;
 use crate::internal::virt_regs::{VirtReg, VirtRegs};

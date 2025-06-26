@@ -149,7 +149,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     {
                         trace!(
                             "Skipping preference weight from {interfering_vreg} which has already \
-                            been counted"
+                             been counted"
                         );
                         return ControlFlow::Continue(());
                     }
@@ -174,14 +174,14 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         if strict_max_weight {
                             trace!(
                                 "Exceeded maximum spill weight {max_spill_weight} and we already \
-                                evicted for preference"
+                                 evicted for preference"
                             );
                             return ControlFlow::Break(());
                         }
                         if cost.preference_weight >= candidate.preference_weight {
                             trace!(
-                                "Exceeded maximum spill weight {max_spill_weight} and evictees have a \
-                                higher preference for this register"
+                                "Exceeded maximum spill weight {max_spill_weight} and evictees \
+                                 have a higher preference for this register"
                             );
                             return ControlFlow::Break(());
                         }

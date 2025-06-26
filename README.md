@@ -18,7 +18,7 @@ New API-level features compared to regalloc2:
 - Faster compilation of multiple functions by preserving and reusing memory allocations across runs.
 - Validation functions to check `Function` and `RegInfo` implementations.
 
-[regalloc2]:https://github.com/bytecodealliance/regalloc2
+[regalloc2]: https://github.com/bytecodealliance/regalloc2
 
 ## Flags
 

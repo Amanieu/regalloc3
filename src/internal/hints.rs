@@ -5,18 +5,14 @@
 //! implicit copy. To minimize copies, we prefer allocating live ranges linked
 //! to a fixed def/use to that fixed register.
 
-use core::fmt;
-
 use alloc::vec;
 use alloc::vec::Vec;
-
-use crate::{
-    entity::EntitySet,
-    function::{Function, Inst, TerminatorKind, Value},
-    reginfo::PhysReg,
-};
+use core::fmt;
 
 use super::live_range::LiveRangeSegment;
+use crate::entity::EntitySet;
+use crate::function::{Function, Inst, TerminatorKind, Value};
+use crate::reginfo::PhysReg;
 
 /// Key used for sorting hints so that we can easily retrieve a range of keys
 /// for a value.

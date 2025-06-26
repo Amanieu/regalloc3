@@ -518,7 +518,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     };
                     ensure!(
                         self.func.block_preds(succ).len() > 1,
-                        "{inst}: Jump terminators can only target blocks with multiple predecessors"
+                        "{inst}: Jump terminators can only target blocks with multiple \
+                         predecessors"
                     );
                     ensure!(
                         self.func.inst_operands(inst).is_empty(),
@@ -544,7 +545,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     for op in self.func.inst_operands(inst) {
                         match op.kind() {
                             OperandKind::Def(_) | OperandKind::DefGroup(_) => bail!(
-                                "{inst}: Ret terminators cannot have Def operands, only Use/EarlyDef"
+                                "{inst}: Ret terminators cannot have Def operands, only \
+                                 Use/EarlyDef"
                             ),
                             OperandKind::Use(_)
                             | OperandKind::EarlyDef(_)

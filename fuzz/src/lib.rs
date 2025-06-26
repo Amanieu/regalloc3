@@ -2,10 +2,8 @@ use std::fmt;
 use std::sync::OnceLock;
 
 use arbitrary::{Arbitrary, Result, Unstructured};
-use regalloc3::{
-    Options,
-    debug_utils::{self, GenericFunction, GenericRegInfo},
-};
+use regalloc3::Options;
+use regalloc3::debug_utils::{self, GenericFunction, GenericRegInfo};
 
 /// Example register descriptions that are parsed and validated once.
 static EXAMPLE_REGINFOS: OnceLock<Vec<(&'static str, GenericRegInfo)>> = OnceLock::new();
