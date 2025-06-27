@@ -41,7 +41,7 @@ bank_def             =  { bank ~ "{" ~ (bank_statement? ~ NEWLINE)* ~ "}" }
 
 // Top level
 def     = _{ reg_def | reg_group_def | bank_def }
-reginfo = _{ SOI ~ (def? ~ "\n")* ~ def? ~ EOI }
+reginfo = _{ SOI ~ (def? ~ NEWLINE)* ~ def? ~ EOI }
 
 WHITESPACE = _{ " " | "\t" }
 COMMENT    = _{ ";" ~ (!NEWLINE ~ ANY)* }

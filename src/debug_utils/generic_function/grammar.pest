@@ -46,7 +46,7 @@ instruction = { inst_label? ~ opcode ~ attribute* ~ operand* ~ clobber* }
 // Declarations come before the body
 declaration = _{ value_declaration }
 body        = _{ block_label | instruction }
-function    = _{ SOI ~ (declaration? ~ "\n")* ~ (body? ~ "\n")* ~ body? ~ EOI }
+function    = _{ SOI ~ (declaration? ~ NEWLINE)* ~ (body? ~ NEWLINE)* ~ body? ~ EOI }
 
 WHITESPACE = _{ " " | "\t" }
 COMMENT    = _{ ";" ~ (!NEWLINE ~ ANY)* }
