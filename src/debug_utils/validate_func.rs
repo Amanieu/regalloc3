@@ -504,6 +504,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // Check instructions.
         let mut terminator = None;
         for inst in insts.iter() {
+            ensure!(
+                self.func.inst_block(inst) == block,
+                "inst_block({inst}) should be {block}"
+            );
             if let Some(inst) = terminator {
                 bail!("{inst}: Terminator in middle of block");
             }
