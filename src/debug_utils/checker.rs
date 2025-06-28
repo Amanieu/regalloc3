@@ -218,7 +218,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             let size = stack_layout.spillslot_size(slot);
             let offset = stack_layout.spillslot_offset(slot);
             ensure!(
-                offset % size.bytes() == 0,
+                offset.is_multiple_of(size.bytes()),
                 "{slot} offset {offset} is not aligned to size {size}"
             );
             let end = offset + size.bytes();
