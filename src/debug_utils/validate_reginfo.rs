@@ -122,6 +122,10 @@ impl<R: RegInfo> Context<'_, R> {
             self.reginfo.class_group_size(stack_to_stack_class) == 1,
             "{stack_to_stack_class}: Stack-to-stack class must have a group size of 1"
         );
+        ensure!(
+            !self.reginfo.class_includes_spillslots(stack_to_stack_class),
+            "{stack_to_stack_class}: Stack-to-stack class cannot include spill slots"
+        );
 
         // Check registers in the bank
         let mut empty = true;

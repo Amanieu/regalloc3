@@ -164,15 +164,15 @@ fn main() -> Result<()> {
 
             println!("================ Output ================\n{output}");
 
-            println!(
-                "Cost model score: {}",
-                debug_utils::CostModel::default().evaluate(&output)
-            );
-
             println!("{}", output.stats());
 
             debug_utils::check_output(&output)
                 .context("register allocation result failed checker")?;
+
+            println!(
+                "Cost model score: {}",
+                debug_utils::CostModel::default().evaluate(&output)
+            );
         }
         Args::GenFunction {
             ref reginfo,
