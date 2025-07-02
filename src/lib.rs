@@ -280,7 +280,7 @@ impl RegisterAllocator {
             &mut self.stats,
             func,
             reginfo,
-            options.split_strategy,
+            options,
         )?;
 
         // Allocate spill slots.
@@ -377,6 +377,12 @@ pub struct Options {
     /// Selects the algorithm for live range splitting.
     #[cfg_attr(feature = "clap", clap(long, default_value = "linear"))]
     pub split_strategy: SplitStrategy,
+
+    /// Choose a random allocation order of physical registers when probing
+    /// for a free register. Still respects preferred and non-preferred
+    /// order though.
+    #[cfg_attr(feature = "clap", clap(long, default_value = "true"))]
+    pub random_allocation_order: bool,
 }
 
 /// Error returned by the register allocator if allocation is impossible.

@@ -92,6 +92,7 @@ impl AllocationOrder {
         hints: &Hints,
         reginfo: &impl RegInfo,
         hint: Option<PhysReg>,
+        random_alloc_order: bool,
     ) {
         self.candidates.clear();
         let class = virt_regs[vreg.first_vreg(virt_regs)].class;
@@ -138,12 +139,19 @@ impl AllocationOrder {
         // Random seed algorithm copied from regalloc2: this helps spread
         // allocations around and increases the chance that we find a free
         // register on the first try.
-        let random_seed = virt_regs.segments(vreg.first_vreg(virt_regs))[0]
-            .live_range
-            .from
-            .inst()
-            .index()
-            + vreg.first_vreg(virt_regs).index();
+        //
+        // This is optional as non-random allocation orders may produce
+        // better register allocation at the cost of compile time.
+        let random_seed = if random {
+            virt_regs.segments(vreg.first_vreg(virt_regs))[0]
+                .live_range
+                .from
+                .inst()
+                .index()
+                + vreg.first_vreg(virt_regs).index()
+        } else {
+            0
+        };
 
         // Add the remaining candidates from the register class's allocation
         // order.

@@ -50,7 +50,7 @@ use crate::entity::packed_option::PackedOption;
 use crate::function::Function;
 use crate::internal::reg_matrix::InterferenceKind;
 use crate::reginfo::{PhysReg, RegGroup, RegInfo};
-use crate::{RegAllocError, SplitStrategy, Stats};
+use crate::{Options, RegAllocError, SplitStrategy, Stats};
 
 entity_def! {
     /// This type represents either a [`PhysReg`] for groups of size 1 or a
@@ -398,7 +398,7 @@ impl Allocator {
         stats: &mut Stats,
         func: &impl Function,
         reginfo: &impl RegInfo,
-        split_strategy: SplitStrategy,
+        options: &Options,
     ) -> Result<(), RegAllocError> {
         self.assignments.clear_and_resize(virt_regs.num_virt_regs());
         self.remat_segments.clear();
@@ -416,7 +416,7 @@ impl Allocator {
             split_placement,
             coalescing,
             stats,
-            split_strategy,
+            split_strategy: options.split_strategy,
         };
 
         // Populate the queue with the initial set of virtual registers.
@@ -426,8 +426,12 @@ impl Allocator {
         // TODO(perf): Optimize the case where we dequeue the same vreg twice in a row
         while let Some((vreg, stage)) = context.allocator.queue.dequeue() {
             match vreg {
-                VirtRegOrGroup::Reg(vreg) => context.allocate(vreg, stage)?,
-                VirtRegOrGroup::Group(group) => context.allocate(group, stage)?,
+                VirtRegOrGroup::Reg(vreg) => {
+                    context.allocate(vreg, stage, options.random_allocation_order)?
+                }
+                VirtRegOrGroup::Group(group) => {
+                    context.allocate(group, stage, options.random_allocation_order)?
+                }
             };
         }
 
@@ -514,6 +518,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         &mut self,
         vreg: impl AbstractVirtRegGroup,
         stage: Stage,
+        random_alloc_order: bool,
     ) -> Result<(), RegAllocError> {
         trace!("Allocating {vreg} in stage {stage:?}");
         vreg.dump(self.virt_regs, self.uses);
@@ -532,6 +537,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             self.hints,
             self.reginfo,
             hint,
+            random_alloc_order,
         );
         if trace_enabled!() {
             trace!("Allocation order:");
