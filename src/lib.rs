@@ -378,11 +378,12 @@ pub struct Options {
     #[cfg_attr(feature = "clap", clap(long, default_value = "linear"))]
     pub split_strategy: SplitStrategy,
 
-    /// Choose a random allocation order of physical registers when probing
-    /// for a free register. Still respects preferred and non-preferred
-    /// order though.
-    #[cfg_attr(feature = "clap", clap(long, default_value = "true"))]
-    pub random_allocation_order: bool,
+    /// Forces a constant allocation order, instead of a random one. This
+    /// makes it more likely that regalloc will pick the same register for
+    /// for different non-interferring virtual registers. It may increase
+    /// output code quality at the cost of compile time.
+    #[cfg_attr(feature = "clap", clap(long, default_value = "false"))]
+    pub const_allocation_order: bool,
 }
 
 /// Error returned by the register allocator if allocation is impossible.

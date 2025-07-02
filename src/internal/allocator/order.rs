@@ -92,7 +92,7 @@ impl AllocationOrder {
         hints: &Hints,
         reginfo: &impl RegInfo,
         hint: Option<PhysReg>,
-        random_alloc_order: bool,
+        const_alloc_order: bool,
     ) {
         self.candidates.clear();
         let class = virt_regs[vreg.first_vreg(virt_regs)].class;
@@ -142,15 +142,15 @@ impl AllocationOrder {
         //
         // This is optional as non-random allocation orders may produce
         // better register allocation at the cost of compile time.
-        let random_seed = if random {
+        let random_seed = if const_alloc_order {
+            0
+        } else {
             virt_regs.segments(vreg.first_vreg(virt_regs))[0]
                 .live_range
                 .from
                 .inst()
                 .index()
                 + vreg.first_vreg(virt_regs).index()
-        } else {
-            0
         };
 
         // Add the remaining candidates from the register class's allocation

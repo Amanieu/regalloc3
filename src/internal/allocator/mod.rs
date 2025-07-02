@@ -427,10 +427,10 @@ impl Allocator {
         while let Some((vreg, stage)) = context.allocator.queue.dequeue() {
             match vreg {
                 VirtRegOrGroup::Reg(vreg) => {
-                    context.allocate(vreg, stage, options.random_allocation_order)?
+                    context.allocate(vreg, stage, options.const_allocation_order)?
                 }
                 VirtRegOrGroup::Group(group) => {
-                    context.allocate(group, stage, options.random_allocation_order)?
+                    context.allocate(group, stage, options.const_allocation_order)?
                 }
             };
         }
@@ -518,7 +518,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         &mut self,
         vreg: impl AbstractVirtRegGroup,
         stage: Stage,
-        random_alloc_order: bool,
+        const_alloc_order: bool,
     ) -> Result<(), RegAllocError> {
         trace!("Allocating {vreg} in stage {stage:?}");
         vreg.dump(self.virt_regs, self.uses);
@@ -537,7 +537,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             self.hints,
             self.reginfo,
             hint,
-            random_alloc_order,
+            const_alloc_order,
         );
         if trace_enabled!() {
             trace!("Allocation order:");
