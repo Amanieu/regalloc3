@@ -367,7 +367,6 @@ pub enum SplitStrategy {
 /// Configuration options for the register allocator.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "clap", derive(clap::Args))]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[non_exhaustive]
 pub struct Options {
     /// Controls how moves are optimized after register allocation.
@@ -384,6 +383,17 @@ pub struct Options {
     /// for most cases.
     #[cfg_attr(feature = "clap", clap(long, default_value = "200"))]
     pub spill_weight_adjust: u32,
+}
+
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for Options {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(Self {
+            move_optimization: u.arbitrary()?,
+            split_strategy: u.arbitrary()?,
+            spill_weight_adjust: u.int_in_range(0..=1000000)?,
+        })
+    }
 }
 
 impl Default for Options {
