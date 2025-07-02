@@ -427,10 +427,10 @@ impl Allocator {
         while let Some((vreg, stage)) = context.allocator.queue.dequeue() {
             match vreg {
                 VirtRegOrGroup::Reg(vreg) => {
-                    context.allocate(vreg, stage, options.const_allocation_order)?
+                    context.allocate(vreg, stage, options.const_allocation_order)?;
                 }
                 VirtRegOrGroup::Group(group) => {
-                    context.allocate(group, stage, options.const_allocation_order)?
+                    context.allocate(group, stage, options.const_allocation_order)?;
                 }
             };
         }
