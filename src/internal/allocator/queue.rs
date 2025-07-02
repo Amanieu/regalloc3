@@ -35,13 +35,13 @@ struct Entry {
     ///
     /// The bit encoding is designed to prioritize virtual registers as follows:
     /// - Earlier allocation stages are processed first.
-    /// - Virtual registers with a fixed-register use are prioritized.
+    /// - Virtual registers with a fixed-register hint are prioritized.
     /// - Larger groups are harder to allocate, and so are prioritized.
     /// - Large live ranges are harder to allocate, and so are prioritized.
     /// - The virtual register index is used as a tiebreaker. It is negated to
     ///   prefer lower-indexed virtual registers when the size is the same.
     ///
-    /// stage:1 has_fixed_use:1 group_size:3 size:27 index:32
+    /// stage:1 has_fixed_hint:1 group_size:3 size:27 index:32
     bits: u64,
 }
 
@@ -55,13 +55,17 @@ impl Entry {
             Stage::Evict => 1,
             Stage::Split => 0,
         };
-        let has_fixed_use = virt_regs[vreg].has_fixed_hint as u64;
+        let has_fixed_hint = virt_regs[vreg].has_fixed_hint as u64;
         let group_size = 0;
         let size = ValueSegment::live_insts(virt_regs.segments(vreg)) as u64;
         let size = size.min((1 << 27) - 1);
         let index = vreg.index() as u64;
         Entry {
-            bits: (stage << 63) | (has_fixed_use << 62) | (group_size << 59) | (size << 32) | index,
+            bits: (stage << 63)
+                | (has_fixed_hint << 62)
+                | (group_size << 59)
+                | (size << 32)
+                | index,
         }
     }
 
@@ -72,7 +76,7 @@ impl Entry {
             Stage::Split => 0,
         };
         let members = virt_regs.group_members(group);
-        let has_fixed_use = members.iter().any(|&vreg| virt_regs[vreg].has_fixed_hint) as u64;
+        let has_fixed_hint = members.iter().any(|&vreg| virt_regs[vreg].has_fixed_hint) as u64;
         let group_size = members.len() as u64 - 1;
         let size: u64 = members
             .iter()
@@ -81,7 +85,11 @@ impl Entry {
         let size = size.min((1 << 27) - 1);
         let index = group.index() as u64;
         Entry {
-            bits: (stage << 63) | (has_fixed_use << 62) | (group_size << 59) | (size << 32) | index,
+            bits: (stage << 63)
+                | (has_fixed_hint << 62)
+                | (group_size << 59)
+                | (size << 32)
+                | index,
         }
     }
 

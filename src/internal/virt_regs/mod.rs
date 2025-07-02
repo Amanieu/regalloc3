@@ -14,7 +14,6 @@ use super::spill_allocator::SpillAllocator;
 use super::split_placement::SplitPlacement;
 use super::uses::Uses;
 use super::value_live_ranges::ValueLiveRanges;
-use crate::Stats;
 use crate::debug_utils::display_iter;
 use crate::entity::iter::Keys;
 use crate::entity::packed_option::PackedOption;
@@ -22,6 +21,7 @@ use crate::entity::{CompactList, CompactListPool, PrimaryMap};
 use crate::function::Function;
 use crate::internal::live_range::LiveRangeSegment;
 use crate::reginfo::{RegClass, RegInfo};
+use crate::{Options, Stats};
 
 pub mod builder;
 
@@ -157,6 +157,7 @@ impl VirtRegs {
         virt_reg_builder: &mut VirtRegBuilder,
         coalescing: &mut Coalescing,
         stats: &mut Stats,
+        options: &Options,
         new_vregs: &mut Vec<VirtReg>,
     ) {
         debug_assert!(!segments.is_empty());
@@ -170,6 +171,7 @@ impl VirtRegs {
             hints,
             coalescing,
             stats,
+            options,
             None,
             Some(new_vregs),
             segments,
@@ -189,6 +191,7 @@ impl VirtRegs {
         spill_allocator: &mut SpillAllocator,
         virt_reg_builder: &mut VirtRegBuilder,
         stats: &mut Stats,
+        options: &Options,
     ) {
         self.clear();
         virt_reg_builder.clear(func);
@@ -211,6 +214,7 @@ impl VirtRegs {
                 hints,
                 coalescing,
                 stats,
+                options,
                 Some(split_placement),
                 None,
                 &mut segments,
