@@ -265,6 +265,7 @@ impl RegisterAllocator {
             &mut self.spill_allocator,
             &mut self.virt_reg_builder,
             &mut self.stats,
+            options,
         );
 
         // Allocate virtual registers to physical registers.
@@ -278,9 +279,9 @@ impl RegisterAllocator {
             &self.split_placement,
             &mut self.coalescing,
             &mut self.stats,
+            options,
             func,
             reginfo,
-            options.split_strategy,
         )?;
 
         // Allocate spill slots.
@@ -326,7 +327,7 @@ impl RegisterAllocator {
 }
 
 /// Controls how much optimization to perform after register allocation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum MoveOptimizationLevel {
@@ -340,7 +341,6 @@ pub enum MoveOptimizationLevel {
     ///
     /// This is the default since it provides a good balance between
     /// optimization and runtime efficiency.
-    #[default]
     Forward,
 
     /// Optimize moves across all blocks.
@@ -352,7 +352,7 @@ pub enum MoveOptimizationLevel {
 
 /// Selects the algorithm use for live range splitting when the entire live
 /// range of a value cannot be allocated to a single register.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum SplitStrategy {
@@ -361,14 +361,14 @@ pub enum SplitStrategy {
 
     /// Split live ranges by finding a region which is dense enough to evict
     /// interfering live ranges.
-    #[default]
     Linear,
 }
 
 /// Configuration options for the register allocator.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "clap", derive(clap::Args))]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[non_exhaustive]
 pub struct Options {
     /// Controls how moves are optimized after register allocation.
     #[cfg_attr(feature = "clap", clap(long, default_value = "forward"))]
@@ -377,6 +377,24 @@ pub struct Options {
     /// Selects the algorithm for live range splitting.
     #[cfg_attr(feature = "clap", clap(long, default_value = "linear"))]
     pub split_strategy: SplitStrategy,
+
+    /// Selects the adjustment factor used for spill weight calculation.
+    ///
+    /// The ideal number is workload-dependent, but the default should be fine
+    /// for most cases.
+    #[cfg_attr(feature = "clap", clap(long, default_value = "200"))]
+    pub spill_weight_adjust: u32,
+}
+
+impl Default for Options {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            move_optimization: MoveOptimizationLevel::Forward,
+            split_strategy: SplitStrategy::Linear,
+            spill_weight_adjust: 200,
+        }
+    }
 }
 
 /// Error returned by the register allocator if allocation is impossible.

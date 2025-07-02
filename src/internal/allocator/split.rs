@@ -12,9 +12,10 @@ use crate::internal::reg_matrix::{
     InterferenceCursor, InterferenceKind, InterferenceSegment, RegMatrix,
 };
 use crate::internal::uses::{UseKind, Uses};
+use crate::internal::virt_regs::builder::normalize_spill_weight;
 use crate::internal::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
 use crate::reginfo::{PhysReg, RegInfo};
-use crate::{SplitStrategy, Stats};
+use crate::{Options, SplitStrategy, Stats};
 
 /// Information about a use that we may want to include or exclude from a split.
 ///
@@ -589,6 +590,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         virt_regs: &VirtRegs,
         reginfo: &impl RegInfo,
         stats: &mut Stats,
+        options: &Options,
     ) -> Option<SplitProposal> {
         // Adjustment to apply to our estimated spill weight to avoid issues
         // with float precision. It's fine to under-estimate our spill
@@ -685,6 +687,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         let mut weight = splitter.gaps[initial_gap].weight;
         debug_assert_ne!(weight, 0.0);
         let mut interference_weight = 0.0;
+        let initial_spill_weight = normalize_spill_weight(weight, 1, options);
 
         let initial_segment = splitter
             .gap_segments
@@ -707,7 +710,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             right: initial_segment,
         };
         if cursor
-            .advance_right(initial_gap, &mut interference_weight, weight, stats)
+            .advance_right(
+                initial_gap,
+                &mut interference_weight,
+                initial_spill_weight,
+                stats,
+            )
             .is_break()
         {
             // If the initial gap has too much inteference to allocate then we can't
@@ -754,7 +762,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             // Compute the weights for the extended split.
             let new_insts = insts + splitter.gaps[gap_idx].live_insts;
             let new_weight = weight + splitter.gaps[gap_idx].weight;
-            let new_spill_weight = (new_weight / new_insts as f32).min(f32::MAX);
+            let new_spill_weight = normalize_spill_weight(new_weight, new_insts, options);
 
             // Update the interference weight for the gap we are growing to.
             let mut new_interference_weight = interference_weight;
@@ -866,6 +874,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     self.virt_reg_builder,
                     self.coalescing,
                     self.stats,
+                    self.options,
                     &mut splitter.new_vregs,
                 );
                 self.allocator
@@ -912,7 +921,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// virtual registers, attempt to split it into smaller pieces that are
     /// alloctable.
     pub(super) fn split_or_spill(&mut self, vreg: impl AbstractVirtRegGroup) {
-        if self.split_strategy == SplitStrategy::Spill {
+        if self.options.split_strategy == SplitStrategy::Spill {
             self.spill(vreg);
             return;
         }
@@ -974,6 +983,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 self.virt_regs,
                 self.reginfo,
                 self.stats,
+                self.options,
             ) {
                 trace!("Proposed split: {new_split:?}");
                 if best_split
@@ -1185,6 +1195,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     self.virt_reg_builder,
                     self.coalescing,
                     self.stats,
+                    self.options,
                     &mut splitter.new_vregs,
                 );
             }
@@ -1202,6 +1213,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 self.virt_reg_builder,
                 self.coalescing,
                 self.stats,
+                self.options,
                 &mut splitter.new_vregs,
             );
         });
@@ -1370,6 +1382,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 self.virt_reg_builder,
                 self.coalescing,
                 self.stats,
+                self.options,
                 &mut splitter.new_vregs,
             );
         });

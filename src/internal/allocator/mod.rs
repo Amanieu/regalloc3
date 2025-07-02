@@ -50,7 +50,7 @@ use crate::entity::packed_option::PackedOption;
 use crate::function::Function;
 use crate::internal::reg_matrix::InterferenceKind;
 use crate::reginfo::{PhysReg, RegGroup, RegInfo};
-use crate::{RegAllocError, SplitStrategy, Stats};
+use crate::{Options, RegAllocError, Stats};
 
 entity_def! {
     /// This type represents either a [`PhysReg`] for groups of size 1 or a
@@ -396,9 +396,9 @@ impl Allocator {
         split_placement: &SplitPlacement,
         coalescing: &mut Coalescing,
         stats: &mut Stats,
+        options: &Options,
         func: &impl Function,
         reginfo: &impl RegInfo,
-        split_strategy: SplitStrategy,
     ) -> Result<(), RegAllocError> {
         self.assignments.clear_and_resize(virt_regs.num_virt_regs());
         self.remat_segments.clear();
@@ -416,7 +416,7 @@ impl Allocator {
             split_placement,
             coalescing,
             stats,
-            split_strategy,
+            options,
         };
 
         // Populate the queue with the initial set of virtual registers.
@@ -505,7 +505,7 @@ struct Context<'a, F, R> {
     split_placement: &'a SplitPlacement,
     coalescing: &'a mut Coalescing,
     stats: &'a mut Stats,
-    split_strategy: SplitStrategy,
+    options: &'a Options,
 }
 
 impl<F: Function, R: RegInfo> Context<'_, F, R> {

@@ -22,7 +22,6 @@ use alloc::vec::Vec;
 use core::array;
 use core::cmp::Ordering;
 
-use crate::Stats;
 use crate::entity::packed_option::{PackedOption, ReservedValue};
 use crate::entity::{CompactList, SecondaryMap};
 use crate::function::{Function, OperandKind, Value, ValueGroup};
@@ -34,6 +33,26 @@ use crate::internal::uses::{Use, UseIndex, UseKind, Uses};
 use crate::internal::value_live_ranges::ValueSet;
 use crate::internal::virt_regs::{VirtReg, VirtRegData, VirtRegGroup, VirtRegs};
 use crate::reginfo::{MAX_GROUP_SIZE, RegBank, RegClass, RegInfo};
+use crate::{Options, Stats};
+
+/// Computes a normalized spill weight from the total weights of all uses in a
+/// virtual register and the total number of live instructions in that virtual
+/// register.
+///
+/// This favors short and dense live ranges over long and sparse ones.
+pub fn normalize_spill_weight(spill_cost: f32, num_insts: u32, options: &Options) -> f32 {
+    // Adjustment factor which avoids depending too much on exact instruction
+    // counts for short live ranges. This causes the spill weight to represent
+    // the number of uses for short ranges and use density for larger ranges.
+    let k = options.spill_weight_adjust;
+
+    debug_assert_ne!(num_insts, 0);
+    let weight = spill_cost / (num_insts + k) as f32;
+
+    // Cap the spill weight at f32::MAX. Infinite spill weights are only
+    // for unspillable virtual registers.
+    weight.min(f32::MAX)
+}
 
 /// Utility type for building a virtual register from value live ranges.
 pub struct VirtRegBuilder {
@@ -85,6 +104,7 @@ impl VirtRegBuilder {
         hints: &Hints,
         coalescing: &mut Coalescing,
         stats: &mut Stats,
+        options: &Options,
         split_placement: Option<&SplitPlacement>,
         new_vregs: Option<&mut Vec<VirtReg>>,
         segments: &mut [ValueSegment],
@@ -99,6 +119,7 @@ impl VirtRegBuilder {
             virt_regs,
             coalescing,
             stats,
+            options,
             hints,
             value_group_mapping: &mut self.value_group_mapping,
             conflicting_uses: &mut self.conflicting_uses,
@@ -376,6 +397,7 @@ struct Context<'a, F, R> {
     split_placement: Option<&'a SplitPlacement>,
     coalescing: &'a mut Coalescing,
     stats: &'a mut Stats,
+    options: &'a Options,
     value_group_mapping: &'a mut SecondaryMap<ValueGroup, PackedOption<VirtRegGroup>>,
     conflicting_uses: &'a mut Vec<(Value, Use)>,
     new_vregs: Option<&'a mut Vec<VirtReg>>,
@@ -703,9 +725,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 })
                 .sum();
 
-            // Cap the spill weight at f32::MAX. Infinite spill weights are only
-            // for unspillable virtual registers.
-            let spill_weight = (spill_cost / num_insts as f32).min(f32::MAX);
+            let spill_weight = normalize_spill_weight(spill_cost, num_insts, self.options);
             trace!("-> Spill weight of {spill_weight} ({spill_cost} / {num_insts})");
             spill_weight
         };
