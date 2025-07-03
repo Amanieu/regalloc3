@@ -58,12 +58,13 @@ bank0 {
         allows_spillslots
         spill_cost = 1
         members = r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11
+        allocation_order =
     }
 
     class1: class0 {
         spill_cost = 1
         members = r0 r1 r2 r3 r4 r5 r6 r7
-        preferred_regs = r0 r1 r2 r3 r4 r5 r6 r7
+        allocation_order = r0 r1 r2 r3 r4 r5 r6 r7
     }
 }
 
@@ -76,12 +77,13 @@ bank1 {
         allows_spillslots
         spill_cost = 1
         members = r12 r13 r14 r15 r16 r17 r18 r19
+        allocation_order =
     }
 
     class3: class2 {
         spill_cost = 1
         members = r12 r13 r14 r15
-        preferred_regs = r12 r13 r14 r15
+        allocation_order = r12 r13 r14 r15
     }
 }
 ",
