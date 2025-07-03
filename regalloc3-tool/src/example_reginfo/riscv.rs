@@ -69,9 +69,9 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: true,
         spill_cost: 0.5,
         members: RegGroupList::Single([&x_regs[..], &x_fixed_stack[..]].concat()),
-        preferred_regs: RegGroupList::Single(all_x_regs[10..=15].into()),
-        non_preferred_regs: RegGroupList::Single(
+        allocation_order: RegGroupList::Single(
             [
+                &all_x_regs[10..=15],
                 &all_x_regs[1..=1],
                 &all_x_regs[5..=7],
                 &all_x_regs[16..=17],
@@ -89,8 +89,7 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: true,
         spill_cost: 0.0,
         members: RegGroupList::Single(x_fixed_stack.clone()),
-        preferred_regs: RegGroupList::Single(vec![]),
-        non_preferred_regs: RegGroupList::Single(vec![]),
+        allocation_order: RegGroupList::Single(vec![]),
     });
     let x_class = reginfo.classes.push(RegClassData {
         desc: "General-purpose registers".to_string(),
@@ -99,9 +98,9 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: false,
         spill_cost: 1.0,
         members: RegGroupList::Single(x_regs.clone()),
-        preferred_regs: RegGroupList::Single(all_x_regs[10..=15].into()),
-        non_preferred_regs: RegGroupList::Single(
+        allocation_order: RegGroupList::Single(
             [
+                &all_x_regs[10..=15],
                 &all_x_regs[1..=1],
                 &all_x_regs[5..=7],
                 &all_x_regs[16..=17],
@@ -119,10 +118,16 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: false,
         spill_cost: 1.0,
         members: RegGroupList::Multi(zacas_regs.clone()),
-        preferred_regs: RegGroupList::Multi(
-            [&zacas_regs[0..=0], &zacas_regs[2..=5], &zacas_regs[11..=12]].concat(),
+        allocation_order: RegGroupList::Multi(
+            [
+                &zacas_regs[0..=0],
+                &zacas_regs[2..=5],
+                &zacas_regs[11..=12],
+                &zacas_regs[1..=1],
+                &zacas_regs[6..=10],
+            ]
+            .concat(),
         ),
-        non_preferred_regs: RegGroupList::Multi([&zacas_regs[1..=1], &zacas_regs[6..=10]].concat()),
     });
     reginfo.banks.push(RegBankData {
         desc: "General-purpose registers".to_string(),
@@ -152,9 +157,9 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: true,
         spill_cost: 0.5,
         members: RegGroupList::Single([&f_regs[..], &f_fixed_stack[..]].concat()),
-        preferred_regs: RegGroupList::Single(f_regs[10..=15].into()),
-        non_preferred_regs: RegGroupList::Single(
+        allocation_order: RegGroupList::Single(
             [
+                &f_regs[10..=15],
                 &f_regs[0..=7],
                 &f_regs[16..=17],
                 &f_regs[28..=31],
@@ -171,8 +176,7 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: true,
         spill_cost: 0.0,
         members: RegGroupList::Single(f_fixed_stack.clone()),
-        preferred_regs: RegGroupList::Single(vec![]),
-        non_preferred_regs: RegGroupList::Single(vec![]),
+        allocation_order: RegGroupList::Single(vec![]),
     });
     let f_class = reginfo.classes.push(RegClassData {
         desc: "Float registers".to_string(),
@@ -181,9 +185,9 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: false,
         spill_cost: 1.0,
         members: RegGroupList::Single(f_regs.clone()),
-        preferred_regs: RegGroupList::Single(f_regs[10..=15].into()),
-        non_preferred_regs: RegGroupList::Single(
+        allocation_order: RegGroupList::Single(
             [
+                &f_regs[10..=15],
                 &f_regs[0..=7],
                 &f_regs[16..=17],
                 &f_regs[28..=31],
@@ -231,8 +235,7 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
             allows_spillslots: true,
             spill_cost: 0.5,
             members: RegGroupList::Single([&v_regs[..], &v_fixed_stack[..]].concat()),
-            preferred_regs: RegGroupList::Single(v_regs.clone()),
-            non_preferred_regs: RegGroupList::Single(vec![]),
+            allocation_order: RegGroupList::Single(v_regs.clone()),
         });
         let v_stack_only_class = reginfo.classes.push(RegClassData {
             desc: format!("Vector stack only LMUL={lmul}"),
@@ -241,8 +244,7 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
             allows_spillslots: true,
             spill_cost: 0.0,
             members: RegGroupList::Single(v_fixed_stack.clone()),
-            preferred_regs: RegGroupList::Single(vec![]),
-            non_preferred_regs: RegGroupList::Single(vec![]),
+            allocation_order: RegGroupList::Single(vec![]),
         });
         let v_class = reginfo.classes.push(RegClassData {
             desc: format!("Vector registers LMUL={lmul}"),
@@ -251,8 +253,7 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
             allows_spillslots: false,
             spill_cost: 1.0,
             members: RegGroupList::Single(v_regs.clone()),
-            preferred_regs: RegGroupList::Single(v_regs.clone()),
-            non_preferred_regs: RegGroupList::Single(vec![]),
+            allocation_order: RegGroupList::Single(v_regs.clone()),
         });
 
         // Register groups for segment load/store.
@@ -275,8 +276,7 @@ pub fn make_riscv_reginfo(num_fixed_stack: usize) -> RegInfo {
                 allows_spillslots: false,
                 spill_cost: 1.0,
                 members: RegGroupList::Multi(segment_regs.clone()),
-                preferred_regs: RegGroupList::Multi(segment_regs.clone()),
-                non_preferred_regs: RegGroupList::Multi(vec![]),
+                allocation_order: RegGroupList::Multi(segment_regs.clone()),
             });
             classes.push(segment_class);
         }

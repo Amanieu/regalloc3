@@ -10,17 +10,21 @@ use crate::internal::allocator::Stage;
 use crate::internal::allocator::queue::VirtRegOrGroup;
 use crate::internal::live_range::ValueSegment;
 use crate::internal::reg_matrix::{Interference, InterferenceKind};
-use crate::reginfo::{PhysReg, RegInfo};
+use crate::reginfo::RegInfo;
 
 impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// Searches for a better candidate register by potentially evicting
     /// interference.
-    pub(super) fn try_evict_for_preferred_reg(
+    pub(super) fn try_evict_for_preferred_reg<V: AbstractVirtRegGroup>(
         &mut self,
-        vreg: impl AbstractVirtRegGroup,
-        candidate: CandidateReg,
-    ) -> Option<CandidateReg> {
-        'outer: for new_candidate in self.allocator.allocation_order.order() {
+        vreg: V,
+        candidate: CandidateReg<V>,
+    ) -> Option<CandidateReg<V>> {
+        let order = V::select_order(
+            &mut self.allocator.allocation_order,
+            &mut self.allocator.group_allocation_order,
+        );
+        'outer: for new_candidate in order.order() {
             // Only evict if this is strictly more profitable then our
             // existing candidate. We can stop otherwise since candidates are
             // sorted by weight.
@@ -73,7 +77,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         None
     }
 
-    pub(super) fn try_evict(&mut self, vreg: impl AbstractVirtRegGroup) -> bool {
+    pub(super) fn try_evict<V: AbstractVirtRegGroup>(&mut self, vreg: V) -> bool {
         // Estimate of the cost of an eviction, which we want to minimize.
         #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
         struct EvictCost {
@@ -108,7 +112,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             "Searching for candidate to evict interference from \
              (max_spill_weight={max_spill_weight}, strict={strict_max_weight})"
         );
-        'outer: for candidate in self.allocator.allocation_order.order() {
+        let order = V::select_order(
+            &mut self.allocator.allocation_order,
+            &mut self.allocator.group_allocation_order,
+        );
+        'outer: for candidate in order.order() {
             trace!("Candidate: {candidate}");
 
             let mut cost = EvictCost {
@@ -222,7 +230,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         if let Some(best_candidate) = best_candidate {
             trace!("Evicting interference from {best_candidate}");
-            self.evict_interfering_vregs(None);
+            self.evict_interfering_vregs();
             self.assign(
                 vreg,
                 best_candidate,
@@ -236,7 +244,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
     /// Evicts all the virtual registers in `interfering_vregs` from their
     /// current assignment.
-    pub(super) fn evict_interfering_vregs(&mut self, hint: Option<PhysReg>) {
+    pub(super) fn evict_interfering_vregs(&mut self) {
         let assignments = &mut self.allocator.assignments;
         while let Some(vreg) = self.allocator.interfering_vregs.pop() {
             // There may be duplicates in the collected interferring vregs.
@@ -265,7 +273,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     };
                     assignments[vreg] = Assignment::Unassigned {
                         evicted_for_preference,
-                        hint: None.into(),
                     };
                     self.reg_matrix
                         .evict(vreg, reg, self.virt_regs, self.reginfo);
@@ -282,7 +289,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     .evict(vreg, reg, self.virt_regs, self.reginfo);
                 assignments[vreg] = Assignment::Unassigned {
                     evicted_for_preference,
-                    hint: hint.into(),
                 };
                 self.allocator.queue.enqueue(
                     VirtRegOrGroup::Reg(vreg),

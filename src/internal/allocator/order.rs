@@ -4,48 +4,26 @@
 //! We want to consider several factors here:
 //! - If the virtual register has fixed-register uses, we want to try those
 //!   first. Give more priority to more frequent uses.
-//! - If the virtual register was recently split around the interferences in a
-//!   physical register then it is likely to be allocatable in that register:
-//!   try that one first.
 //! - Otherwise defer to the register class for its allocation order.
-//!
-//! Finally, we want to randomize the register probing a bit to maximize the
-//! chance of successfully allocating with as few probes as possible. This helps
-//! improve allocation times.
 
+use alloc::vec;
+use alloc::vec::Vec;
 use core::cmp::Reverse;
 use core::fmt;
 
 use ordered_float::OrderedFloat;
 
-use super::{AbstractVirtRegGroup, RegOrRegGroup};
+use super::AbstractVirtRegGroup;
 use crate::entity::SparseMap;
 use crate::internal::hints::Hints;
 use crate::internal::virt_regs::{VirtReg, VirtRegs};
-use crate::reginfo::{AllocationOrderSet, PhysReg, RegClass, RegInfo};
-
-/// Returns a single allocation order from [`RegInfo::allocation_order`] which
-/// combines all [`AllocationOrderSet`]s.
-///
-/// `random_seed` perturbs the order in a deterministic way to increase the
-/// likelyhood of finding a free register on the first try.
-pub fn combined_allocation_order<'a, T: Copy + 'a>(
-    get_slice: impl Fn(AllocationOrderSet) -> &'a [T] + Copy,
-    random_seed: usize,
-) -> impl DoubleEndedIterator<Item = T> + 'a {
-    let iter = move |set| {
-        let slice = get_slice(set);
-        let (a, b) = slice.split_at(random_seed.checked_rem(slice.len()).unwrap_or(0));
-        b.iter().copied().chain(a.iter().copied())
-    };
-    iter(AllocationOrderSet::Preferred).chain(iter(AllocationOrderSet::NonPreferred))
-}
+use crate::reginfo::{RegClass, RegInfo};
 
 /// A candidate physical register to which a virtual register can be assigned.
 #[derive(Debug, Clone, Copy)]
-pub struct CandidateReg {
+pub struct CandidateReg<V: AbstractVirtRegGroup> {
     /// The register to try allocating into.
-    pub reg: RegOrRegGroup,
+    pub reg: V::Phys,
 
     /// Estimate of the cost if this register is not chosen.
     ///
@@ -54,7 +32,7 @@ pub struct CandidateReg {
     pub preference_weight: f32,
 }
 
-impl fmt::Display for CandidateReg {
+impl<V: AbstractVirtRegGroup> fmt::Display for CandidateReg<V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.preference_weight != 0.0 {
             write!(f, "{} (preference = {})", self.reg, self.preference_weight)
@@ -64,119 +42,106 @@ impl fmt::Display for CandidateReg {
     }
 }
 
-pub struct AllocationOrder {
+pub struct AllocationOrder<V: AbstractVirtRegGroup> {
+    /// Map of registers with a preference weight.
+    hinted_regs: SparseMap<V::Phys, f32>,
+
     /// Physical register candidates for the current virtual register, with
     /// associated preference weight.
     ///
     /// Entries are sorted by preference weight.
-    candidates: SparseMap<RegOrRegGroup, f32>,
+    candidates: Vec<CandidateReg<V>>,
 }
 
-impl AllocationOrder {
+impl<V: AbstractVirtRegGroup> AllocationOrder<V> {
     pub fn new() -> Self {
         Self {
-            candidates: SparseMap::new(),
+            hinted_regs: SparseMap::new(),
+            candidates: vec![],
         }
     }
 
     pub fn prepare(&mut self, reginfo: &impl RegInfo) {
-        self.candidates.grow_to(reginfo.num_regs());
-        self.candidates.grow_to(reginfo.num_reg_groups());
+        if V::is_group() {
+            self.hinted_regs.grow_to(reginfo.num_reg_groups());
+            self.candidates.reserve(reginfo.num_reg_groups());
+        } else {
+            self.hinted_regs.grow_to(reginfo.num_regs());
+            self.candidates.reserve(reginfo.num_regs());
+        }
     }
 
     /// Computes the allocation order for the given virtual register.
     pub fn compute(
         &mut self,
-        vreg: impl AbstractVirtRegGroup,
+        vreg: V,
         virt_regs: &VirtRegs,
         hints: &Hints,
         reginfo: &impl RegInfo,
-        hint: Option<PhysReg>,
     ) {
-        self.candidates.clear();
         let class = virt_regs[vreg.first_vreg(virt_regs)].class;
 
         // If this virtual register has fixed-register constraints, collect them
         // and assign them weights based on their use frequency.
-        let is_group = vreg.is_group();
+        self.hinted_regs.clear();
         for (group_index, vreg) in vreg.vregs(virt_regs).enumerate() {
             if virt_regs[vreg].has_fixed_hint {
-                self.collect_fixed_preferences(
-                    vreg,
-                    is_group.then_some(group_index),
-                    class,
-                    virt_regs,
-                    hints,
-                    reginfo,
-                );
+                self.collect_fixed_preferences(vreg, group_index, class, virt_regs, hints, reginfo);
             }
         }
 
-        // If there are multiple candidates, they need to be sorted in order
-        // of decreasing weight.
-        if self.candidates.len() > 1 {
+        // Initialize the candidate list from the hinted registers.
+        self.candidates.clear();
+        if !self.hinted_regs.is_empty() {
             self.candidates
-                .as_mut_slice()
-                .sort_unstable_by_key(|&(_, preference_weight)| {
-                    Reverse(OrderedFloat(preference_weight))
-                });
-            self.candidates.rebuild_mapping();
-        }
+                .extend(
+                    self.hinted_regs
+                        .iter()
+                        .map(|&(reg, preference_weight)| CandidateReg {
+                            reg,
+                            preference_weight,
+                        }),
+                );
 
-        // If a previous split or eviction produced a hint when this register
-        // was pushed back onto the allocation queue, use that.
-        if let Some(hint) = hint {
-            if !vreg.is_group() {
-                if reginfo.class_members(class).contains(hint) {
-                    self.candidates
-                        .entry(RegOrRegGroup::single(hint))
-                        .or_insert(0.0);
-                }
+            // If there are multiple candidates, they need to be sorted in order
+            // of decreasing weight.
+            if self.candidates.len() > 1 {
+                self.candidates.sort_unstable_by_key(|candidate| {
+                    Reverse(OrderedFloat(candidate.preference_weight))
+                });
             }
         }
-
-        // Random seed algorithm copied from regalloc2: this helps spread
-        // allocations around and increases the chance that we find a free
-        // register on the first try.
-        let random_seed = virt_regs.segments(vreg.first_vreg(virt_regs))[0]
-            .live_range
-            .from
-            .inst()
-            .index()
-            + vreg.first_vreg(virt_regs).index();
 
         // Add the remaining candidates from the register class's allocation
-        // order.
-        if vreg.is_group() {
-            for group in combined_allocation_order(
-                |set| reginfo.group_allocation_order(class, set),
-                random_seed,
-            ) {
-                // Insert remaining candidates with a preference weight of 0.
-                self.candidates
-                    .entry(RegOrRegGroup::multi(group))
-                    .or_insert(0.0);
-            }
+        // order with a preference weight of 0.
+        if self.candidates.is_empty() {
+            // Fast path if there are no hints: we don't need to check against
+            // the map and can just copy the allocation order as-is.
+            self.candidates
+                .extend(
+                    V::allocation_order(class, reginfo)
+                        .iter()
+                        .map(|&reg| CandidateReg {
+                            reg,
+                            preference_weight: 0.0,
+                        }),
+                );
         } else {
-            for reg in
-                combined_allocation_order(|set| reginfo.allocation_order(class, set), random_seed)
-            {
-                // Insert remaining candidates with a preference weight of 0.
-                self.candidates
-                    .entry(RegOrRegGroup::single(reg))
-                    .or_insert(0.0);
-            }
+            self.candidates.extend(
+                V::allocation_order(class, reginfo)
+                    .iter()
+                    .filter(|&&reg| !self.hinted_regs.contains_key(reg))
+                    .map(|&reg| CandidateReg {
+                        reg,
+                        preference_weight: 0.0,
+                    }),
+            );
         }
     }
 
     /// Returns an iterator over all the registers in the allocation order.
-    pub fn order(&self) -> impl Iterator<Item = CandidateReg> + '_ {
-        self.candidates
-            .iter()
-            .map(|&(reg, preference_weight)| CandidateReg {
-                reg,
-                preference_weight,
-            })
+    pub fn order(&self) -> impl Iterator<Item = CandidateReg<V>> + '_ {
+        self.candidates.iter().copied()
     }
 
     /// Indicates whether the allocation order is empty and the virtual register
@@ -188,9 +153,8 @@ impl AllocationOrder {
     /// Returns the highest preferrence weight in the available candidates.
     pub fn highest_preferrence_weight(&self) -> f32 {
         self.candidates
-            .as_slice()
             .first()
-            .map_or(0.0, |&(_reg, preference_weight)| preference_weight)
+            .map_or(0.0, |candidate| candidate.preference_weight)
     }
 
     /// Scans the uses of the given virtual register to find any preferences for
@@ -198,7 +162,7 @@ impl AllocationOrder {
     fn collect_fixed_preferences(
         &mut self,
         vreg: VirtReg,
-        group_index: Option<usize>,
+        group_index: usize,
         class: RegClass,
         virt_regs: &VirtRegs,
         hints: &Hints,
@@ -210,25 +174,9 @@ impl AllocationOrder {
             if seg.use_list.has_fixedhint() {
                 for hint in hints.hints_for_segment(seg.value, seg.live_range) {
                     trace!("- {hint}");
-                    let reg_group = if let Some(group_index) = group_index {
-                        // If this is a register group then we need to find the register
-                        // group in this class which contains this register.
-                        let Some(reg_group) = reginfo.group_for_reg(hint.reg, group_index, class)
-                        else {
-                            continue;
-                        };
-                        debug_assert!(reginfo.class_group_members(class).contains(reg_group));
-                        RegOrRegGroup::multi(reg_group)
-                    } else {
-                        // Ignore preferences that conflict with our register class
-                        // constraint.
-                        if !reginfo.class_members(class).contains(hint.reg) {
-                            continue;
-                        }
-                        RegOrRegGroup::single(hint.reg)
-                    };
-
-                    *self.candidates.entry(reg_group).or_default() += hint.weight;
+                    if let Some(reg) = V::group_for_reg(hint.reg, group_index, class, reginfo) {
+                        *self.hinted_regs.entry(reg).or_default() += hint.weight;
+                    }
                 }
             }
         }

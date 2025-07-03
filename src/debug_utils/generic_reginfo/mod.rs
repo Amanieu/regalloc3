@@ -6,8 +6,8 @@ use core::fmt;
 
 use crate::entity::PrimaryMap;
 use crate::reginfo::{
-    AllocationOrderSet, PhysReg, PhysRegSet, RegBank, RegClass, RegClassSet, RegGroup, RegGroupSet,
-    RegInfo, RegUnit, SpillSlotSize,
+    PhysReg, PhysRegSet, RegBank, RegClass, RegClassSet, RegGroup, RegGroupSet, RegInfo, RegUnit,
+    SpillSlotSize,
 };
 
 #[cfg(feature = "arbitrary")]
@@ -37,10 +37,8 @@ struct RegClassData {
     members: PhysRegSet,
     group_members: RegGroupSet,
     sub_classes: RegClassSet,
-    preferred_regs: Vec<PhysReg>,
-    non_preferred_regs: Vec<PhysReg>,
-    group_preferred_regs: Vec<RegGroup>,
-    group_non_preferred_regs: Vec<RegGroup>,
+    allocation_order: Vec<PhysReg>,
+    group_allocation_order: Vec<RegGroup>,
 }
 
 #[derive(Clone)]
@@ -108,18 +106,8 @@ impl GenericRegInfo {
                 members: reginfo.class_members(class),
                 group_members: reginfo.class_group_members(class),
                 sub_classes: reginfo.sub_classes(class),
-                preferred_regs: reginfo
-                    .allocation_order(class, AllocationOrderSet::Preferred)
-                    .into(),
-                non_preferred_regs: reginfo
-                    .allocation_order(class, AllocationOrderSet::NonPreferred)
-                    .into(),
-                group_preferred_regs: reginfo
-                    .group_allocation_order(class, AllocationOrderSet::Preferred)
-                    .into(),
-                group_non_preferred_regs: reginfo
-                    .group_allocation_order(class, AllocationOrderSet::NonPreferred)
-                    .into(),
+                allocation_order: reginfo.allocation_order(class).into(),
+                group_allocation_order: reginfo.group_allocation_order(class).into(),
             });
         }
         for reg in reginfo.regs() {
@@ -202,19 +190,13 @@ impl RegInfo for GenericRegInfo {
     }
 
     #[inline]
-    fn allocation_order(&self, class: RegClass, set: AllocationOrderSet) -> &[PhysReg] {
-        match set {
-            AllocationOrderSet::Preferred => &self.classes[class].preferred_regs,
-            AllocationOrderSet::NonPreferred => &self.classes[class].non_preferred_regs,
-        }
+    fn allocation_order(&self, class: RegClass) -> &[PhysReg] {
+        &self.classes[class].allocation_order
     }
 
     #[inline]
-    fn group_allocation_order(&self, class: RegClass, set: AllocationOrderSet) -> &[RegGroup] {
-        match set {
-            AllocationOrderSet::Preferred => &self.classes[class].group_preferred_regs,
-            AllocationOrderSet::NonPreferred => &self.classes[class].group_non_preferred_regs,
-        }
+    fn group_allocation_order(&self, class: RegClass) -> &[RegGroup] {
+        &self.classes[class].group_allocation_order
     }
 
     #[inline]

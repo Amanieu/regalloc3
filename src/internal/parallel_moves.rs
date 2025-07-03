@@ -11,7 +11,6 @@ use crate::allocation_unit::AllocationUnit;
 use crate::entity::packed_option::ReservedValue;
 use crate::entity::{PrimaryMap, SecondaryMap, SparseMap};
 use crate::function::{Function, RematCost, Value};
-use crate::internal::allocator::combined_allocation_order;
 use crate::output::{Allocation, AllocationKind, SpillSlot};
 use crate::reginfo::{
     MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet, SpillSlotSize,
@@ -271,7 +270,7 @@ impl ScratchAllocator {
         alloc_emergency_spillslot: &mut impl FnMut(SpillSlotSize) -> SpillSlot,
     ) -> Allocation {
         trace!("Searching for scratch register in {class}");
-        for reg in combined_allocation_order(|set| reginfo.allocation_order(class, set), 0) {
+        for &reg in reginfo.allocation_order(class) {
             if reginfo.reg_units(reg).all(|unit| {
                 // If we need the scratch register for resolving a cycle,
                 // don't select a move source involved in the cycle.
@@ -334,9 +333,7 @@ impl ScratchAllocator {
         let spillslot = self
             .emergency_spillslot_cache
             .acquire(size, alloc_emergency_spillslot);
-        let reg = combined_allocation_order(|set| reginfo.allocation_order(class, set), 0)
-            .next_back()
-            .unwrap();
+        let reg = *reginfo.allocation_order(class).last().unwrap();
         trace!("-> evicted {reg} to emergency spillslot {spillslot}");
 
         // Since we are emitting moves in reverse order, this is after the

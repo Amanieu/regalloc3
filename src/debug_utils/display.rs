@@ -6,7 +6,7 @@ use core::fmt;
 
 use crate::function::{Block, Function, OperandConstraint, OperandKind, RematCost, TerminatorKind};
 use crate::output::{Allocation, AllocationKind, Output, OutputInst};
-use crate::reginfo::{AllocationOrderSet, RegClass, RegClassSet, RegInfo};
+use crate::reginfo::{RegClass, RegClassSet, RegInfo};
 
 /// Helper type to display a comma-separated list of displayable values.
 pub(crate) struct DisplayIter<T> {
@@ -289,23 +289,21 @@ impl<R: RegInfo> fmt::Display for DisplayRegInfo<'_, R> {
                 }
 
                 // Write the allocation order.
-                let mut write_order = |name, set| {
-                    if group_size == 1 {
-                        let order = self.0.allocation_order(class, set);
-                        if order.is_empty() {
-                            return Ok(());
-                        }
-                        writeln!(f, "        {name} = {}", display_iter(order.iter(), ""))
-                    } else {
-                        let order = self.0.group_allocation_order(class, set);
-                        if order.is_empty() {
-                            return Ok(());
-                        }
-                        writeln!(f, "        {name} = {}", display_iter(order.iter(), ""))
-                    }
-                };
-                write_order("preferred_regs", AllocationOrderSet::Preferred)?;
-                write_order("non_preferred_regs", AllocationOrderSet::NonPreferred)?;
+                if group_size == 1 {
+                    let order = self.0.allocation_order(class);
+                    writeln!(
+                        f,
+                        "        allocation_order = {}",
+                        display_iter(order.iter(), "")
+                    )?;
+                } else {
+                    let order = self.0.group_allocation_order(class);
+                    writeln!(
+                        f,
+                        "        allocation_order = {}",
+                        display_iter(order.iter(), "")
+                    )?;
+                }
 
                 writeln!(f, "    }}")?;
             }

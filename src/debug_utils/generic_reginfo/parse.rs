@@ -155,8 +155,7 @@ fn parse_class_def(
     let mut includes_spillslots = false;
     let mut spill_cost = None;
     let mut members = None;
-    let mut preferred_regs = None;
-    let mut non_preferred_regs = None;
+    let mut allocation_order = None;
     let mut is_group = None;
     for pair in pair.into_inner() {
         match pair.as_rule() {
@@ -196,19 +195,12 @@ fn parse_class_def(
                 let [reg_or_reg_group_list] = extract(pair, [Rule::reg_or_reg_group_list]);
                 members = Some(parse_reg_group_list(reg_or_reg_group_list, &mut is_group)?);
             }
-            Rule::preferred_regs => {
-                if preferred_regs.is_some() {
+            Rule::allocation_order => {
+                if allocation_order.is_some() {
                     Err(custom_error(pair.as_span(), "duplicate attribute"))?;
                 }
                 let [reg_or_reg_group_list] = extract(pair, [Rule::reg_or_reg_group_list]);
-                preferred_regs = Some(parse_reg_group_list(reg_or_reg_group_list, &mut is_group)?);
-            }
-            Rule::non_preferred_regs => {
-                if non_preferred_regs.is_some() {
-                    Err(custom_error(pair.as_span(), "duplicate attribute"))?;
-                }
-                let [reg_or_reg_group_list] = extract(pair, [Rule::reg_or_reg_group_list]);
-                non_preferred_regs =
+                allocation_order =
                     Some(parse_reg_group_list(reg_or_reg_group_list, &mut is_group)?);
             }
             _ => unreachable!(),
@@ -219,6 +211,9 @@ fn parse_class_def(
     };
     let Some(members) = members else {
         Err(custom_error(span, "missing members attribute"))?
+    };
+    let Some(allocation_order) = allocation_order else {
+        Err(custom_error(span, "missing allocation_order attribute"))?
     };
     let group_size = group_size.unwrap_or(1);
     if let Some(is_group) = is_group {
@@ -243,12 +238,12 @@ fn parse_class_def(
         RegList::Groups(list) => groups.extend(list.iter().copied()),
         RegList::Empty => {}
     }
-    let map_single = |list: &Option<RegList>| match list {
-        Some(RegList::Regs(regs)) => regs.clone(),
+    let map_single = |list: &RegList| match list {
+        RegList::Regs(regs) => regs.clone(),
         _ => vec![],
     };
-    let map_group = |list: &Option<RegList>| match list {
-        Some(RegList::Groups(groups)) => groups.clone(),
+    let map_group = |list: &RegList| match list {
+        RegList::Groups(groups) => groups.clone(),
         _ => vec![],
     };
     classes.push(RegClassData {
@@ -259,10 +254,8 @@ fn parse_class_def(
         members: regs,
         group_members: groups,
         sub_classes: RegClassSet::new(),
-        preferred_regs: map_single(&preferred_regs),
-        non_preferred_regs: map_single(&non_preferred_regs),
-        group_preferred_regs: map_group(&preferred_regs),
-        group_non_preferred_regs: map_group(&non_preferred_regs),
+        allocation_order: map_single(&allocation_order),
+        group_allocation_order: map_group(&allocation_order),
     });
     Ok(())
 }

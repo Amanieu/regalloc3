@@ -219,19 +219,19 @@ where
         self.dense.as_slice()
     }
 
-    /// Get the values as a mutable slice.
+    /// Get the values as a mutable vector.
     ///
     /// If any keys are modified, you must call [`SparseMap::rebuild_mapping`]
     /// afterwards.
     #[inline]
-    pub fn as_mut_slice(&mut self) -> &mut [(K, V)] {
-        self.dense.as_mut_slice()
+    pub fn as_mut_vec(&mut self) -> &mut Vec<(K, V)> {
+        &mut self.dense
     }
 
     /// Re-builds the map of keys to values.
     ///
     /// This must be called after any keys are modified, such as with
-    /// [`SparseMap::as_mut_slice`].
+    /// [`SparseMap::as_mut_vec`].
     #[inline]
     pub fn rebuild_mapping(&mut self) {
         for (idx, &(k, _)) in self.dense.iter().enumerate() {

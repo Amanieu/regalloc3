@@ -13,7 +13,7 @@ use crate::function::{
     Block, Function, Inst, InstRange, MAX_BLOCK_PARAMS, MAX_BLOCKS, MAX_INST_OPERANDS, MAX_INSTS,
     MAX_VALUES, Operand, OperandConstraint, OperandKind, TerminatorKind, Value, ValueGroup,
 };
-use crate::reginfo::{AllocationOrderSet, PhysReg, RegInfo, RegUnitSet};
+use crate::reginfo::{PhysReg, RegInfo, RegUnitSet};
 
 /// Checks `func` to ensure it satisfies all of the pre-conditions required by
 /// the register allocator.
@@ -699,8 +699,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 );
 
                 ensure!(
-                    AllocationOrderSet::each()
-                        .any(|set| !self.reginfo.allocation_order(class, set).is_empty()),
+                    !self.reginfo.allocation_order(class).is_empty(),
                     "{value} cannot be rematerialized into {class} which has an empty allocation \
                      order"
                 );

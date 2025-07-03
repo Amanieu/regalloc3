@@ -31,8 +31,6 @@ use alloc::vec::Vec;
 use core::ops::ControlFlow;
 use core::{fmt, iter};
 
-pub use order::combined_allocation_order;
-
 use self::order::{AllocationOrder, CandidateReg};
 use self::queue::{AllocationQueue, VirtRegOrGroup};
 use self::split::Splitter;
@@ -45,57 +43,11 @@ use super::split_placement::SplitPlacement;
 use super::uses::Uses;
 use super::virt_regs::builder::VirtRegBuilder;
 use super::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
-use crate::entity::SecondaryMap;
-use crate::entity::packed_option::PackedOption;
+use crate::entity::{EntityRef, SecondaryMap};
 use crate::function::Function;
 use crate::internal::reg_matrix::InterferenceKind;
-use crate::reginfo::{PhysReg, RegGroup, RegInfo};
+use crate::reginfo::{PhysReg, RegClass, RegGroup, RegInfo};
 use crate::{Options, RegAllocError, Stats};
-
-entity_def! {
-    /// This type represents either a [`PhysReg`] for groups of size 1 or a
-    /// [`RegGroup`] for larger group sizes. The group size is not encoded in
-    /// this type itself: it must instead be inferred from context.
-    entity RegOrRegGroup(u16, "r/rg");
-}
-
-impl RegOrRegGroup {
-    /// Creates a [`RegOrRegGroup`] representing a single [`PhysReg`].
-    #[inline]
-    #[must_use]
-    fn single(reg: PhysReg) -> Self {
-        Self::new(reg.index())
-    }
-
-    /// Creates a [`RegOrRegGroup`] representing a sequence of more than one
-    /// register through a [`RegGroup`].
-    #[inline]
-    #[must_use]
-    fn multi(group: RegGroup) -> Self {
-        Self::new(group.index())
-    }
-
-    /// For single registers, returns the [`PhysReg`].
-    ///
-    /// This should only be called for register groups created using
-    /// [`RegOrRegGroup::single`].
-    #[inline]
-    #[must_use]
-    fn as_single(self) -> PhysReg {
-        PhysReg::new(self.index())
-    }
-
-    /// For register groups, returns the [`RegGroup`] which describes
-    /// the sequence of registers in this group.
-    ///
-    /// This should only be called for register groups created using
-    /// [`RegOrRegGroup::multi`].
-    #[inline]
-    #[must_use]
-    fn as_multi(self) -> RegGroup {
-        RegGroup::new(self.index())
-    }
-}
 
 /// Abstraction over a virtual register group.
 ///
@@ -108,11 +60,15 @@ impl RegOrRegGroup {
 /// This trait effectively treats `VirtReg` as a group with a size of 1, but
 /// the compiler can produce better code for this case.
 trait AbstractVirtRegGroup: Copy + fmt::Debug + fmt::Display + Into<VirtRegOrGroup> {
+    /// Physical register or register group that this virtual register group can
+    /// be assigned to.
+    type Phys: Copy + fmt::Debug + fmt::Display + EntityRef;
+
     /// Iterator over all the virtual registers in this group.
     fn vregs(self, virt_regs: &VirtRegs) -> impl ExactSizeIterator<Item = VirtReg>;
 
     /// Whether this is a virtual register group with more than one member.
-    fn is_group(self) -> bool;
+    fn is_group() -> bool;
 
     /// First virtual register in this group.
     fn first_vreg(self, virt_regs: &VirtRegs) -> VirtReg {
@@ -123,31 +79,51 @@ trait AbstractVirtRegGroup: Copy + fmt::Debug + fmt::Display + Into<VirtRegOrGro
     /// physical register group.
     fn zip_with_reg_group(
         self,
-        reg: RegOrRegGroup,
+        reg: Self::Phys,
         virt_regs: &VirtRegs,
         reginfo: &impl RegInfo,
     ) -> impl ExactSizeIterator<Item = (VirtReg, PhysReg)>;
 
     /// Dumps the virtual register to the log.
     fn dump(self, virt_regs: &VirtRegs, uses: &Uses);
+
+    /// Returns the register group containing `reg`, or `None` if `reg` is not
+    /// a member of `class`.
+    fn group_for_reg(
+        reg: PhysReg,
+        group_index: usize,
+        class: RegClass,
+        reginfo: &impl RegInfo,
+    ) -> Option<Self::Phys>;
+
+    /// Returns the allocation order for `class`.
+    fn allocation_order(class: RegClass, reginfo: &impl RegInfo) -> &[Self::Phys];
+
+    /// Selects the appropriate `AllocationOrder`.
+    fn select_order<'a>(
+        single: &'a mut AllocationOrder<VirtReg>,
+        multi: &'a mut AllocationOrder<VirtRegGroup>,
+    ) -> &'a mut AllocationOrder<Self>;
 }
 
 impl AbstractVirtRegGroup for VirtReg {
+    type Phys = PhysReg;
+
     fn vregs(self, _virt_regs: &VirtRegs) -> impl ExactSizeIterator<Item = VirtReg> {
         iter::once(self)
     }
 
-    fn is_group(self) -> bool {
+    fn is_group() -> bool {
         false
     }
 
     fn zip_with_reg_group(
         self,
-        reg: RegOrRegGroup,
+        reg: PhysReg,
         _virt_regs: &VirtRegs,
         _reginfo: &impl RegInfo,
     ) -> impl ExactSizeIterator<Item = (VirtReg, PhysReg)> {
-        iter::once((self, reg.as_single()))
+        iter::once((self, reg))
     }
 
     fn dump(self, virt_regs: &VirtRegs, uses: &Uses) {
@@ -160,6 +136,27 @@ impl AbstractVirtRegGroup for VirtReg {
             segment.dump(uses);
         }
     }
+
+    fn group_for_reg(
+        reg: PhysReg,
+        group_index: usize,
+        class: RegClass,
+        reginfo: &impl RegInfo,
+    ) -> Option<Self::Phys> {
+        debug_assert_eq!(group_index, 0);
+        reginfo.class_members(class).contains(reg).then_some(reg)
+    }
+
+    fn allocation_order(class: RegClass, reginfo: &impl RegInfo) -> &[Self::Phys] {
+        reginfo.allocation_order(class)
+    }
+
+    fn select_order<'a>(
+        single: &'a mut AllocationOrder<VirtReg>,
+        _multi: &'a mut AllocationOrder<VirtRegGroup>,
+    ) -> &'a mut AllocationOrder<Self> {
+        single
+    }
 }
 
 impl From<VirtReg> for VirtRegOrGroup {
@@ -169,21 +166,23 @@ impl From<VirtReg> for VirtRegOrGroup {
 }
 
 impl AbstractVirtRegGroup for VirtRegGroup {
+    type Phys = RegGroup;
+
     fn vregs(self, virt_regs: &VirtRegs) -> impl ExactSizeIterator<Item = VirtReg> {
         virt_regs.group_members(self).iter().copied()
     }
 
-    fn is_group(self) -> bool {
+    fn is_group() -> bool {
         true
     }
 
     fn zip_with_reg_group(
         self,
-        reg: RegOrRegGroup,
+        reg: RegGroup,
         virt_regs: &VirtRegs,
         reginfo: &impl RegInfo,
     ) -> impl ExactSizeIterator<Item = (VirtReg, PhysReg)> {
-        let members = reginfo.reg_group_members(reg.as_multi());
+        let members = reginfo.reg_group_members(reg);
         debug_assert_eq!(members.len(), self.vregs(virt_regs).len());
         self.vregs(virt_regs).zip(members.iter().copied())
     }
@@ -192,6 +191,28 @@ impl AbstractVirtRegGroup for VirtRegGroup {
         for &vreg in virt_regs.group_members(self) {
             vreg.dump(virt_regs, uses);
         }
+    }
+
+    fn group_for_reg(
+        reg: PhysReg,
+        group_index: usize,
+        class: RegClass,
+        reginfo: &impl RegInfo,
+    ) -> Option<Self::Phys> {
+        let reg_group = reginfo.group_for_reg(reg, group_index, class)?;
+        debug_assert!(reginfo.class_group_members(class).contains(reg_group));
+        Some(reg_group)
+    }
+
+    fn allocation_order(class: RegClass, reginfo: &impl RegInfo) -> &[Self::Phys] {
+        reginfo.group_allocation_order(class)
+    }
+
+    fn select_order<'a>(
+        _single: &'a mut AllocationOrder<VirtReg>,
+        multi: &'a mut AllocationOrder<VirtRegGroup>,
+    ) -> &'a mut AllocationOrder<Self> {
+        multi
     }
 }
 
@@ -235,13 +256,6 @@ enum Assignment {
         /// To avoid infinite eviction loops, we only allow this to happen once
         /// per virtual register.
         evicted_for_preference: bool,
-
-        /// A hint for a physical register that should be probed first on the
-        /// next attempt to allocate this virtual register.
-        ///
-        /// The goal of this hint is to avoid unnecessary probes by quickly
-        /// finding a physical register that is likely to be available.
-        hint: PackedOption<PhysReg>,
     },
 
     /// The virtual register is dead as a result of live range splitting: its
@@ -253,7 +267,6 @@ impl Default for Assignment {
     fn default() -> Self {
         Assignment::Unassigned {
             evicted_for_preference: false,
-            hint: None.into(),
         }
     }
 }
@@ -274,25 +287,8 @@ impl Assignment {
             } => evicted_for_preference,
             Assignment::Unassigned {
                 evicted_for_preference,
-                hint: _,
             } => evicted_for_preference,
             Assignment::Dead => false,
-        }
-    }
-
-    /// Returns the register hint associated with a virtual register, if any.
-    ///
-    /// The assignment must currently be unassigned.
-    fn allocation_hint(&self) -> Option<PhysReg> {
-        match self {
-            Assignment::Assigned { .. } => {
-                unreachable!("assigning already assigned virtual register")
-            }
-            Assignment::Unassigned {
-                evicted_for_preference: _,
-                hint,
-            } => hint.expand(),
-            Assignment::Dead => unreachable!("assigning dead virtual register"),
         }
     }
 
@@ -335,7 +331,10 @@ pub struct Allocator {
 
     /// Order in which to probe registers in a register class, taking hints and
     /// preferences into account.
-    allocation_order: AllocationOrder,
+    allocation_order: AllocationOrder<VirtReg>,
+
+    /// Same, but for register groups.
+    group_allocation_order: AllocationOrder<VirtRegGroup>,
 
     /// Result of allocation for each virtual register.
     assignments: SecondaryMap<VirtReg, Assignment>,
@@ -371,6 +370,7 @@ impl Allocator {
         Self {
             queue: AllocationQueue::new(),
             allocation_order: AllocationOrder::new(),
+            group_allocation_order: AllocationOrder::new(),
             assignments: SecondaryMap::new(),
             interfering_vregs: vec![],
             candidate_interfering_vregs: vec![],
@@ -403,6 +403,7 @@ impl Allocator {
         self.assignments.clear_and_resize(virt_regs.num_virt_regs());
         self.remat_segments.clear();
         self.allocation_order.prepare(reginfo);
+        self.group_allocation_order.prepare(reginfo);
         let mut context = Context {
             func,
             reginfo,
@@ -510,38 +511,35 @@ struct Context<'a, F, R> {
 
 impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// Attempts to assign the given virtual register to a physical register.
-    fn allocate(
+    fn allocate<V: AbstractVirtRegGroup>(
         &mut self,
-        vreg: impl AbstractVirtRegGroup,
+        vreg: V,
         stage: Stage,
     ) -> Result<(), RegAllocError> {
         trace!("Allocating {vreg} in stage {stage:?}");
         vreg.dump(self.virt_regs, self.uses);
         let first_vreg = vreg.first_vreg(self.virt_regs);
-        if vreg.is_group() {
+        if V::is_group() {
             stat!(self.stats, dequeued_group);
         } else {
             stat!(self.stats, dequeued_reg);
         }
 
         // Determine the order in which to probe for available registers.
-        let hint = self.allocator.assignments[first_vreg].allocation_hint();
-        self.allocator.allocation_order.compute(
-            vreg,
-            self.virt_regs,
-            self.hints,
-            self.reginfo,
-            hint,
+        let order = V::select_order(
+            &mut self.allocator.allocation_order,
+            &mut self.allocator.group_allocation_order,
         );
+        order.compute(vreg, self.virt_regs, self.hints, self.reginfo);
         if trace_enabled!() {
             trace!("Allocation order:");
-            for candidate in self.allocator.allocation_order.order() {
+            for candidate in order.order() {
                 trace!("  {}", candidate);
             }
         }
 
         // If the allocation order is empty then skip straight to spilling.
-        if self.allocator.allocation_order.must_spill() {
+        if order.must_spill() {
             trace!("Empty allocation order, spilling immediately");
             stat!(self.stats, must_spill_vreg);
             self.spill(vreg);
@@ -560,8 +558,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             // register. If the virtual register has a fixed-register
             // constraint then it may be more profitable to evict an existing
             // virtual register from our preferred register.
-            if candidate.preference_weight
-                < self.allocator.allocation_order.highest_preferrence_weight()
+            let order = V::select_order(
+                &mut self.allocator.allocation_order,
+                &mut self.allocator.group_allocation_order,
+            );
+            if candidate.preference_weight < order.highest_preferrence_weight()
                 && !self.allocator.assignments[first_vreg].evicted_for_preference()
             {
                 stat!(self.stats, try_evict_better_candidate);
@@ -569,11 +570,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 if let Some(better_candidate) = self.try_evict_for_preferred_reg(vreg, candidate) {
                     trace!("-> Found better candidate {better_candidate}");
                     stat!(self.stats, evicted_better_candidate);
-
-                    // The initial candidate that we found is likely to fit any
-                    // virtual registers that we evict. Use it as a hint.
-                    let hint = (!vreg.is_group()).then_some(candidate.reg.as_single());
-                    self.evict_interfering_vregs(hint);
+                    self.evict_interfering_vregs();
                     self.assign(vreg, better_candidate, true);
                     return Ok(());
                 }
@@ -646,8 +643,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
     /// Searches for a register that has no interference with the given virtual
     /// register.
-    fn find_available_reg(&mut self, vreg: impl AbstractVirtRegGroup) -> Option<CandidateReg> {
-        for cand in self.allocator.allocation_order.order() {
+    fn find_available_reg<V: AbstractVirtRegGroup>(&mut self, vreg: V) -> Option<CandidateReg<V>> {
+        let order = V::select_order(
+            &mut self.allocator.allocation_order,
+            &mut self.allocator.group_allocation_order,
+        );
+        for cand in order.order() {
             trace!("Attempting to assign to {cand}");
             if vreg
                 .zip_with_reg_group(cand.reg, self.virt_regs, self.reginfo)
@@ -714,10 +715,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// `evicted_for_preference` is true if we evicted a virtual register with a
     /// higher spill weight due to our preference for the register it was
     /// occupying.
-    fn assign(
+    fn assign<V: AbstractVirtRegGroup>(
         &mut self,
-        vreg: impl AbstractVirtRegGroup,
-        candidate: CandidateReg,
+        vreg: V,
+        candidate: CandidateReg<V>,
         evicted_for_preference: bool,
     ) {
         trace!("Assigning {vreg} to {candidate} (evicted_for_preference={evicted_for_preference})");

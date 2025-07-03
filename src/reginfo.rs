@@ -53,14 +53,9 @@
 //! the register allocator will attempt to select a suitable register for a
 //! constraint of this class.
 //!
-//! The [`RegInfo`] trait specifies the allocation order as 2 sets of registers:
-//! - [`AllocationOrderSet::Preferred`]
-//! - [`AllocationOrderSet::NonPreferred`]
-//!
-//! Preferred registers generally have a more compact or efficient encoding than
-//! non-preferred registers. Also, callee-saved registers should not be placed
-//! in the preferred set since they are reserved throughout the entire function
-//! by default.
+//! As a general rule, callee-saved registers should be placed last in the
+//! allocation order so that they are only used as a last resort. This minimizes
+//! the set of registers that need to be spilled on function entry.
 //!
 //! Any registers that are members of a class but not in the allocation order
 //! are only selected by the register allocator if it helps to satisfy a `Fixed`
@@ -260,29 +255,6 @@ impl SpillSlotSize {
     }
 }
 
-/// Sets of registers in a [`RegClass`] grouped by their priority for register
-/// allocation.
-///
-/// See [`RegInfo::allocation_order`] for more details.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum AllocationOrderSet {
-    /// Registers that are free to use and have a shorter or more efficient
-    /// instruction encoding.
-    Preferred,
-
-    /// Registers that are free to use and have a longer or less efficient
-    /// instruction encoding.
-    NonPreferred,
-}
-
-impl AllocationOrderSet {
-    /// Iterator for each set.
-    pub(crate) fn each() -> impl DoubleEndedIterator<Item = Self> {
-        [Self::Preferred, Self::NonPreferred].into_iter()
-    }
-}
-
 /// Trait which describes the physical registers and register classes that may
 /// be allocated from.
 ///
@@ -396,20 +368,8 @@ pub trait RegInfo {
     /// GC roots) or for values that are only read by trap handlers.
     fn class_spill_cost(&self, class: RegClass) -> f32;
 
-    /// Returns a set of [`PhysReg`] to try allocating for an operand
+    /// Returns an ordered list of [`PhysReg`] to try allocating for an operand
     /// constrained to the given register class.
-    ///
-    /// Several sets of registers can be provided with different priority
-    /// levels as determined by the [`AllocationOrderSet`] enum. The register
-    /// allocator will attempt to select an available registers by probing the
-    /// sets in this order:
-    /// * Preferred registers.
-    /// * Non-preferred registers.
-    ///
-    /// This arrangement prioritizes registers with smaller encodings and
-    /// penalizes registers that need to be saved on function entry and
-    /// restored on function exit (but only if that cost hasn't already been
-    /// paid).
     ///
     /// All registers returned by this function must be a member of the register
     /// class. However not all members need to be in the allocation order.
@@ -418,16 +378,16 @@ pub trait RegInfo {
     /// such as fixed stack slots which are slower to access than a register.
     ///
     /// This must be empty when `class_group_size > 1` for this class.
-    fn allocation_order(&self, class: RegClass, set: AllocationOrderSet) -> &[PhysReg];
+    fn allocation_order(&self, class: RegClass) -> &[PhysReg];
 
-    /// Returns a set of [`RegGroup`] to try allocating for an operand
+    /// Returns an ordered list of [`RegGroup`] to try allocating for an operand
     /// constrained to the given register class.
     ///
     /// This is similar to [`RegInfo::allocation_order`] except that it returns
     /// a list of [`RegGroup`] instead of [`PhysReg`].
     ///
     /// This must be empty when `class_group_size == 1` for this class.
-    fn group_allocation_order(&self, class: RegClass, set: AllocationOrderSet) -> &[RegGroup];
+    fn group_allocation_order(&self, class: RegClass) -> &[RegGroup];
 
     /// Returns the set of sub-classes of `class`, including itself.
     ///

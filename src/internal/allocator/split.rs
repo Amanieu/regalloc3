@@ -94,11 +94,6 @@ impl InterferenceSegment for GapSegment {
 /// allocations in a physical register.
 #[derive(Debug)]
 struct SplitProposal {
-    /// Register whose interference was split around.
-    ///
-    /// This is used as a hint for the allocation order of the split-off part.
-    reg: PhysReg,
-
     /// Left boundary to split at.
     left: Option<Inst>,
 
@@ -830,7 +825,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         };
 
         Some(SplitProposal {
-            reg,
             left,
             right,
             use_weight: weight,
@@ -848,7 +842,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         vreg: VirtReg,
         left: Option<Inst>,
         right: Option<Inst>,
-        hint: PhysReg,
         interference_weight: f32,
     ) {
         trace!("Splitting {vreg}");
@@ -863,42 +856,40 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         // Helper function to create new virtual regsiters and initialize them
         // to unassigned with the given hint.
-        let mut create_vregs =
-            |segments: &mut [ValueSegment], uses: &mut Uses, hint: Option<PhysReg>| {
-                self.virt_regs.create_vreg_from_segments(
-                    segments,
-                    self.func,
-                    self.reginfo,
-                    uses,
-                    self.hints,
-                    self.virt_reg_builder,
-                    self.coalescing,
-                    self.stats,
-                    self.options,
-                    &mut splitter.new_vregs,
-                );
-                self.allocator
-                    .assignments
-                    .grow_to_with(self.virt_regs.num_virt_regs(), || Assignment::Unassigned {
-                        evicted_for_preference: false,
-                        hint: hint.into(),
-                    });
-            };
+        let mut create_vregs = |segments: &mut [ValueSegment], uses: &mut Uses| {
+            self.virt_regs.create_vreg_from_segments(
+                segments,
+                self.func,
+                self.reginfo,
+                uses,
+                self.hints,
+                self.virt_reg_builder,
+                self.coalescing,
+                self.stats,
+                self.options,
+                &mut splitter.new_vregs,
+            );
+            self.allocator
+                .assignments
+                .grow_to_with(self.virt_regs.num_virt_regs(), || Assignment::Unassigned {
+                    evicted_for_preference: false,
+                });
+        };
 
         let mut segments = &mut splitter.segments[..];
         if let Some(left) = left {
             let mut split = ValueSegment::split_segments_at(segments, self.uses, self.hints, left);
-            create_vregs(split.first_half(), self.uses, None);
+            create_vregs(split.first_half(), self.uses);
             segments = split.into_second_half();
         }
 
         if let Some(right) = right {
             let mut split2 =
                 ValueSegment::split_segments_at(segments, self.uses, self.hints, right);
-            create_vregs(split2.first_half(), self.uses, Some(hint));
-            create_vregs(split2.into_second_half(), self.uses, None);
+            create_vregs(split2.first_half(), self.uses);
+            create_vregs(split2.into_second_half(), self.uses);
         } else {
-            create_vregs(segments, self.uses, Some(hint));
+            create_vregs(segments, self.uses);
         }
 
         // At least one of the new virtual registers must be able to evict the
@@ -974,9 +965,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         self.build_gap_segments(vreg);
 
         let mut best_split = None;
-        for candidate in self.allocator.allocation_order.order() {
+        for &reg in self.reginfo.allocation_order(self.virt_regs[vreg].class) {
             if let Some(new_split) = Self::find_split_region(
-                candidate.reg.as_single(),
+                reg,
                 initial_gap,
                 &self.allocator.splitter,
                 self.reg_matrix,
@@ -1047,7 +1038,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             vreg,
             best_split.left,
             best_split.right,
-            best_split.reg,
             best_split.interference_weight,
         );
     }
@@ -1055,8 +1045,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     // Invalidate any existing ValueGroup mappings for a vreg: the group they
     // point to will no longer be valid after it is spilled. New mappings will
     // be created when building the new virtual registers for the split product.
-    fn invalidate_value_group_mapping(&mut self, vreg: impl AbstractVirtRegGroup) {
-        if vreg.is_group() {
+    fn invalidate_value_group_mapping<V: AbstractVirtRegGroup>(&mut self, vreg: V) {
+        if V::is_group() {
             let vreg = vreg.first_vreg(self.virt_regs);
             for segment in self.virt_regs.segments(vreg) {
                 for &u in &self.uses[segment.use_list] {

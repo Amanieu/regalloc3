@@ -159,16 +159,11 @@ impl RegInfo {
                 }
                 writeln!(f, "        spill_cost = {}", classdata.spill_cost)?;
                 writeln!(f, "        members = {}", classdata.members)?;
-                if !classdata.preferred_regs.is_empty() {
-                    writeln!(f, "        preferred_regs = {}", classdata.preferred_regs)?;
-                }
-                if !classdata.non_preferred_regs.is_empty() {
-                    writeln!(
-                        f,
-                        "        non_preferred_regs = {}",
-                        classdata.non_preferred_regs
-                    )?;
-                }
+                writeln!(
+                    f,
+                    "        allocation_order = {}",
+                    classdata.allocation_order
+                )?;
                 writeln!(f, "    }}")?;
             }
 
@@ -205,14 +200,6 @@ enum RegGroupList {
     Single(Vec<PhysReg>),
     Multi(Vec<RegGroup>),
 }
-impl RegGroupList {
-    fn is_empty(&self) -> bool {
-        match self {
-            RegGroupList::Single(v) => v.is_empty(),
-            RegGroupList::Multi(v) => v.is_empty(),
-        }
-    }
-}
 
 impl fmt::Display for RegGroupList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -231,6 +218,5 @@ struct RegClassData {
     allows_spillslots: bool,
     spill_cost: f32,
     members: RegGroupList,
-    preferred_regs: RegGroupList,
-    non_preferred_regs: RegGroupList,
+    allocation_order: RegGroupList,
 }

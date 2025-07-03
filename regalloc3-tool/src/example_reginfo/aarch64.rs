@@ -47,8 +47,9 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: true,
         spill_cost: 0.5,
         members: RegGroupList::Single([&x_regs[..], &x_fixed_stack[..]].concat()),
-        preferred_regs: RegGroupList::Single([&x_regs[0..=18], &x_regs[30..=30]].concat()),
-        non_preferred_regs: RegGroupList::Single(x_regs[19..=29].into()),
+        allocation_order: RegGroupList::Single(
+            [&x_regs[0..=18], &x_regs[30..=30], &x_regs[19..=29]].concat(),
+        ),
     });
     let x_stack_only_class = reginfo.classes.push(RegClassData {
         desc: "General-purpose stack only".to_string(),
@@ -57,8 +58,7 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: true,
         spill_cost: 0.0,
         members: RegGroupList::Single(x_fixed_stack.clone()),
-        preferred_regs: RegGroupList::Single(vec![]),
-        non_preferred_regs: RegGroupList::Single(vec![]),
+        allocation_order: RegGroupList::Single(vec![]),
     });
     let x_class = reginfo.classes.push(RegClassData {
         desc: "General-purpose registers".to_string(),
@@ -67,8 +67,9 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: false,
         spill_cost: 1.0,
         members: RegGroupList::Single(x_regs.clone()),
-        preferred_regs: RegGroupList::Single([&x_regs[0..=18], &x_regs[30..=30]].concat()),
-        non_preferred_regs: RegGroupList::Single(x_regs[19..=29].into()),
+        allocation_order: RegGroupList::Single(
+            [&x_regs[0..=18], &x_regs[30..=30], &x_regs[19..=29]].concat(),
+        ),
     });
     let casp_class = reginfo.classes.push(RegClassData {
         desc: "Aligned register pairs for CASP".to_string(),
@@ -77,8 +78,7 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: false,
         spill_cost: 1.0,
         members: RegGroupList::Multi(casp_regs.clone()),
-        preferred_regs: RegGroupList::Multi(casp_regs[0..=8].into()),
-        non_preferred_regs: RegGroupList::Multi(casp_regs[9..=14].into()),
+        allocation_order: RegGroupList::Multi([&casp_regs[0..=14]].concat()),
     });
     reginfo.banks.push(RegBankData {
         desc: "General-purpose registers".to_string(),
@@ -122,8 +122,9 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: true,
         spill_cost: 0.5,
         members: RegGroupList::Single([&d_regs[..], &d_fixed_stack[..]].concat()),
-        preferred_regs: RegGroupList::Single([&d_regs[0..=7], &d_regs[16..=31]].concat()),
-        non_preferred_regs: RegGroupList::Single(d_regs[8..=15].into()),
+        allocation_order: RegGroupList::Single(
+            [&d_regs[0..=7], &d_regs[16..=31], &d_regs[8..=15]].concat(),
+        ),
     });
     let d_stack_only_class = reginfo.classes.push(RegClassData {
         desc: "64-bit FP/SIMD stack only".to_string(),
@@ -132,8 +133,7 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: true,
         spill_cost: 0.0,
         members: RegGroupList::Single(d_fixed_stack.clone()),
-        preferred_regs: RegGroupList::Single(vec![]),
-        non_preferred_regs: RegGroupList::Single(vec![]),
+        allocation_order: RegGroupList::Single(vec![]),
     });
     let d_class = reginfo.classes.push(RegClassData {
         desc: "64-bit FP/SIMD registers".to_string(),
@@ -142,8 +142,9 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: false,
         spill_cost: 1.0,
         members: RegGroupList::Single(d_regs.clone()),
-        preferred_regs: RegGroupList::Single([&d_regs[0..=7], &d_regs[16..=31]].concat()),
-        non_preferred_regs: RegGroupList::Single(d_regs[8..=15].into()),
+        allocation_order: RegGroupList::Single(
+            [&d_regs[0..=7], &d_regs[16..=31], &d_regs[8..=15]].concat(),
+        ),
     });
     let dd_class = reginfo.classes.push(RegClassData {
         desc: "64-bit FP/SIMD register pairs".to_string(),
@@ -152,8 +153,9 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: false,
         spill_cost: 1.0,
         members: RegGroupList::Multi(dd_regs.clone()),
-        preferred_regs: RegGroupList::Multi([&dd_regs[0..=6], &dd_regs[16..=31]].concat()),
-        non_preferred_regs: RegGroupList::Multi(dd_regs[7..=15].into()),
+        allocation_order: RegGroupList::Multi(
+            [&dd_regs[0..=6], &dd_regs[16..=31], &dd_regs[7..=15]].concat(),
+        ),
     });
     let ddd_class = reginfo.classes.push(RegClassData {
         desc: "64-bit FP/SIMD register triples".to_string(),
@@ -162,8 +164,9 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: false,
         spill_cost: 1.0,
         members: RegGroupList::Multi(ddd_regs.clone()),
-        preferred_regs: RegGroupList::Multi([&ddd_regs[0..=5], &ddd_regs[16..=31]].concat()),
-        non_preferred_regs: RegGroupList::Multi(ddd_regs[6..=15].into()),
+        allocation_order: RegGroupList::Multi(
+            [&ddd_regs[0..=5], &ddd_regs[16..=31], &ddd_regs[6..=15]].concat(),
+        ),
     });
     let dddd_class = reginfo.classes.push(RegClassData {
         desc: "64-bit FP/SIMD register quads".to_string(),
@@ -172,8 +175,9 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: false,
         spill_cost: 1.0,
         members: RegGroupList::Multi(dddd_regs.clone()),
-        preferred_regs: RegGroupList::Multi([&dddd_regs[0..=4], &dddd_regs[16..=31]].concat()),
-        non_preferred_regs: RegGroupList::Multi(dddd_regs[5..=15].into()),
+        allocation_order: RegGroupList::Multi(
+            [&dddd_regs[0..=4], &dddd_regs[16..=31], &dddd_regs[5..=15]].concat(),
+        ),
     });
     reginfo.banks.push(RegBankData {
         desc: "64-bit FP/SIMD registers".to_string(),
@@ -226,8 +230,7 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: true,
         spill_cost: 0.5,
         members: RegGroupList::Single([&q_regs[..], &q_fixed_stack[..]].concat()),
-        preferred_regs: RegGroupList::Single(q_regs.clone()),
-        non_preferred_regs: RegGroupList::Single(vec![]),
+        allocation_order: RegGroupList::Single(q_regs.clone()),
     });
     let q_stack_only_class = reginfo.classes.push(RegClassData {
         desc: "128-bit FP/SIMD stack only".to_string(),
@@ -236,8 +239,7 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: true,
         spill_cost: 0.0,
         members: RegGroupList::Single(q_fixed_stack.clone()),
-        preferred_regs: RegGroupList::Single(vec![]),
-        non_preferred_regs: RegGroupList::Single(vec![]),
+        allocation_order: RegGroupList::Single(vec![]),
     });
     let q_class = reginfo.classes.push(RegClassData {
         desc: "128-bit FP/SIMD registers".to_string(),
@@ -246,8 +248,7 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: false,
         spill_cost: 1.0,
         members: RegGroupList::Single(q_regs.clone()),
-        preferred_regs: RegGroupList::Single(q_regs.clone()),
-        non_preferred_regs: RegGroupList::Single(vec![]),
+        allocation_order: RegGroupList::Single(q_regs.clone()),
     });
     let qq_class = reginfo.classes.push(RegClassData {
         desc: "128-bit FP/SIMD register pairs".to_string(),
@@ -256,8 +257,7 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: false,
         spill_cost: 1.0,
         members: RegGroupList::Multi(qq_regs.clone()),
-        preferred_regs: RegGroupList::Multi(qq_regs.clone()),
-        non_preferred_regs: RegGroupList::Multi(vec![]),
+        allocation_order: RegGroupList::Multi(qq_regs.clone()),
     });
     let qqq_class = reginfo.classes.push(RegClassData {
         desc: "128-bit FP/SIMD register triples".to_string(),
@@ -266,8 +266,7 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: false,
         spill_cost: 1.0,
         members: RegGroupList::Multi(qqq_regs.clone()),
-        preferred_regs: RegGroupList::Multi(qqq_regs.clone()),
-        non_preferred_regs: RegGroupList::Multi(vec![]),
+        allocation_order: RegGroupList::Multi(qqq_regs.clone()),
     });
     let qqqq_class = reginfo.classes.push(RegClassData {
         desc: "128-bit FP/SIMD register quads".to_string(),
@@ -276,8 +275,7 @@ pub fn make_aarch64_reginfo(num_fixed_stack: usize) -> RegInfo {
         allows_spillslots: false,
         spill_cost: 1.0,
         members: RegGroupList::Multi(qqqq_regs.clone()),
-        preferred_regs: RegGroupList::Multi(qqqq_regs.clone()),
-        non_preferred_regs: RegGroupList::Multi(vec![]),
+        allocation_order: RegGroupList::Multi(qqqq_regs.clone()),
     });
     reginfo.banks.push(RegBankData {
         desc: "128-bit FP/SIMD registers".to_string(),

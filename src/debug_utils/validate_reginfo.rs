@@ -6,9 +6,9 @@ use anyhow::{Result, bail, ensure};
 
 use crate::entity::SecondaryMap;
 use crate::reginfo::{
-    AllocationOrderSet, MAX_GROUP_SIZE, MAX_PHYSREGS, MAX_REG_BANKS, MAX_REG_CLASSES,
-    MAX_REG_GROUPS, MAX_REG_UNITS, MAX_UNITS_PER_REG, PhysReg, PhysRegSet, RegBank, RegClass,
-    RegGroup, RegInfo, RegUnit, RegUnitSet,
+    MAX_GROUP_SIZE, MAX_PHYSREGS, MAX_REG_BANKS, MAX_REG_CLASSES, MAX_REG_GROUPS, MAX_REG_UNITS,
+    MAX_UNITS_PER_REG, PhysReg, PhysRegSet, RegBank, RegClass, RegGroup, RegInfo, RegUnit,
+    RegUnitSet,
 };
 
 /// Checks `reginfo` to ensure it satisfies all of the pre-conditions required
@@ -219,34 +219,28 @@ impl<R: RegInfo> Context<'_, R> {
         if group_size == 1 {
             if !self.reginfo.class_includes_spillslots(class) {
                 ensure!(
-                    AllocationOrderSet::each()
-                        .any(|set| !self.reginfo.allocation_order(class, set).is_empty()),
+                    !self.reginfo.allocation_order(class).is_empty(),
                     "{class} cannot have an empty allocation order unless it allows spillslots"
                 );
             }
             ensure!(
-                AllocationOrderSet::each()
-                    .all(|set| self.reginfo.group_allocation_order(class, set).is_empty()),
+                self.reginfo.group_allocation_order(class).is_empty(),
                 "{class}: Non-group class cannot have a group allocation order"
             );
         } else {
             ensure!(
-                AllocationOrderSet::each()
-                    .any(|set| !self.reginfo.group_allocation_order(class, set).is_empty()),
+                !self.reginfo.group_allocation_order(class).is_empty(),
                 "{class}: Group class cannot have an empty allocation order"
             );
             ensure!(
-                AllocationOrderSet::each()
-                    .all(|set| self.reginfo.allocation_order(class, set).is_empty()),
+                self.reginfo.allocation_order(class).is_empty(),
                 "{class}: Non-group class cannot have a non-group allocation order"
             );
         }
 
         // Check that the allocation order only contains class members.
         if group_size == 1 {
-            for &reg in
-                AllocationOrderSet::each().flat_map(|set| self.reginfo.allocation_order(class, set))
-            {
+            for &reg in self.reginfo.allocation_order(class) {
                 self.check_entity(Entity::PhysReg(reg))?;
                 ensure!(
                     self.reginfo.class_members(class).contains(reg),
@@ -254,9 +248,7 @@ impl<R: RegInfo> Context<'_, R> {
                 );
             }
         } else {
-            for &group in AllocationOrderSet::each()
-                .flat_map(|set| self.reginfo.group_allocation_order(class, set))
-            {
+            for &group in self.reginfo.group_allocation_order(class) {
                 self.check_entity(Entity::RegGroup(group))?;
                 ensure!(
                     self.reginfo.class_group_members(class).contains(group),

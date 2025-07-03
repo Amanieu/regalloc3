@@ -13,9 +13,7 @@ use crate::function::{
     Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost,
     TerminatorKind, Value,
 };
-use crate::reginfo::{
-    AllocationOrderSet, MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet,
-};
+use crate::reginfo::{MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet};
 
 /// Configuration options for [`GenericFunction::arbitrary_with_config`].
 ///
@@ -174,8 +172,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         for class in reginfo.classes() {
             class_per_bank[reginfo.bank_for_class(class)].push(class);
             if reginfo.class_group_size(class) == 1
-                && AllocationOrderSet::each()
-                    .any(|set| !reginfo.allocation_order(class, set).is_empty())
+                && !reginfo.allocation_order(class).is_empty()
                 && (reginfo.class_includes_spillslots(class)
                     || reginfo
                         .class_members(class)
