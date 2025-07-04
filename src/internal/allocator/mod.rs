@@ -43,9 +43,10 @@ use super::split_placement::SplitPlacement;
 use super::uses::Uses;
 use super::virt_regs::builder::VirtRegBuilder;
 use super::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
-use crate::entity::{EntityRef, SecondaryMap};
+use crate::entity::{EntityRef, PackedOption, SecondaryMap};
 use crate::function::Function;
 use crate::internal::reg_matrix::InterferenceKind;
+use crate::internal::value_live_ranges::ValueSet;
 use crate::reginfo::{PhysReg, RegClass, RegGroup, RegInfo};
 use crate::{Options, RegAllocError, Stats};
 
@@ -339,6 +340,10 @@ pub struct Allocator {
     /// Result of allocation for each virtual register.
     assignments: SecondaryMap<VirtReg, Assignment>,
 
+    /// Last allocated register in each value set. This is used as a hint for
+    /// other virtual registers in the set.
+    last_allocated_reg: SecondaryMap<ValueSet, PackedOption<PhysReg>>,
+
     /// List of interfering virtual registers for `evict_interfering_vregs` to
     /// evict.
     interfering_vregs: Vec<VirtReg>,
@@ -372,6 +377,7 @@ impl Allocator {
             allocation_order: AllocationOrder::new(),
             group_allocation_order: AllocationOrder::new(),
             assignments: SecondaryMap::new(),
+            last_allocated_reg: SecondaryMap::new(),
             interfering_vregs: vec![],
             candidate_interfering_vregs: vec![],
             splitter: Splitter::new(),
@@ -401,6 +407,7 @@ impl Allocator {
         reginfo: &impl RegInfo,
     ) -> Result<(), RegAllocError> {
         self.assignments.clear_and_resize(virt_regs.num_virt_regs());
+        self.last_allocated_reg.clear_and_resize(func.num_values());
         self.remat_segments.clear();
         self.allocation_order.prepare(reginfo);
         self.group_allocation_order.prepare(reginfo);
@@ -530,16 +537,22 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             &mut self.allocator.allocation_order,
             &mut self.allocator.group_allocation_order,
         );
-        order.compute(vreg, self.virt_regs, self.hints, self.reginfo);
+        order.compute(
+            vreg,
+            self.virt_regs,
+            self.hints,
+            &self.allocator.last_allocated_reg,
+            self.reginfo,
+        );
         if trace_enabled!() {
             trace!("Allocation order:");
-            for candidate in order.order() {
+            for candidate in order.order(vreg, self.virt_regs, self.reginfo) {
                 trace!("  {}", candidate);
             }
         }
 
         // If the allocation order is empty then skip straight to spilling.
-        if order.must_spill() {
+        if order.must_spill(vreg, self.virt_regs, self.reginfo) {
             trace!("Empty allocation order, spilling immediately");
             stat!(self.stats, must_spill_vreg);
             self.spill(vreg);
@@ -648,7 +661,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             &mut self.allocator.allocation_order,
             &mut self.allocator.group_allocation_order,
         );
-        for cand in order.order() {
+
+        for cand in order.order(vreg, self.virt_regs, self.reginfo) {
             trace!("Attempting to assign to {cand}");
             if vreg
                 .zip_with_reg_group(cand.reg, self.virt_regs, self.reginfo)
@@ -737,6 +751,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             };
             self.reg_matrix
                 .assign(vreg, reg, self.virt_regs, self.reginfo);
+
+            let set = self.virt_regs[vreg].value_set;
+            self.allocator.last_allocated_reg[set] = Some(reg).into();
         }
     }
 }

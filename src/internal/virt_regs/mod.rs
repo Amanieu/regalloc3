@@ -20,6 +20,7 @@ use crate::entity::packed_option::PackedOption;
 use crate::entity::{CompactList, CompactListPool, PrimaryMap};
 use crate::function::Function;
 use crate::internal::live_range::LiveRangeSegment;
+use crate::internal::value_live_ranges::ValueSet;
 use crate::reginfo::{RegClass, RegInfo};
 use crate::{Options, Stats};
 
@@ -61,6 +62,9 @@ pub struct VirtRegData {
 
     /// Whether a segment in this virtual register has a fixed-register hint.
     pub has_fixed_hint: bool,
+
+    /// Value set that this virtual register is part of.
+    pub value_set: ValueSet,
 
     /// The spill weight represents the use density of this virtual register.
     ///
@@ -158,6 +162,7 @@ impl VirtRegs {
         coalescing: &mut Coalescing,
         stats: &mut Stats,
         options: &Options,
+        value_set: ValueSet,
         new_vregs: &mut Vec<VirtReg>,
     ) {
         debug_assert!(!segments.is_empty());
@@ -174,6 +179,7 @@ impl VirtRegs {
             options,
             None,
             Some(new_vregs),
+            value_set,
             segments,
         );
     }
@@ -217,6 +223,7 @@ impl VirtRegs {
                 options,
                 Some(split_placement),
                 None,
+                set,
                 &mut segments,
             );
         }

@@ -24,7 +24,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             &mut self.allocator.allocation_order,
             &mut self.allocator.group_allocation_order,
         );
-        'outer: for new_candidate in order.order() {
+        'outer: for new_candidate in order.hinted_order() {
             // Only evict if this is strictly more profitable then our
             // existing candidate. We can stop otherwise since candidates are
             // sorted by weight.
@@ -116,7 +116,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             &mut self.allocator.allocation_order,
             &mut self.allocator.group_allocation_order,
         );
-        'outer: for candidate in order.order() {
+        'outer: for candidate in order.order(vreg, self.virt_regs, self.reginfo) {
             trace!("Candidate: {candidate}");
 
             let mut cost = EvictCost {

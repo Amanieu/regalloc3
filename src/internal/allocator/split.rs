@@ -12,6 +12,7 @@ use crate::internal::reg_matrix::{
     InterferenceCursor, InterferenceKind, InterferenceSegment, RegMatrix,
 };
 use crate::internal::uses::{UseKind, Uses};
+use crate::internal::value_live_ranges::ValueSet;
 use crate::internal::virt_regs::builder::normalize_spill_weight;
 use crate::internal::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
 use crate::reginfo::{PhysReg, RegInfo};
@@ -139,7 +140,7 @@ pub struct Splitter {
 
     /// Scratch space for collecting minimal segments when spilling or isolating
     /// group uses.
-    minimal_segments: Vec<ValueSegment>,
+    minimal_segments: Vec<(ValueSegment, ValueSet)>,
 
     /// Newly created virtual register from the minimal live ranges.
     new_vregs: Vec<VirtReg>,
@@ -856,6 +857,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         // Helper function to create new virtual regsiters and initialize them
         // to unassigned with the given hint.
+        let set = self.virt_regs[vreg].value_set;
         let mut create_vregs = |segments: &mut [ValueSegment], uses: &mut Uses| {
             self.virt_regs.create_vreg_from_segments(
                 segments,
@@ -867,6 +869,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 self.coalescing,
                 self.stats,
                 self.options,
+                set,
                 &mut splitter.new_vregs,
             );
             self.allocator
@@ -1096,6 +1099,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         for group_index in 0..self.virt_regs.group_members(group).len() {
             splitter.segments.clear();
             let vreg = self.virt_regs.group_members(group)[group_index];
+            let value_set = self.virt_regs[vreg].value_set;
             trace!("Isolating group uses in {vreg}");
             stat!(self.stats, isolated_group_vregs);
             for &segment in self.virt_regs.segments(vreg) {
@@ -1144,7 +1148,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 "Generating minimal segment for {} at {}",
                                 segment.value, segment.live_range
                             );
-                            splitter.minimal_segments.push(segment);
+                            splitter.minimal_segments.push((segment, value_set));
                             break 'outer;
                         } else {
                             // Otherwise split the segment at the next
@@ -1157,7 +1161,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 "Generating minimal segment for {} at {}",
                                 before.value, before.live_range
                             );
-                            splitter.minimal_segments.push(before);
+                            splitter.minimal_segments.push((before, value_set));
                             segment = after;
                             continue 'outer;
                         }
@@ -1186,27 +1190,32 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     self.coalescing,
                     self.stats,
                     self.options,
+                    value_set,
                     &mut splitter.new_vregs,
                 );
             }
         }
 
         // Create a new virtual register for each minimal segment that was created.
-        splitter.minimal_segments.iter().for_each(|&segment| {
-            stat!(self.stats, isolated_group_minimal_segments);
-            self.virt_regs.create_vreg_from_segments(
-                &mut [segment],
-                self.func,
-                self.reginfo,
-                self.uses,
-                self.hints,
-                self.virt_reg_builder,
-                self.coalescing,
-                self.stats,
-                self.options,
-                &mut splitter.new_vregs,
-            );
-        });
+        splitter
+            .minimal_segments
+            .iter()
+            .for_each(|&(segment, value_set)| {
+                stat!(self.stats, isolated_group_minimal_segments);
+                self.virt_regs.create_vreg_from_segments(
+                    &mut [segment],
+                    self.func,
+                    self.reginfo,
+                    self.uses,
+                    self.hints,
+                    self.virt_reg_builder,
+                    self.coalescing,
+                    self.stats,
+                    self.options,
+                    value_set,
+                    &mut splitter.new_vregs,
+                );
+            });
 
         // Initialize assignments for the new virtual registers.
         self.allocator
@@ -1236,6 +1245,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         for (group_index, vreg) in vreg.vregs(self.virt_regs).enumerate() {
             trace!("Spilling {vreg}");
             stat!(self.stats, spilled_vregs);
+            let value_set = self.virt_regs[vreg].value_set;
             for &segment in self.virt_regs.segments(vreg) {
                 // If the value of that segment is rematerializable then we
                 // don't need to spill it. This will result in it having no
@@ -1298,8 +1308,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         if u.pos != segment.live_range.from.round_to_prev_inst().inst() {
                             let (before, after) = segment.split_at(u.pos, self.uses, self.hints);
                             if must_spill || !can_remat {
-                                let set = self.coalescing.set_for_value(before.value);
-                                self.spill_allocator.spill_segment(set, before);
+                                self.spill_allocator.spill_segment(value_set, before);
                             } else {
                                 trace!(
                                     "Rematerializing segment for {} at {}",
@@ -1318,7 +1327,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 "Generating minimal segment for {} at {}",
                                 segment.value, segment.live_range
                             );
-                            splitter.minimal_segments.push(segment);
+                            splitter.minimal_segments.push((segment, value_set));
                             break 'outer;
                         } else {
                             // Otherwise split the segment at the next
@@ -1331,7 +1340,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 "Generating minimal segment for {} at {}",
                                 before.value, before.live_range
                             );
-                            splitter.minimal_segments.push(before);
+                            splitter.minimal_segments.push((before, value_set));
                             segment = after;
                             continue 'outer;
                         }
@@ -1341,8 +1350,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     // live range must be non-empty at this point, this is
                     // checked in spill_segment.
                     if must_spill || !can_remat {
-                        let set = self.coalescing.set_for_value(segment.value);
-                        self.spill_allocator.spill_segment(set, segment);
+                        self.spill_allocator.spill_segment(value_set, segment);
                     } else {
                         trace!(
                             "Rematerializing segment for {} at {}",
@@ -1361,21 +1369,25 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // Create a new virtual register for each minimal segment that was
         // created.
         splitter.new_vregs.clear();
-        splitter.minimal_segments.iter().for_each(|&segment| {
-            stat!(self.stats, spill_minimal_segments);
-            self.virt_regs.create_vreg_from_segments(
-                &mut [segment],
-                self.func,
-                self.reginfo,
-                self.uses,
-                self.hints,
-                self.virt_reg_builder,
-                self.coalescing,
-                self.stats,
-                self.options,
-                &mut splitter.new_vregs,
-            );
-        });
+        splitter
+            .minimal_segments
+            .iter()
+            .for_each(|&(segment, value_set)| {
+                stat!(self.stats, spill_minimal_segments);
+                self.virt_regs.create_vreg_from_segments(
+                    &mut [segment],
+                    self.func,
+                    self.reginfo,
+                    self.uses,
+                    self.hints,
+                    self.virt_reg_builder,
+                    self.coalescing,
+                    self.stats,
+                    self.options,
+                    value_set,
+                    &mut splitter.new_vregs,
+                );
+            });
 
         // Initialize assignments for the new virtual registers.
         self.allocator

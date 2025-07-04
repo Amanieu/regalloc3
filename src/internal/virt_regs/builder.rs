@@ -107,6 +107,7 @@ impl VirtRegBuilder {
         options: &Options,
         split_placement: Option<&SplitPlacement>,
         new_vregs: Option<&mut Vec<VirtReg>>,
+        value_set: ValueSet,
         segments: &mut [ValueSegment],
     ) {
         self.conflicting_uses.clear();
@@ -126,6 +127,7 @@ impl VirtRegBuilder {
             new_vregs,
             uses,
             split_placement,
+            value_set,
             top_level_class,
             constraints: VirtRegBuilderConstraints::new(top_level_class),
         };
@@ -401,6 +403,9 @@ struct Context<'a, F, R> {
     value_group_mapping: &'a mut SecondaryMap<ValueGroup, PackedOption<VirtRegGroup>>,
     conflicting_uses: &'a mut Vec<(Value, Use)>,
     new_vregs: Option<&'a mut Vec<VirtReg>>,
+
+    /// Value set that the virtual register is part of.
+    value_set: ValueSet,
 
     /// Top-level class, used by `reset_constraints`.
     top_level_class: RegClass,
@@ -826,6 +831,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             class: self.constraints.class,
             group_index: 0,
             group: None.into(),
+            value_set: self.value_set,
             has_fixed_hint,
             spill_weight,
         });
