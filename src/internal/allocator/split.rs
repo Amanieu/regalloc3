@@ -968,9 +968,13 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         self.build_gap_segments(vreg);
 
         let mut best_split = None;
-        for &reg in self.reginfo.allocation_order(self.virt_regs[vreg].class) {
+        for candidate in self
+            .allocator
+            .allocation_order
+            .order(vreg, self.virt_regs, self.reginfo)
+        {
             if let Some(new_split) = Self::find_split_region(
-                reg,
+                candidate.reg,
                 initial_gap,
                 &self.allocator.splitter,
                 self.reg_matrix,
