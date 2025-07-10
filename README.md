@@ -1,7 +1,5 @@
 # regalloc3
 
-### This crate is still a work-in-progress and is not yet ready for widespread use
-
 New register allocator implementation designed as a successor to [regalloc2].
 The design takes inspiration from many sources, including LLVM's greedy register allocator.
 
@@ -18,7 +16,10 @@ New API-level features compared to regalloc2:
 - Faster compilation of multiple functions by preserving and reusing memory allocations across runs.
 - Validation functions to check `Function` and `RegInfo` implementations.
 
+Refer to the extensive [design document] for more detail on the internal implementation of the allocator.
+
 [regalloc2]: https://github.com/bytecodealliance/regalloc2
+[design document]: DESIGN.md
 
 ## Flags
 
