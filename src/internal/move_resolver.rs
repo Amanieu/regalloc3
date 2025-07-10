@@ -389,9 +389,17 @@ impl MoveResolver {
                     stat!(stats, edits);
                     if let Some(from) = edit.from.expand() {
                         if from.is_memory(reginfo) {
-                            stat!(stats, reloads);
+                            if edit.value.is_some() {
+                                stat!(stats, reloads);
+                            } else {
+                                stat!(stats, evict_reloads);
+                            }
                         } else if edit.to.unwrap().is_memory(reginfo) {
-                            stat!(stats, spills);
+                            if edit.value.is_some() {
+                                stat!(stats, spills);
+                            } else {
+                                stat!(stats, evict_spills);
+                            }
                         } else {
                             stat!(stats, moves);
                         }

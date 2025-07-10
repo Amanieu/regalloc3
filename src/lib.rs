@@ -544,6 +544,8 @@ pub struct Stats {
     remats: usize,
     spills: usize,
     reloads: usize,
+    evict_spills: usize,
+    evict_reloads: usize,
 
     // Stats from move optimizer.
     blocks_preprocessed_for_optimizer: usize,

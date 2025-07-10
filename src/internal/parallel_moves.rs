@@ -826,7 +826,7 @@ impl ParallelMoves {
 
                             // Visit any moves that may overwrite our source and
                             // that haven't been visited yet. This is necessary
-                            // for proper cycle detection when register many
+                            // for proper cycle detection when a register many
                             // span multiple units.
                             //
                             // The actual move is emitted on Visit::Last.
