@@ -71,7 +71,6 @@
     clippy::explicit_iter_loop,
     clippy::range_plus_one,
     clippy::map_unwrap_or,
-    clippy::explicit_iter_loop,
     clippy::cloned_instead_of_copied,
     clippy::semicolon_if_nothing_returned,
     clippy::must_use_candidate,
