@@ -538,7 +538,7 @@ pub enum RematCost {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TerminatorKind {
-    /// Blocks that end with a `Branch` terminator can have multiple successor
+    /// Blocks that end with a `Branch` terminator have one or more successor
     /// blocks, but those blocks may only have a single predecessor.
     ///
     /// `Branch` terminators can have operands and clobbers, including `Def`

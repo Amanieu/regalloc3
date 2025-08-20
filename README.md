@@ -30,6 +30,12 @@ This crate has the following Cargo features:
 - `arbitrary`: Support for generating randomized functions for testing.
 - `trace-log`: Enables detailed logging which can be somewhat expensive and very verbose.
 
+## Debugging register allocation issues
+
+Regalloc3 includes many utlities for debugging issues related to register allocation. The very first thing that you should do if you encounter any issues is to check that your `Function` and `RegInfo` implementations both pass the validation functions under the `debug_utils` module.
+
+If this doesn't solve your issues then you can dump these to a text format using `DisplayRegInfo` and `DisplayFunction` which can then be passed to `regalloc3-tool` for further debugging.
+
 ## License
 
 Licensed under either of:

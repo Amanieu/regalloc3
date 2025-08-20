@@ -478,7 +478,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // Check outgoing block parameters.
         if !self.func.jump_blockparams(block).is_empty() {
             let &[succ] = self.func.block_succs(block) else {
-                bail!("{block}: Branch blockparams can only be used with a single successor");
+                bail!("{block}: Jump blockparams can only be used with a single successor");
             };
             ensure!(
                 self.func.block_params(succ).len() == self.func.jump_blockparams(block).len(),
@@ -523,7 +523,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     ensure!(
                         self.func.block_preds(succ).len() > 1,
                         "{inst}: Jump terminators can only target blocks with multiple \
-                         predecessors"
+                         predecessors (use a Branch terminator instead)"
                     );
                     ensure!(
                         self.func.inst_operands(inst).is_empty(),
