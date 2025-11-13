@@ -19,8 +19,8 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
-use core::array;
 use core::cmp::Ordering;
+use core::{array, mem};
 
 use crate::entity::packed_option::{PackedOption, ReservedValue};
 use crate::entity::{CompactList, SecondaryMap};
@@ -62,7 +62,11 @@ pub struct VirtRegBuilder {
     /// `Use`s that could not be merged into the current virtual register due to
     /// a conflicting `Use` at the same instruction. These must be processed
     /// separately after normal uses are processed.
-    conflicting_uses: Vec<(Value, Use)>,
+    ///
+    /// The last field indicates whether this value is a blockparam defined in
+    /// the current block *and* the conflicting use is on the first instruction
+    /// of that block.
+    conflicting_uses: Vec<(Value, Use, Option<u32>)>,
 }
 
 impl VirtRegBuilder {
@@ -401,7 +405,7 @@ struct Context<'a, F, R> {
     stats: &'a mut Stats,
     options: &'a Options,
     value_group_mapping: &'a mut SecondaryMap<ValueGroup, PackedOption<VirtRegGroup>>,
-    conflicting_uses: &'a mut Vec<(Value, Use)>,
+    conflicting_uses: &'a mut Vec<(Value, Use, Option<u32>)>,
     new_vregs: Option<&'a mut Vec<VirtReg>>,
 
     /// Value set that the virtual register is part of.
@@ -474,7 +478,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         let end_use_idx = use_list.index(idx);
                         let end_class = self.constraints.class;
                         let end_pos = self.uses[end_use_idx].pos;
-                        let (start_use_idx, start_value) =
+                        let (start_use_idx, start_value, start_seg_idx) =
                             self.find_conflict_start_point(segments, seg_idx, idx);
                         let start_pos = self.uses[start_use_idx].pos;
                         let start_class = self.constraints.class;
@@ -503,18 +507,29 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             // The 2 conflicting uses may have different values
                             // if the conflict is from 2 tied operands with
                             // incompatible register classes.
-                            let (conflict_idx, conflict_value) =
+                            let (conflict_idx, conflict_value, conflict_use_list) =
                                 if !self.uses[end_use_idx].kind.is_def() {
-                                    (end_use_idx, value)
+                                    (end_use_idx, value, use_list)
                                 } else {
-                                    (start_use_idx, start_value)
+                                    (start_use_idx, start_value, segments[start_seg_idx].use_list)
                                 };
                             let conflict_use = self.uses[conflict_idx];
                             debug_assert!(!conflict_use.kind.is_def());
 
                             // Remove the `Use` from the segment and split it
                             // off into a separate virtual register.
-                            self.conflicting_uses.push((conflict_value, conflict_use));
+                            let blockparam_idx = match self.uses[conflict_use_list].first() {
+                                Some(&Use {
+                                    pos,
+                                    kind: UseKind::BlockparamIn { blockparam_idx },
+                                }) if pos == start_pos => Some(blockparam_idx),
+                                _ => None,
+                            };
+                            self.conflicting_uses.push((
+                                conflict_value,
+                                conflict_use,
+                                blockparam_idx,
+                            ));
                             self.uses[conflict_idx].kind = UseKind::ConstraintConflict {};
                         } else {
                             // Prefer to align the split close to the use that
@@ -574,13 +589,13 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // Iterate over groups of conflicting uses at each instruction. We need
         // to attempt to merge each pair of uses so that group uses at the same
         // index for the same group are assigned to the same vreg.
-        let mut conflicting_uses = core::mem::take(self.conflicting_uses);
+        let mut conflicting_uses = mem::take(self.conflicting_uses);
         for uses in conflicting_uses.chunk_by_mut(|a, b| a.1.pos == b.1.pos) {
             // Conflicts can only happen due to multiple uses of the same value
             // at the same instruction. It's impossible to have conflicts with
-            // multiple values since the values would not have been coalesced >
+            // multiple values since the values would not have been coalesced in
             // that case.
-            let (value, Use { pos, kind: _ }) = uses[0];
+            let (value, Use { pos, kind: _ }, blockparam_idx) = uses[0];
             debug_assert!(uses.iter().all(|&u| u.0 == value));
 
             trace!("Processing conflicting uses of {value} at {pos}");
@@ -612,11 +627,26 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     }
                 }
 
-                // Add an implicit live-in to the new segment.
-                let mut use_list = self
-                    .uses
-                    .add_use_list(uses[vreg_start..vreg_end].iter().map(|&(_value, u)| u));
-                use_list.set_livein(true);
+                // If the conflict happened on the first instruction of a block
+                // and the conflicting value is an incoming blockparam then we
+                // need to insert a UseKind::BlockparamIn before it. Otherwise
+                // just mark the segment as being live-in.
+                let mut use_list = self.uses.add_use_list(
+                    blockparam_idx
+                        .map(|blockparam_idx| Use {
+                            pos,
+                            kind: UseKind::BlockparamIn { blockparam_idx },
+                        })
+                        .into_iter()
+                        .chain(
+                            uses[vreg_start..vreg_end]
+                                .iter()
+                                .map(|&(_value, u, _blockparam_idx)| u),
+                        ),
+                );
+                if blockparam_idx.is_none() {
+                    use_list.set_livein(true);
+                }
 
                 // Emit a vreg with the uses we managed to merge.
                 let conflict_segment = ValueSegment {
@@ -648,7 +678,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         segments: &[ValueSegment],
         end_seg_idx: usize,
         end_idx: usize,
-    ) -> (UseIndex, Value) {
+    ) -> (UseIndex, Value, usize) {
         trace!("Finding conflict start point...");
         let mut constraints = VirtRegBuilderConstraints::new(self.top_level_class);
 
@@ -663,7 +693,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 self.func,
                 self.reginfo,
             ) {
-                return (use_list.index(idx), segments[end_seg_idx].value);
+                return (
+                    use_list.index(idx),
+                    segments[end_seg_idx].value,
+                    end_seg_idx,
+                );
             }
         }
 
@@ -678,7 +712,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     self.func,
                     self.reginfo,
                 ) {
-                    return (idx, segments[seg_idx].value);
+                    return (idx, segments[seg_idx].value, seg_idx);
                 }
             }
         }
