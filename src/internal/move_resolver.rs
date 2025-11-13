@@ -147,7 +147,7 @@ struct TiedMove {
     def_slot: u16,
     class: RegClass,
     group_index: u8,
-    is_blockparam: bool,
+    blockparam_value: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -276,11 +276,11 @@ impl MoveResolver {
             self.dest_half_moves
                 .push((tied.move_pos, tied.value, def_alloc));
 
-            if tied.is_blockparam {
+            if let Some(value) = tied.blockparam_value {
                 // Record the allocation assigned to the block parameter
                 // for the move optimizer.
                 let block = func.inst_block(tied.inst);
-                self.blockparam_allocs.push((block, tied.value, def_alloc));
+                self.blockparam_allocs.push((block, value, def_alloc));
             }
         }
 
@@ -467,7 +467,7 @@ impl MoveResolver {
                         def_slot,
                         class,
                         group_index,
-                        is_blockparam: false,
+                        blockparam_value: None,
                     });
                 }
 
@@ -895,7 +895,7 @@ impl<F: Function> Context<'_, F> {
                             def_slot,
                             class,
                             group_index,
-                            is_blockparam,
+                            blockparam_value: is_blockparam.then_some(segment.value),
                         });
                     },
                 );

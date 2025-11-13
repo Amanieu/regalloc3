@@ -347,28 +347,23 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
     fn gen_block_insts(&mut self, block: Block) -> Result<()> {
         // We generate instructions in reverse, starting with the terminator.
         // This allows us to know exactly what values need to be defined later.
-        let num_insts = self.u.int_in_range(self.config.insts_per_block.clone())?;
+        let mut num_insts = self.u.int_in_range(self.config.insts_per_block.clone())?;
 
-        // Set up outgoing blockparams if we have a single successor.
+        // Set up outgoing blockparams if we have a single successor that itself
+        // has multiple predecessors.
         if let [succ] = self.func.blocks[block].succs[..] {
-            for idx in 0..self.func.blocks[succ].block_params_in.len() {
-                let bank = self.func.values[self.func.blocks[succ].block_params_in[idx]].bank;
-                let first_block_for_def = if num_insts == 0 {
-                    // If this is the entry block then we don't have an
-                    // immediate dominator. We will later be force to emit an
-                    // instruction to define values for the block.
-                    self.domtree.immediate_dominator(block).unwrap_or(block)
-                } else {
-                    block
-                };
-                let value = self.get_value_for_use(bank, first_block_for_def)?;
-                self.func.blocks[block].block_params_out.push(value);
-            }
-
-            // If the successor has more than one predecessor, our terminator
-            // cannot have operands. Create an empty terminator now before
-            // adding any instructions.
             if self.func.blocks[succ].preds.len() > 1 {
+                for idx in 0..self.func.blocks[succ].block_params_in.len() {
+                    let bank = self.func.values[self.func.blocks[succ].block_params_in[idx]].bank;
+                    // It's fine if this adds defs to the current block, we will
+                    // increase num_insts below to ensure these have a defining
+                    // instruction.
+                    let value = self.get_value_for_use(bank, block, false)?;
+                    self.func.blocks[block].block_params_out.push(value);
+                }
+
+                // Our terminator cannot have operands. Create an empty
+                // terminator now before adding any instructions.
                 self.block_insts[block].push(InstData {
                     operands: vec![],
                     clobbers: vec![],
@@ -376,6 +371,13 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
                     terminator_kind: Some(TerminatorKind::Jump),
                     is_pure: false,
                 });
+
+                // If there are values that need to be defined in this block for
+                // outgoing blockparams, make sure it has at least one
+                // instruction.
+                if num_insts == 0 && !self.defs_by_blocks[block].is_empty() {
+                    num_insts = 1;
+                }
             }
         }
 
@@ -400,14 +402,6 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             // in the block) then we need to ensure all definitions assigned to
             // this block are actually processed.
             let inst = self.gen_inst(block, idx == num_insts - 1, false)?;
-            self.block_insts[block].push(inst);
-        }
-
-        // If this is the entry block and no instructions were generated, we
-        // may need to force an instruction to exist to define any values that
-        // still need to be defined.
-        if num_insts == 0 && !self.defs_by_blocks[block].is_empty() {
-            let inst = self.gen_inst(block, true, false)?;
             self.block_insts[block].push(inst);
         }
 
@@ -437,7 +431,12 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
     /// Because we process instructions in post-order, uses are processed before
     /// definitions. If necessary, this function will create a new value to be
     /// defined as a later point in the current block or in a dominating block.
-    fn get_value_for_use(&mut self, bank: RegBank, first_block_for_def: Block) -> Result<Value> {
+    fn get_value_for_use(
+        &mut self,
+        bank: RegBank,
+        block: Block,
+        is_first_inst: bool,
+    ) -> Result<Value> {
         // Try to reuse an existing value.
         if self.u.arbitrary()? {
             self.use_candidates.clear();
@@ -445,7 +444,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             // Walk up the dominator tree to collect all values that we can use.
             // Specifically: any value whose definition dominates us and which
             // comes from a compatible register bank.
-            let mut reuse_block = first_block_for_def;
+            let mut reuse_block = block;
             loop {
                 self.use_candidates.extend(
                     self.defs_by_blocks[reuse_block]
@@ -468,8 +467,13 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         }
 
         // Walk up the dominator tree to find a block in which to define this
-        // value.
-        let mut def_block = first_block_for_def;
+        // value. If this is the first instruction then we cannot add a new
+        // definition in the current block.
+        let mut def_block = if is_first_inst {
+            self.domtree.immediate_dominator(block).unwrap()
+        } else {
+            block
+        };
         while let Some(idom) = self.domtree.immediate_dominator(def_block) {
             // This halves the probability every time we go up the tree.
             if self.u.arbitrary()? {
@@ -486,7 +490,12 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
     }
 
     /// Generates an operand which uses a value.
-    fn gen_use(&mut self, first_block_for_def: Block, inst: &mut InstData) -> Result<Operand> {
+    fn gen_use(
+        &mut self,
+        block: Block,
+        is_first_inst: bool,
+        inst: &mut InstData,
+    ) -> Result<Operand> {
         // Generate a NonAllocatable operand if we have non-allocatable registers.
         if !self.non_allocatable_regs.is_empty() && self.u.arbitrary()? {
             let reg = *self.u.choose(&self.non_allocatable_regs)?;
@@ -499,7 +508,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             let bank = RegBank::new(self.u.choose_index(self.reginfo.num_banks())?);
             let reg = *self.u.choose(&self.reg_per_bank[bank])?;
             if self.check_fixed_conflict(reg, true, false) {
-                let value = self.get_value_for_use(bank, first_block_for_def)?;
+                let value = self.get_value_for_use(bank, block, is_first_inst)?;
                 return Ok(Operand::new(
                     OperandKind::Use(value),
                     OperandConstraint::Fixed(reg),
@@ -529,12 +538,12 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         let kind = if group_size > 1 {
             let mut values = vec![];
             for _ in 0..group_size {
-                values.push(self.get_value_for_use(bank, first_block_for_def)?);
+                values.push(self.get_value_for_use(bank, block, is_first_inst)?);
             }
             let value_group = self.func.value_groups.push(values);
             OperandKind::UseGroup(value_group)
         } else {
-            let value = self.get_value_for_use(bank, first_block_for_def)?;
+            let value = self.get_value_for_use(bank, block, is_first_inst)?;
             OperandKind::Use(value)
         };
         Ok(Operand::new(kind, OperandConstraint::Class(class)))
@@ -645,21 +654,11 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             }
         }
 
-        // Lowest block in the dominator tree in which values that we use in the
-        // current instruction are going to be defined. If we are emitting the
-        // first instruction of the block that values must come from the
-        // immediate dominator. In the case of the first instruction of the
-        // entry block we cannot add any use operands at all.
-        let first_block_for_def = if is_first_inst {
-            self.domtree.immediate_dominator(block)
-        } else {
-            Some(block)
-        };
-
-        // Add operands which use values.
-        if let Some(first_block_for_def) = first_block_for_def {
+        // Add operands which use values, unless we are the first instruction of
+        // the entry block.
+        if block != Block::ENTRY_BLOCK || !is_first_inst {
             for _ in 0..self.u.int_in_range(self.config.uses_per_inst.clone())? {
-                let op = self.gen_use(first_block_for_def, &mut inst)?;
+                let op = self.gen_use(block, is_first_inst, &mut inst)?;
                 inst.operands.push(op);
             }
         }
