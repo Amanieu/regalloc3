@@ -188,6 +188,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             group_size == 1,
                             "{inst} {operand}: Value used with group register class"
                         );
+                        ensure!(
+                            !self.reginfo.class_members(class).is_empty(),
+                            "{inst} {operand}: {value} constrained to empty register class"
+                        );
                         let value_bank = self.func.value_bank(value);
                         ensure!(
                             bank == value_bank,
@@ -201,6 +205,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             group_size == members.len(),
                             "{inst} {operand}: group size mismatch {group_size} vs {}",
                             members.len()
+                        );
+                        ensure!(
+                            !self.reginfo.class_group_members(class).is_empty(),
+                            "{inst} {operand}: {group} constrained to empty register class"
                         );
                         for &value in members {
                             let value_bank = self.func.value_bank(value);
@@ -641,6 +649,43 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         Ok(())
     }
 
+    fn check_value(&self, value: Value) -> Result<()> {
+        let value_bank = self.func.value_bank(value);
+        ensure!(
+            !self
+                .reginfo
+                .class_members(self.reginfo.top_level_class(value_bank))
+                .is_empty(),
+            "{value} cannot be in empty register bank {value_bank}"
+        );
+        if let Some((_cost, class)) = self.func.can_rematerialize(value) {
+            ensure!(
+                self.reginfo.class_group_size(class) == 1,
+                "{value} cannot be rematerialized with group register class {class}"
+            );
+            let bank = self.reginfo.bank_for_class(class);
+            ensure!(
+                bank == value_bank,
+                "{value} cannot be rematerialized with different register banks: {bank} vs \
+                     {value_bank}"
+            );
+
+            ensure!(
+                !self.reginfo.allocation_order(class).is_empty(),
+                "{value} cannot be rematerialized into {class} which has an empty allocation \
+                     order"
+            );
+            for reg in self.reginfo.class_members(class) {
+                ensure!(
+                    self.reginfo.class_includes_spillslots(class) || !self.reginfo.is_memory(reg),
+                    "{value} cannot be rematerialized into {class} which has in-memory \
+                         members but doesn't include spill slots"
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Main entry point for `Function` validation.
     fn check_function(&mut self) -> Result<()> {
         self.check_limits()?;
@@ -685,33 +730,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         // Check values.
         for value in self.func.values() {
-            if let Some((_cost, class)) = self.func.can_rematerialize(value) {
-                ensure!(
-                    self.reginfo.class_group_size(class) == 1,
-                    "{value} cannot be rematerialized with group register class {class}"
-                );
-                let bank = self.reginfo.bank_for_class(class);
-                let value_bank = self.func.value_bank(value);
-                ensure!(
-                    bank == value_bank,
-                    "{value} cannot be rematerialized with different register banks: {bank} vs \
-                     {value_bank}"
-                );
-
-                ensure!(
-                    !self.reginfo.allocation_order(class).is_empty(),
-                    "{value} cannot be rematerialized into {class} which has an empty allocation \
-                     order"
-                );
-                for reg in self.reginfo.class_members(class) {
-                    ensure!(
-                        self.reginfo.class_includes_spillslots(class)
-                            || !self.reginfo.is_memory(reg),
-                        "{value} cannot be rematerialized into {class} which has in-memory \
-                         members but doesn't include spill slots"
-                    );
-                }
-            }
+            self.check_value(value)?;
         }
 
         Ok(())

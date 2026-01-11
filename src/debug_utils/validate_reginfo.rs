@@ -111,6 +111,18 @@ impl<R: RegInfo> Context<'_, R> {
             "{bank}: Top-level class {top_level_class} must have a group size of 1"
         );
 
+        // Check registers in the bank
+        let mut bank_is_empty = true;
+        for reg in self.reginfo.regs() {
+            if self.reginfo.bank_for_reg(reg) == Some(bank) {
+                bank_is_empty = false;
+                ensure!(
+                    self.reginfo.class_members(top_level_class).contains(reg),
+                    "{bank}: {reg} not in top-level class {top_level_class}"
+                );
+            }
+        }
+
         // Check stack_to_stack_class
         let stack_to_stack_class = self.reginfo.stack_to_stack_class(bank);
         self.check_entity(Entity::RegClass(stack_to_stack_class))?;
@@ -126,21 +138,11 @@ impl<R: RegInfo> Context<'_, R> {
             !self.reginfo.class_includes_spillslots(stack_to_stack_class),
             "{stack_to_stack_class}: Stack-to-stack class cannot include spill slots"
         );
-
-        // Check registers in the bank
-        let mut empty = true;
-        for reg in self.reginfo.regs() {
-            if self.reginfo.bank_for_reg(reg) == Some(bank) {
-                empty = false;
-                ensure!(
-                    self.reginfo.class_members(top_level_class).contains(reg),
-                    "{bank}: {reg} not in top-level class {top_level_class}"
-                );
-            }
-        }
-        ensure!(!empty, "{bank} has no registers");
-
-        // Check stack_to_stack_class
+        // We allow an empty stack-to-stack class only for empty register banks.
+        ensure!(
+            bank_is_empty || !self.reginfo.class_members(stack_to_stack_class).is_empty(),
+            "{stack_to_stack_class}: Stack-to-stack class cannot be empty"
+        );
         for reg in self.reginfo.class_members(stack_to_stack_class) {
             ensure!(
                 !self.reginfo.is_memory(reg),
@@ -216,10 +218,14 @@ impl<R: RegInfo> Context<'_, R> {
 
         // Check that the allocation order isn't empty if spillslot are not
         // allowed or if this is a group register class.
+        let bank_is_empty = self
+            .reginfo
+            .class_members(self.reginfo.top_level_class(bank))
+            .is_empty();
         if group_size == 1 {
             if !self.reginfo.class_includes_spillslots(class) {
                 ensure!(
-                    !self.reginfo.allocation_order(class).is_empty(),
+                    bank_is_empty || !self.reginfo.allocation_order(class).is_empty(),
                     "{class} cannot have an empty allocation order unless it allows spillslots"
                 );
             }
@@ -229,7 +235,7 @@ impl<R: RegInfo> Context<'_, R> {
             );
         } else {
             ensure!(
-                !self.reginfo.group_allocation_order(class).is_empty(),
+                bank_is_empty || !self.reginfo.group_allocation_order(class).is_empty(),
                 "{class}: Group class cannot have an empty allocation order"
             );
             ensure!(
