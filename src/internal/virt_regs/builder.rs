@@ -21,10 +21,12 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::{array, mem};
+use hashbrown::HashMap;
+use rustc_hash::FxBuildHasher;
 
-use crate::entity::packed_option::{PackedOption, ReservedValue};
-use crate::entity::{CompactList, SecondaryMap};
-use crate::function::{Function, OperandKind, Value, ValueGroup};
+use crate::entity::CompactList;
+use crate::entity::packed_option::ReservedValue;
+use crate::function::{Function, Inst, OperandKind, Value};
 use crate::internal::coalescing::Coalescing;
 use crate::internal::hints::Hints;
 use crate::internal::live_range::{LiveRangeSegment, Slot, ValueSegment};
@@ -56,8 +58,8 @@ pub fn normalize_spill_weight(spill_cost: f32, num_insts: u32, options: &Options
 
 /// Utility type for building a virtual register from value live ranges.
 pub struct VirtRegBuilder {
-    /// Mapping of [`ValueGroup`] to [`VirtRegGroup`].
-    value_group_mapping: SecondaryMap<ValueGroup, PackedOption<VirtRegGroup>>,
+    /// Mapping of group operands to [`VirtRegGroup`].
+    operand_group_mapping: HashMap<(Inst, u32), VirtRegGroup, FxBuildHasher>,
 
     /// `Use`s that could not be merged into the current virtual register due to
     /// a conflicting `Use` at the same instruction. These must be processed
@@ -72,26 +74,23 @@ pub struct VirtRegBuilder {
 impl VirtRegBuilder {
     pub fn new() -> Self {
         Self {
-            value_group_mapping: SecondaryMap::new(),
+            operand_group_mapping: HashMap::default(),
             conflicting_uses: vec![],
         }
     }
 
-    pub fn clear(&mut self, func: &impl Function) {
-        self.value_group_mapping
-            .clear_and_resize(func.num_value_groups());
+    pub fn clear(&mut self) {
+        self.operand_group_mapping.clear();
     }
 
-    /// Invalidates a `ValueGroup` to `VirtRegGroup` mapping.
+    /// Invalidates the mapping of a group operand to a `VirtRegGroup`.
     ///
     /// This is used when a virtual register is split or spilled into a new set
     /// of virtual registers.
-    pub fn invalidate_value_group_mapping(&mut self, value_group: ValueGroup) {
-        trace!(
-            "Invalidating {value_group} -> {:?} mapping",
-            self.value_group_mapping[value_group]
-        );
-        self.value_group_mapping[value_group] = None.into();
+    pub fn invalidate_value_group_mapping(&mut self, inst: Inst, slot: u16) {
+        let key = (inst, slot as u32);
+        let prev = self.operand_group_mapping.remove(&key);
+        trace!("Invalidating group mapping for {inst}:{slot} -> {prev:?} mapping");
     }
 
     /// Constructs virtual registers from the given live range segments.
@@ -126,7 +125,7 @@ impl VirtRegBuilder {
             stats,
             options,
             hints,
-            value_group_mapping: &mut self.value_group_mapping,
+            operand_group_mapping: &mut self.operand_group_mapping,
             conflicting_uses: &mut self.conflicting_uses,
             new_vregs,
             uses,
@@ -194,7 +193,7 @@ impl VirtRegBuilderConstraints {
         &mut self,
         u: Use,
         virt_regs: &VirtRegs,
-        value_group_mapping: &SecondaryMap<ValueGroup, PackedOption<VirtRegGroup>>,
+        operand_group_mapping: &HashMap<(Inst, u32), VirtRegGroup, FxBuildHasher>,
         coalescing: &mut Coalescing,
         func: &impl Function,
         reginfo: &impl RegInfo,
@@ -239,9 +238,7 @@ impl VirtRegBuilderConstraints {
                     }
                 }
 
-                // Retrieve the `ValueGroup` that for this operand. This can be
-                // used as a unique identifier because each `ValueGroup` can
-                // only be used once.
+                // Retrieve the `ValueGroup` that for this operand.
                 let value_group = match func.inst_operands(u.pos)[slot as usize].kind() {
                     OperandKind::DefGroup(group)
                     | OperandKind::UseGroup(group)
@@ -254,7 +251,7 @@ impl VirtRegBuilderConstraints {
                 let value_group_members = func.value_group_members(value_group);
 
                 // Has a `VirtRegGroup` already been created for this operand?
-                let existing_group = value_group_mapping[value_group].expand();
+                let existing_group = operand_group_mapping.get(&(u.pos, slot as u32)).copied();
                 if let Some(existing_group) = existing_group {
                     trace!(
                         "Trying to join existing register group {existing_group} for {value_group}"
@@ -404,7 +401,7 @@ struct Context<'a, F, R> {
     coalescing: &'a mut Coalescing,
     stats: &'a mut Stats,
     options: &'a Options,
-    value_group_mapping: &'a mut SecondaryMap<ValueGroup, PackedOption<VirtRegGroup>>,
+    operand_group_mapping: &'a mut HashMap<(Inst, u32), VirtRegGroup, FxBuildHasher>,
     conflicting_uses: &'a mut Vec<(Value, Use, Option<u32>)>,
     new_vregs: Option<&'a mut Vec<VirtReg>>,
 
@@ -454,7 +451,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     if self.constraints.merge_use(
                         u,
                         self.virt_regs,
-                        self.value_group_mapping,
+                        self.operand_group_mapping,
                         self.coalescing,
                         self.func,
                         self.reginfo,
@@ -612,7 +609,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     let merged = self.constraints.merge_use(
                         uses[vreg_end].1,
                         self.virt_regs,
-                        self.value_group_mapping,
+                        self.operand_group_mapping,
                         self.coalescing,
                         self.func,
                         self.reginfo,
@@ -688,7 +685,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             if !constraints.merge_use(
                 self.uses[use_list.index(idx)],
                 self.virt_regs,
-                self.value_group_mapping,
+                self.operand_group_mapping,
                 self.coalescing,
                 self.func,
                 self.reginfo,
@@ -707,7 +704,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 if !constraints.merge_use(
                     self.uses[idx],
                     self.virt_regs,
-                    self.value_group_mapping,
+                    self.operand_group_mapping,
                     self.coalescing,
                     self.func,
                     self.reginfo,
@@ -883,7 +880,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     ));
                     trace!("Created new vreg group {vreg_group}");
 
-                    // Update the ValueGroup mappings to point to our new group.
+                    // Update the group operand mappings to our new group.
                     for seg in self.virt_regs.segments(vreg) {
                         for u in &self.uses[seg.use_list] {
                             let slot = match u.kind {
@@ -906,18 +903,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 | UseKind::BlockparamIn { .. }
                                 | UseKind::BlockparamOut { .. } => continue,
                             };
-                            let value_group =
-                                match self.func.inst_operands(u.pos)[slot as usize].kind() {
-                                    OperandKind::DefGroup(group)
-                                    | OperandKind::UseGroup(group)
-                                    | OperandKind::EarlyDefGroup(group) => group,
-                                    OperandKind::Def(_)
-                                    | OperandKind::Use(_)
-                                    | OperandKind::EarlyDef(_)
-                                    | OperandKind::NonAllocatable => unreachable!(),
-                                };
-                            debug_assert!(self.value_group_mapping[value_group].is_none());
-                            self.value_group_mapping[value_group] = Some(vreg_group).into();
+                            let prev = self
+                                .operand_group_mapping
+                                .insert((u.pos, slot as u32), vreg_group);
+                            debug_assert!(prev.is_none());
                         }
                     }
 

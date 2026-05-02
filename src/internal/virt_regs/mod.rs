@@ -200,7 +200,7 @@ impl VirtRegs {
         options: &Options,
     ) {
         self.clear();
-        virt_reg_builder.clear(func);
+        virt_reg_builder.clear();
         spill_allocator.clear(func);
 
         for (set, mut segments) in value_live_ranges.take_all_value_sets() {

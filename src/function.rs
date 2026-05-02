@@ -165,8 +165,9 @@ entity_def! {
 
     /// A reference to a list of [`Value`]s.
     ///
-    /// Each `ValueGroup` must only be used in a single [`Operand`] in a function,
-    /// even if the same set of value is used multiple times.
+    /// A `ValueGroup` itself has no identity, it is just a reference to its
+    /// members. This means that two different `ValueGroup` are equivalent if
+    /// they have the same members in the same order.
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity ValueGroup(u32, "group");
 }

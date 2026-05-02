@@ -8,7 +8,7 @@ use anyhow::{Result, bail, ensure};
 
 use crate::debug_utils::dominator_tree::DominatorTree;
 use crate::debug_utils::postorder::PostOrder;
-use crate::entity::{EntitySet, SecondaryMap};
+use crate::entity::SecondaryMap;
 use crate::function::{
     Block, Function, Inst, InstRange, MAX_BLOCK_PARAMS, MAX_BLOCKS, MAX_INST_OPERANDS, MAX_INSTS,
     MAX_VALUES, Operand, OperandConstraint, OperandKind, TerminatorKind, Value, ValueGroup,
@@ -34,7 +34,6 @@ pub fn validate_function(func: &impl Function, reginfo: &impl RegInfo) -> Result
         value_defs: SecondaryMap::with_max_index(func.num_values()),
         early_fixed: RegUnitSet::new(),
         late_fixed: RegUnitSet::new(),
-        used_value_groups: EntitySet::with_max_index(func.num_value_groups()),
         reuse_targets: vec![],
         domtree: DominatorTree::new(),
     };
@@ -94,7 +93,6 @@ struct Context<'a, F, R> {
     value_defs: SecondaryMap<Value, Option<ValueDef>>,
     early_fixed: RegUnitSet,
     late_fixed: RegUnitSet,
-    used_value_groups: EntitySet<ValueGroup>,
     reuse_targets: Vec<usize>,
     domtree: DominatorTree,
 }
@@ -104,14 +102,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     fn check_entity(&mut self, entity: Entity) -> Result<()> {
         let (index, len) = match entity {
             Entity::Value(x) => (x.index(), self.func.num_values()),
-            Entity::ValueGroup(x) => {
-                ensure!(
-                    !self.used_value_groups.contains(x),
-                    "{x} cannot be used multiple times in a function"
-                );
-                self.used_value_groups.insert(x);
-                (x.index(), self.func.num_value_groups())
-            }
+            Entity::ValueGroup(x) => (x.index(), self.func.num_value_groups()),
             Entity::Inst(x) => (x.index(), self.func.num_insts()),
         };
         ensure!(index < len, "{entity}: Invalid entity reference");

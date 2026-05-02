@@ -6,7 +6,7 @@ use core::ops::ControlFlow;
 
 use super::queue::VirtRegOrGroup;
 use super::{AbstractVirtRegGroup, Assignment, Context, Stage};
-use crate::function::{Function, Inst, InstRange, OperandKind, Value};
+use crate::function::{Function, Inst, InstRange, Value};
 use crate::internal::live_range::{LiveRangeSegment, Slot, ValueSegment};
 use crate::internal::reg_matrix::{
     InterferenceCursor, InterferenceKind, InterferenceSegment, RegMatrix,
@@ -1049,10 +1049,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         );
     }
 
-    // Invalidate any existing ValueGroup mappings for a vreg: the group they
-    // point to will no longer be valid after it is spilled. New mappings will
-    // be created when building the new virtual registers for the split product.
-    fn invalidate_value_group_mapping<V: AbstractVirtRegGroup>(&mut self, vreg: V) {
+    // Invalidate any existing operand to group mappings for a vreg: the group
+    // they point to will no longer be valid after it is spilled. New mappings
+    // will be created when building the new virtual registers for the split
+    // product.
+    fn invalidate_operand_group_mapping<V: AbstractVirtRegGroup>(&mut self, vreg: V) {
         if V::is_group() {
             let vreg = vreg.first_vreg(self.virt_regs);
             for segment in self.virt_regs.segments(vreg) {
@@ -1068,18 +1069,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         group_index: _,
                     } = u.kind
                     {
-                        let value_group = match self.func.inst_operands(u.pos)[slot as usize].kind()
-                        {
-                            OperandKind::DefGroup(group)
-                            | OperandKind::UseGroup(group)
-                            | OperandKind::EarlyDefGroup(group) => group,
-                            OperandKind::Def(_)
-                            | OperandKind::Use(_)
-                            | OperandKind::EarlyDef(_)
-                            | OperandKind::NonAllocatable => unreachable!(),
-                        };
                         self.virt_reg_builder
-                            .invalidate_value_group_mapping(value_group);
+                            .invalidate_value_group_mapping(u.pos, slot);
                     }
                 }
             }
@@ -1094,7 +1085,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// virtual register for each original group member, which can then be split
     /// as normal.
     fn isolate_group_uses(&mut self, group: VirtRegGroup) {
-        self.invalidate_value_group_mapping(group);
+        self.invalidate_operand_group_mapping(group);
 
         // Find any group uses and split them into minimal segments
         let splitter = &mut self.allocator.splitter;
@@ -1237,7 +1228,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     pub(super) fn spill(&mut self, vreg: impl AbstractVirtRegGroup) {
         // TODO(perf): Fast path if class allows spillslots?
 
-        self.invalidate_value_group_mapping(vreg);
+        self.invalidate_operand_group_mapping(vreg);
 
         // Find any uses that can't be spilled and split them into minimal
         // segments that only cover a single instruction (or part of one).
