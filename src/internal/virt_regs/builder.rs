@@ -738,31 +738,29 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             f32::INFINITY
         } else {
             // Accumulate the spill cost weighed by the block frequency.
-            let spill_cost: f32 = segments
-                .iter()
-                .map(|seg| {
-                    // Add up the spill weights of all uses.
-                    self.uses[seg.use_list]
-                        .iter()
-                        .map(|u| {
-                            let spill_cost = u.spill_cost(self.reginfo);
-                            let block_freq = self.func.block_frequency(self.func.inst_block(u.pos));
-                            trace!(
-                                "Use of {} at {} ({}) has spill cost {} ({spill_cost} * \
+            let mut total_spill_cost = 0.0;
+            for seg in segments {
+                for u in &self.uses[seg.use_list] {
+                    let spill_cost = u.spill_cost(self.reginfo);
+                    if spill_cost == 0.0 {
+                        // Fast path for spill cost of 0.
+                        continue;
+                    }
+                    let block_freq = self.func.block_frequency(self.func.inst_block(u.pos));
+                    trace!(
+                        "Use of {} at {} ({}) has spill cost {} ({spill_cost} * \
                                  {block_freq})",
-                                seg.value,
-                                u.pos,
-                                u.kind,
-                                spill_cost * block_freq
-                            );
-                            spill_cost * block_freq
-                        })
-                        .sum::<f32>()
-                })
-                .sum();
+                        seg.value,
+                        u.pos,
+                        u.kind,
+                        spill_cost * block_freq
+                    );
+                    total_spill_cost += spill_cost * block_freq;
+                }
+            }
 
-            let spill_weight = normalize_spill_weight(spill_cost, num_insts, self.options);
-            trace!("-> Spill weight of {spill_weight} ({spill_cost} / {num_insts})");
+            let spill_weight = normalize_spill_weight(total_spill_cost, num_insts, self.options);
+            trace!("-> Spill weight of {spill_weight} ({total_spill_cost} / {num_insts})");
             spill_weight
         };
 
