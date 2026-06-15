@@ -193,15 +193,17 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         self.check_stack()?;
 
-        // Start with an empty state on the entry block and keep visiting blocks
-        // as long as their initial state has changed.
+        // Start with an empty state on each entry point and keep visiting
+        // blocks as long as their initial state has changed.
         //
         // The lattice meet() function guarantees that the initial state of a
         // block can only get smaller so this will eventually settle to a fixed
         // point at which point checking is complete.
         self.blocks_to_check.clear();
-        self.blocks_to_check.insert(Block::ENTRY_BLOCK, ());
-        self.block_entry_state[Block::ENTRY_BLOCK] = Some(CheckerState::new(self.output));
+        for &entry in self.output.function().entry_points() {
+            self.blocks_to_check.insert(entry, ());
+            self.block_entry_state[entry] = Some(CheckerState::new(self.output));
+        }
         while let Some((block, ())) = self.blocks_to_check.pop() {
             self.check_block(block)?;
         }

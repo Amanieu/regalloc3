@@ -9,8 +9,8 @@ use core::cmp::{self, Ordering};
 use core::mem;
 
 use super::postorder::PostOrder;
-use crate::entity::SecondaryMap;
 use crate::entity::packed_option::PackedOption;
+use crate::entity::{EntitySet, SecondaryMap};
 use crate::function::{Block, Function};
 
 #[derive(Default, Clone)]
@@ -35,6 +35,12 @@ struct DominatorTreeNode {
 pub struct DominatorTree {
     nodes: SecondaryMap<Block, DominatorTreeNode>,
 
+    /// First child node of the internal virtual root.
+    virtual_root_child: PackedOption<Block>,
+
+    /// Blocks whose immediate dominator has been computed.
+    processed: EntitySet<Block>,
+
     /// Stack for DFS traversal.
     stack: Vec<Block>,
 }
@@ -44,6 +50,8 @@ impl DominatorTree {
     pub fn new() -> Self {
         Self {
             nodes: SecondaryMap::new(),
+            virtual_root_child: None.into(),
+            processed: EntitySet::new(),
             stack: vec![],
         }
     }
@@ -56,17 +64,23 @@ impl DominatorTree {
         // 1. Compute immediate dominators for each basic block.
         self.compute_idoms(func, po);
 
-        // 2. Populate child and sibling links for each node.
+        // 2. Populate child and sibling links for each node, including
+        // children of the internal virtual root.
+        self.virtual_root_child = None.into();
         for block in po.cfg_postorder() {
-            // The entry block has no parent.
-            if let Some(idom) = self.nodes[block].parent.expand() {
-                let sibling = mem::replace(&mut self.nodes[idom].child, Some(block).into());
-                self.nodes[block].sibling = sibling;
-            }
+            let sibling = if let Some(idom) = self.nodes[block].parent.expand() {
+                mem::replace(&mut self.nodes[idom].child, Some(block).into())
+            } else {
+                mem::replace(&mut self.virtual_root_child, Some(block).into())
+            };
+            self.nodes[block].sibling = sibling;
         }
 
         // 3. Assign pre-order numbers from a DFS of the dominator tree.
-        self.stack.push(Block::ENTRY_BLOCK);
+        self.stack.clear();
+        if let Some(child) = self.virtual_root_child.expand() {
+            self.stack.push(child);
+        }
         let mut n = 0;
         while let Some(block) = self.stack.pop() {
             n += 1;
@@ -94,19 +108,22 @@ impl DominatorTree {
 
     /// Returns the immediate dominator of the given basic block.
     ///
-    /// Returns `None` for the entry block and unreachable blocks.
+    /// Returns `None` for entry points, unreachable blocks, and blocks whose
+    /// only immediate dominator is the virtual root of a multi-entry CFG.
     pub fn immediate_dominator(&self, block: Block) -> Option<Block> {
         self.nodes[block].parent.into()
     }
 
     /// Determines whether `a` dominates `b`.
     ///
-    /// Both blocks must be reachable from the entry point.
+    /// Both blocks must be reachable from an entry point.
     ///
     /// Returns true if `a == b`.
     pub fn dominates(&self, a: Block, b: Block) -> bool {
         let na = &self.nodes[a];
         let nb = &self.nodes[b];
+        debug_assert_ne!(na.pre_number, 0);
+        debug_assert_ne!(nb.pre_number, 0);
         na.pre_number <= nb.pre_number && na.pre_max >= nb.pre_max
     }
 
@@ -114,56 +131,70 @@ impl DominatorTree {
     ///
     /// The algorithm is based on https://www.cs.rice.edu/~keith/EMBED/dom.pdf.
     fn compute_idoms(&mut self, func: &impl Function, po: &PostOrder) {
-        // Initialize the immediate dominator of the entry block to itself. This
-        // is necessary so that valid_preds includes the root block even though
-        // it has no predecessor.
-        self.nodes[Block::ENTRY_BLOCK].parent = Some(Block::ENTRY_BLOCK).into();
+        self.processed.clear_and_resize(func.num_blocks());
+
+        // Initialize the entry points as children of an internal virtual root.
+        // This also makes them valid predecessors for the first iteration.
+        for &entry in func.entry_points() {
+            if po.is_reachable(entry) {
+                self.processed.insert(entry);
+            }
+        }
 
         // Iterate to convergence
         let mut changed = true;
         while changed {
             changed = false;
 
-            // Skip the entry block which has no predecessors.
-            for block in po.cfg_postorder().rev().skip(1) {
+            for block in po.cfg_postorder().rev() {
                 // Filter out predecessors which haven't been processed yet.
                 let mut valid_preds = func
                     .block_preds(block)
                     .iter()
                     .copied()
-                    .filter(|&pred| self.nodes[pred].parent.is_some());
+                    .filter(|&pred| self.processed.contains(pred));
 
-                // At least one predecessor must have been processed already
-                // since we are iterating in reverse post-order.
-                let mut new_idom = valid_preds.next().unwrap();
+                // Entry points have no predecessors and have already been
+                // initialized above. Other blocks may need to wait until a
+                // predecessor has been processed.
+                let Some(first_pred) = valid_preds.next() else {
+                    continue;
+                };
+                let mut new_idom = Some(first_pred);
 
                 // The immediate dominator is the common dominator of all our
                 // predecessors.
                 for pred in valid_preds {
-                    new_idom = self.compute_common_dominator(po, pred, new_idom);
+                    let Some(idom) = new_idom else {
+                        break;
+                    };
+                    new_idom = self.compute_common_dominator(po, pred, idom);
                 }
 
                 // If anything changed, we need to perform another iteration.
-                if self.nodes[block].parent != Some(new_idom).into() {
-                    self.nodes[block].parent = Some(new_idom).into();
+                if !self.processed.contains(block) || self.nodes[block].parent.expand() != new_idom
+                {
+                    self.nodes[block].parent = new_idom.into();
+                    self.processed.insert(block);
                     changed = true;
                 }
             }
         }
-
-        // Now fix up the entry block: it has no immediate dominator since it
-        // has no predecessors.
-        self.nodes[Block::ENTRY_BLOCK].parent = None.into();
     }
 
     /// Computes the common dominator of two basic blocks using only the
     /// parent links in the tree.
-    fn compute_common_dominator(&self, po: &PostOrder, mut a: Block, mut b: Block) -> Block {
+    fn compute_common_dominator(
+        &self,
+        po: &PostOrder,
+        mut a: Block,
+        mut b: Block,
+    ) -> Option<Block> {
         loop {
             match po.rpo_cmp(a, b) {
-                Ordering::Less => b = self.nodes[b].parent.expect("unreachable block"),
-                Ordering::Greater => a = self.nodes[a].parent.expect("unreachable block"),
-                Ordering::Equal => return a,
+                Ordering::Less => b = self.nodes[b].parent.expand()?,
+                Ordering::Greater => a = self.nodes[a].parent.expand()?,
+                Ordering::Equal => return Some(a),
             }
         }
     }

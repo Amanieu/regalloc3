@@ -20,9 +20,9 @@ value_attribute   = _{ regbank | remat }
 value_declaration =  { value ~ "=" ~ value_attribute+ }
 
 // Start of block label
-frequency     = { "freq" ~ "(" ~ float ~ ")" }
-critical_edge = { "critical_edge"? }
-block_label   = { block ~ ("(" ~ value_list ~ ")")? ~ frequency ~ critical_edge ~ ":" }
+frequency       = { "freq" ~ "(" ~ float ~ ")" }
+block_attribute = { "entry_point" | "critical_edge" }
+block_label     = { block ~ ("(" ~ value_list ~ ")")? ~ frequency ~ block_attribute* ~ ":" }
 
 // Instruction operand
 reuse                  =  { "reuse" ~ "(" ~ number ~ ")" }

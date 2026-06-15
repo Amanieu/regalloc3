@@ -39,9 +39,13 @@ enum Args {
         reginfo: PathBuf,
 
         /// Number of CFG edges. This also implicitly controls the number of blocks
-        /// in a function since all blocks must be reachable from the entry block.
+        /// in a function since all blocks must be reachable from an entry point.
         #[clap(long, default_value_t = 10)]
         cfg_edges: usize,
+
+        /// Maximum number of entry points.
+        #[clap(long, default_value_t = 4)]
+        entry_points: usize,
 
         /// Number of block parameters for each block that is allowed to have them.
         #[clap(long, default_value_t = 10)]
@@ -177,6 +181,7 @@ fn main() -> Result<()> {
         Args::GenFunction {
             ref reginfo,
             cfg_edges,
+            entry_points,
             blockparams_per_block,
             insts_per_block,
             defs_per_inst,
@@ -186,6 +191,7 @@ fn main() -> Result<()> {
             let reginfo = load_reginfo(reginfo)?;
             let config = ArbitraryFunctionConfig {
                 cfg_edges: 0..=cfg_edges,
+                entry_points: 1..=entry_points.max(1),
                 blockparams_per_block: 0..=blockparams_per_block,
                 insts_per_block: 0..=insts_per_block,
                 defs_per_inst: 0..=defs_per_inst,

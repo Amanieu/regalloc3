@@ -75,17 +75,19 @@ impl<F: Function> fmt::Display for DisplayFunction<'_, F> {
         // Blocks
         for block in self.0.blocks() {
             writeln!(f)?;
-            writeln!(
+            write!(
                 f,
-                "{block}({}) freq({}){}:",
+                "{block}({}) freq({})",
                 display_iter(self.0.block_params(block), ","),
                 self.0.block_frequency(block),
-                if self.0.block_is_critical_edge(block) {
-                    " critical_edge"
-                } else {
-                    ""
-                }
             )?;
+            if self.0.entry_points().contains(&block) {
+                write!(f, " entry_point")?;
+            }
+            if self.0.block_is_critical_edge(block) {
+                write!(f, " critical_edge")?;
+            }
+            writeln!(f, ":")?;
 
             // Predecessors are emitted as a comment. They are recomputed after
             // parsing. Since the ordering can be arbitrary, sort them when dumping.

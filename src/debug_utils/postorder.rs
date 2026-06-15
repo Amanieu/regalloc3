@@ -13,7 +13,7 @@ use crate::function::{Block, Function};
 /// Post-order traversal of the control flow graph.
 ///
 /// This also doubles as a reachability check to determine whether a basic block
-/// is reachable from the root block.
+/// is reachable from any entry point.
 pub struct PostOrder {
     /// Stack used to compute the post-order.
     stack: Vec<(Visit, Block)>,
@@ -65,15 +65,15 @@ impl PostOrder {
         postorder
     }
 
-    /// Returns whether a basic block is reachable from the root block.
+    /// Returns whether a basic block is reachable from any entry point.
     pub fn is_reachable(&self, block: Block) -> bool {
         self.po_number[block] != UNREACHABLE
     }
 
     /// Returns the list of basic blocks in control-flow postorder.
     ///
-    /// The returned iterator only includes basic blocks reachable from the root
-    /// block.
+    /// The returned iterator only includes basic blocks reachable from an entry
+    /// point.
     ///
     /// Use `rev` on the returned iterator for reverse post-order iteration.
     pub fn cfg_postorder(&self) -> impl DoubleEndedIterator<Item = Block> + ExactSizeIterator + '_ {
@@ -95,7 +95,7 @@ impl PostOrder {
         self.po_number.clear_and_resize(func.num_blocks());
 
         // This algorithm is a depth first traversal (DFT) of the control flow graph, computing a
-        // post-order of the blocks that are reachable from the entry block. A DFT post-order is not
+        // post-order of the blocks that are reachable from any entry point. A DFT post-order is not
         // unique. The specific order we get is controlled by the order each node's children are
         // visited.
         //
@@ -106,8 +106,11 @@ impl PostOrder {
         //         the stack
 
         // Traverse the control flow graph in depth-first order starting from
-        // the root. Post-ordering is assigned on the way back up the graph.
-        self.stack.push((Visit::First, Block::ENTRY_BLOCK));
+        // all entry points. Post-ordering is assigned on the way back up the
+        // graph.
+        for &entry in func.entry_points().iter().rev() {
+            self.stack.push((Visit::First, entry));
+        }
         while let Some((visit, block)) = self.stack.pop() {
             match visit {
                 Visit::First => {

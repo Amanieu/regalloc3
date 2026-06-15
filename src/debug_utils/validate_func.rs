@@ -47,6 +47,7 @@ pub fn validate_function(func: &impl Function, reginfo: &impl RegInfo) -> Result
 /// references with an invalid index.
 #[derive(Debug, Clone, Copy)]
 enum Entity {
+    Block(Block),
     Value(Value),
     ValueGroup(ValueGroup),
     Inst(Inst),
@@ -55,6 +56,7 @@ enum Entity {
 impl fmt::Display for Entity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
+            Entity::Block(x) => x.fmt(f),
             Entity::Value(x) => x.fmt(f),
             Entity::ValueGroup(x) => x.fmt(f),
             Entity::Inst(x) => x.fmt(f),
@@ -99,8 +101,9 @@ struct Context<'a, F, R> {
 
 impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// Check that an entity refers to a valid object.
-    fn check_entity(&mut self, entity: Entity) -> Result<()> {
+    fn check_entity(&self, entity: Entity) -> Result<()> {
         let (index, len) = match entity {
+            Entity::Block(x) => (x.index(), self.func.num_blocks()),
             Entity::Value(x) => (x.index(), self.func.num_values()),
             Entity::ValueGroup(x) => (x.index(), self.func.num_value_groups()),
             Entity::Inst(x) => (x.index(), self.func.num_insts()),
@@ -435,12 +438,14 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         // Check consistency of successors & predecessors.
         for &pred in self.func.block_preds(block) {
+            self.check_entity(Entity::Block(pred))?;
             ensure!(
                 self.func.block_succs(pred).contains(&block),
                 "Inconsistent predecessors and successors between {pred} and {block}"
             );
         }
         for &succ in self.func.block_succs(block) {
+            self.check_entity(Entity::Block(succ))?;
             ensure!(
                 self.func.block_preds(succ).contains(&block),
                 "Inconsistent predecessors and successors between {block} and {succ}"
@@ -503,10 +508,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // Check instructions.
         let mut terminator = None;
         for inst in insts.iter() {
-            ensure!(
-                self.func.inst_block(inst) == block,
-                "inst_block({inst}) should be {block}"
-            );
+            let inst_block = self.func.inst_block(inst);
+            self.check_entity(Entity::Block(inst_block))?;
+            ensure!(inst_block == block, "inst_block({inst}) should be {block}");
             if let Some(inst) = terminator {
                 bail!("{inst}: Terminator in middle of block");
             }
@@ -583,6 +587,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// have a `ValueDef`.
     fn check_ssa_dominance(&self, block: Block) -> Result<()> {
         // Check that the block's immediate dominator is correct.
+        if let Some(idom) = self.func.block_immediate_dominator(block) {
+            self.check_entity(Entity::Block(idom))?;
+        }
         ensure!(
             self.func.block_immediate_dominator(block) == self.domtree.immediate_dominator(block),
             "{block} has incorrect immediate dominator: got {:?}, expected {:?}",
@@ -687,25 +694,34 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             self.check_block(block)?;
         }
 
-        // Check the entry block.
+        // Check entry points before any CFG traversal uses them.
+        let entry_points = self.func.entry_points();
         ensure!(
-            self.func.block_preds(Block::ENTRY_BLOCK).is_empty(),
-            "{}: Entry block cannot have predecessors",
-            Block::ENTRY_BLOCK
+            !entry_points.is_empty(),
+            "Function must have at least one entry point"
         );
-        ensure!(
-            self.func.block_params(Block::ENTRY_BLOCK).is_empty(),
-            "{}: Entry block cannot have block parameters",
-            Block::ENTRY_BLOCK
-        );
-
+        for (i, &entry) in entry_points.iter().enumerate() {
+            ensure!(
+                !entry_points[..i].contains(&entry),
+                "Entry points must not contain duplicates"
+            );
+            self.check_entity(Entity::Block(entry))?;
+            ensure!(
+                self.func.block_preds(entry).is_empty(),
+                "{entry}: Entry point cannot have predecessors"
+            );
+            ensure!(
+                self.func.block_params(entry).is_empty(),
+                "{entry}: Entry point cannot have block parameters"
+            );
+        }
         // Check that all blocks are reachable.
         let postorder = PostOrder::for_function(self.func);
         if postorder.cfg_postorder().len() != self.func.num_blocks() {
             for block in self.func.blocks() {
                 ensure!(
                     postorder.is_reachable(block),
-                    "{block} is not reachable from the entry block"
+                    "{block} is not reachable from an entry point"
                 );
             }
 

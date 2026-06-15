@@ -244,6 +244,10 @@ impl Function for TestCase {
         unreachable!()
     }
 
+    fn entry_points(&self) -> &[Block] {
+        unreachable!()
+    }
+
     fn block_insts(&self, _block: Block) -> InstRange {
         unreachable!()
     }

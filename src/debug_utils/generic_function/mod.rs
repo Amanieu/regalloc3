@@ -59,6 +59,7 @@ struct ValueData {
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GenericFunction {
+    entry_points: Vec<Block>,
     blocks: PrimaryMap<Block, BlockData>,
     insts: PrimaryMap<Inst, InstData>,
     values: PrimaryMap<Value, ValueData>,
@@ -85,6 +86,7 @@ impl GenericFunction {
         let mut insts = PrimaryMap::new();
         let mut values = PrimaryMap::new();
         let mut value_groups = PrimaryMap::new();
+        let entry_points = func.entry_points().into();
         for block in func.blocks() {
             blocks.push(BlockData {
                 insts: func.block_insts(block),
@@ -116,6 +118,7 @@ impl GenericFunction {
             value_groups.push(func.value_group_members(group).into());
         }
         Self {
+            entry_points,
             blocks,
             insts,
             values,
@@ -133,6 +136,11 @@ impl Function for GenericFunction {
     #[inline]
     fn num_blocks(&self) -> usize {
         self.blocks.len()
+    }
+
+    #[inline]
+    fn entry_points(&self) -> &[Block] {
+        &self.entry_points
     }
 
     #[inline]

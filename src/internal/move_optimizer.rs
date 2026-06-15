@@ -164,13 +164,15 @@ impl MoveOptimizer {
         self.entry_states.clear();
         self.block_entry_states.clear_and_resize(func.num_blocks());
 
-        // Set the entry state of the entry block to empty.
+        // Set the entry state of each entry point to empty.
         let initial_state = self.entry_states.push(smallvec![]);
-        self.block_entry_states[Block::ENTRY_BLOCK] = Some(initial_state).into();
+        for &entry in func.entry_points() {
+            self.block_entry_states[entry] = Some(initial_state).into();
+        }
 
-        // Copy that state for any blocks that have a predecessor that later or
-        // equal to itself.
-        for block in func.blocks().skip(1) {
+        // Copy that state for any blocks that have a predecessor that later
+        // than or equal to itself.
+        for block in func.blocks() {
             let preds = func.block_preds(block);
             if preds.len() > 1 {
                 if preds.iter().any(|&pred| pred >= block) {
@@ -194,11 +196,13 @@ impl MoveOptimizer {
         self.blocks_to_preprocess.clear();
         self.blocks_in_queue.clear_and_resize(func.num_blocks());
 
-        // Initialize the state for the entry block and add it to the queue.
+        // Initialize the state for each entry point and add it to the queue.
         let initial_state = self.entry_states.push(smallvec![]);
-        self.block_entry_states[Block::ENTRY_BLOCK] = Some(initial_state).into();
-        self.blocks_to_preprocess.push(Reverse(Block::ENTRY_BLOCK));
-        self.blocks_in_queue.insert(Block::ENTRY_BLOCK);
+        for &entry in func.entry_points() {
+            self.block_entry_states[entry] = Some(initial_state).into();
+            self.blocks_to_preprocess.push(Reverse(entry));
+            self.blocks_in_queue.insert(entry);
+        }
 
         while let Some(Reverse(block)) = self.blocks_to_preprocess.pop() {
             // Skip blocks with no successors, they don't have any state to

@@ -8,9 +8,9 @@
 //! The allocator operates on an input program that is in a standard CFG
 //! representation: the function body is a sequence of basic blocks, and
 //! each block has a sequence of instructions and zero or more
-//! successors. The allocator also requires the client to provide
-//! predecessors for each block, and these must be consistent with the
-//! successors. The entry block cannot have any predecessors.
+//! successors. The allocator also requires the client to provide predecessors
+//! and entry points, and these must be consistent with the successors. Entry
+//! points cannot have any predecessors.
 //!
 //! The CFG must have *no critical edges*. A critical edge is an edge from
 //! block A to block B such that A has more than one successor *and* B has
@@ -39,8 +39,9 @@
 //! reverse-postorder (RPO) of the CFG, with loop back-edges prioritized to
 //! come earlier than other edges.
 //!
-//! The first block is treated as the entry block of the CFG. It cannot have
-//! any predecessors and all other blocks must be reachable from it.
+//! The entry points of the CFG are provided by [`Function::entry_points`].
+//! They cannot have any predecessors, and all blocks must be reachable from at
+//! least one entry point.
 //!
 //! # Operands and values
 //!
@@ -173,9 +174,6 @@ entity_def! {
 }
 
 impl Block {
-    /// The entry block is always block 0 since it dominates all other blocks.
-    pub const ENTRY_BLOCK: Block = Block(0);
-
     /// Returns an index pointing to the next block.
     #[inline]
     #[must_use]
@@ -586,7 +584,7 @@ pub trait Function {
 
     /// How many blocks are there?
     ///
-    /// All blocks must be reachable from the entry block.
+    /// All blocks must be reachable from at least one entry point.
     fn num_blocks(&self) -> usize;
 
     /// Iterator over all the [`Block`]s in this function.
@@ -594,6 +592,12 @@ pub trait Function {
     fn blocks(&self) -> Keys<Block> {
         Keys::with_len(self.num_blocks())
     }
+
+    /// Returns the entry points of the CFG.
+    ///
+    /// This list must be non-empty and contain no duplicates. Entry points
+    /// must have no predecessors and no block parameters.
+    fn entry_points(&self) -> &[Block];
 
     /// Provide the range of instruction indices contained in each block.
     fn block_insts(&self, block: Block) -> InstRange;
@@ -607,8 +611,10 @@ pub trait Function {
     /// Get the CFG predecessors for a given block.
     fn block_preds(&self, block: Block) -> &[Block];
 
-    /// Returns the immediate dominator of the given block, or `None` if it is
-    /// the entry block.
+    /// Returns the immediate dominator of the given block.
+    ///
+    /// This returns `None` for entry points and for blocks whose only common
+    /// dominator would be the virtual root of a multi-entry CFG.
     fn block_immediate_dominator(&self, block: Block) -> Option<Block>;
 
     /// Returns whether block `a` dominates block `b`.

@@ -24,8 +24,11 @@ use crate::reginfo::{MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegInfo, RegUnit
 #[derive(Debug, Clone)]
 pub struct ArbitraryFunctionConfig {
     /// Number of CFG edges. This also implicitly controls the number of blocks
-    /// in a function since all blocks must be reachable from the entry block.
+    /// in a function since all blocks must be reachable from an entry point.
     pub cfg_edges: RangeInclusive<usize>,
+
+    /// Number of entry points in the function.
+    pub entry_points: RangeInclusive<usize>,
 
     /// Number of block parameters for each block that is allowed to have them.
     pub blockparams_per_block: RangeInclusive<usize>,
@@ -52,6 +55,7 @@ impl Default for ArbitraryFunctionConfig {
     fn default() -> Self {
         Self {
             cfg_edges: 0..=20,
+            entry_points: 1..=4,
             blockparams_per_block: 0..=30,
             insts_per_block: 0..=15,
             defs_per_inst: 0..=20,
@@ -156,6 +160,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
     /// Initializes the `FunctionBuilder`.
     fn new(u: &'a mut Unstructured<'b>, reginfo: &'a R, config: ArbitraryFunctionConfig) -> Self {
         let func = GenericFunction {
+            entry_points: vec![],
             blocks: PrimaryMap::new(),
             insts: PrimaryMap::new(),
             values: PrimaryMap::new(),
@@ -218,25 +223,33 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
     ///
     /// These blocks do not contain any instructions yet.
     fn gen_cfg_skeleton(&mut self) -> Result<()> {
-        // Create the entry block.
-        let entry_frequency = self.block_frequency()?;
-        self.func.blocks.push(BlockData {
-            insts: InstRange::new(Inst::new(0), Inst::new(0)),
-            preds: vec![],
-            succs: vec![],
-            block_params_in: vec![],
-            block_params_out: vec![],
-            immediate_dominator: None.into(),
-            frequency: entry_frequency,
-            is_critical_edge: false,
-        });
-
         // To avoid critical edges, we need to ensure that blocks with multiple
         // successors only jump to blocks with a single predecessors, and that
         // blocks with multiple predecessors are only jumped to from blocks with
         // a single successor.
-        let mut can_add_succ = vec![Block::ENTRY_BLOCK];
+        let mut can_add_succ = vec![];
         let mut can_add_pred = vec![];
+
+        // Create the entry points.
+        let num_entries = self
+            .u
+            .int_in_range(self.config.entry_points.clone())?
+            .max(1);
+        for _ in 0..num_entries {
+            let entry_frequency = self.block_frequency()?;
+            let entry = self.func.blocks.push(BlockData {
+                insts: InstRange::new(Inst::new(0), Inst::new(0)),
+                preds: vec![],
+                succs: vec![],
+                block_params_in: vec![],
+                block_params_out: vec![],
+                immediate_dominator: None.into(),
+                frequency: entry_frequency,
+                is_critical_edge: false,
+            });
+            self.func.entry_points.push(entry);
+            can_add_succ.push(entry);
+        }
 
         // Repeatedly add edges to the CFG, either to a new block, or to an
         // existing block.
@@ -319,8 +332,11 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
 
     /// Adds incoming block parameters to blocks that allow them.
     fn add_blockparams(&mut self) -> Result<()> {
-        // The entry block cannot have blockparams.
-        for block in self.func.blocks.keys().skip(1) {
+        // Entry points cannot have blockparams.
+        for block in self.func.blocks.keys() {
+            if self.func.entry_points.contains(&block) {
+                continue;
+            }
             // Blockparams are only allowed if we have multiple predecessors.
             if self.func.blocks[block].preds.len() <= 1 {
                 continue;
@@ -655,8 +671,9 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         }
 
         // Add operands which use values, unless we are the first instruction of
-        // the entry block.
-        if block != Block::ENTRY_BLOCK || !is_first_inst {
+        // a block without a real dominator. In such blocks there is nowhere to
+        // synthesize a new dominating definition if no reusable value exists.
+        if !is_first_inst || self.domtree.immediate_dominator(block).is_some() {
             for _ in 0..self.u.int_in_range(self.config.uses_per_inst.clone())? {
                 let op = self.gen_use(block, is_first_inst, &mut inst)?;
                 inst.operands.push(op);

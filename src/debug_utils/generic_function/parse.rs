@@ -125,27 +125,57 @@ fn parse_value_declaration(
 
 fn parse_block_label(
     pair: Pair<'_, Rule>,
+    entry_points: &mut Vec<Block>,
     blocks: &mut PrimaryMap<Block, BlockData>,
     insts: &mut PrimaryMap<Inst, InstData>,
 ) -> Result<()> {
-    let [block, value_list, frequency, critical_edge] = extract(
-        pair,
-        [
-            Rule::block,
-            Rule::value_list,
-            Rule::frequency,
-            Rule::critical_edge,
-        ],
-    );
-    parse_expected_entity(block, blocks.next_key())?;
-    let block_params_in = parse_entity_list(value_list)?;
-    let [float] = extract(frequency, [Rule::float]);
-    let frequency = parse_number(float)?;
-    let is_critical_edge = match critical_edge.as_str() {
-        "critical_edge" => true,
-        "" => false,
-        _ => unreachable!(),
+    let span = pair.as_span();
+    let expected_block = blocks.next_key();
+    let mut block = None;
+    let mut block_params_in = vec![];
+    let mut frequency = None;
+    let mut is_entry_point = false;
+    let mut is_critical_edge = false;
+
+    for pair in pair.into_inner() {
+        match pair.as_rule() {
+            Rule::block => {
+                parse_expected_entity(pair, expected_block)?;
+                block = Some(expected_block);
+            }
+            Rule::value_list => block_params_in = parse_entity_list(pair)?,
+            Rule::frequency => {
+                let [float] = extract(pair, [Rule::float]);
+                frequency = Some(parse_number(float)?);
+            }
+            Rule::block_attribute => match pair.as_str() {
+                "entry_point" => {
+                    if is_entry_point {
+                        Err(custom_error(pair.as_span(), "duplicate attribute"))?;
+                    }
+                    is_entry_point = true;
+                }
+                "critical_edge" => {
+                    if is_critical_edge {
+                        Err(custom_error(pair.as_span(), "duplicate attribute"))?;
+                    }
+                    is_critical_edge = true;
+                }
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    let Some(block) = block else {
+        Err(custom_error(span, "missing block"))?
     };
+    let Some(frequency) = frequency else {
+        Err(custom_error(span, "missing frequency"))?
+    };
+    if is_entry_point {
+        entry_points.push(block);
+    }
     blocks.push(BlockData {
         insts: InstRange::new(insts.next_key(), insts.next_key()),
         preds: vec![],
@@ -314,13 +344,16 @@ impl GenericFunction {
         let mut insts = PrimaryMap::new();
         let mut values = PrimaryMap::new();
         let mut value_groups = PrimaryMap::new();
+        let mut entry_points = vec![];
 
         for pair in parse_result {
             match pair.as_rule() {
                 Rule::value_declaration => {
                     parse_value_declaration(pair, &mut values)?;
                 }
-                Rule::block_label => parse_block_label(pair, &mut blocks, &mut insts)?,
+                Rule::block_label => {
+                    parse_block_label(pair, &mut entry_points, &mut blocks, &mut insts)?;
+                }
                 Rule::instruction => {
                     parse_instruction(pair, &mut blocks, &mut insts, &mut value_groups)?;
                 }
@@ -330,6 +363,7 @@ impl GenericFunction {
         }
 
         let mut func = Self {
+            entry_points,
             blocks,
             insts,
             values,
