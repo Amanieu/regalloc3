@@ -357,7 +357,13 @@ struct StateTracker {
     /// since other units of the `PhysReg` may have been overwritten.
     last_unit_write: SparseMap<RegUnit, (PhysReg, Value)>,
 
-    /// `Value` currently held in each `SpillSlot`.
+    /// Values currently known to be available in their canonical spill slot.
+    ///
+    /// This intentionally does not track non-canonical stack contents, such as
+    /// outgoing blockparam moves. Each entry must satisfy
+    /// `slot_for_value[value] == Some(slot)`, which allows `def_value` to
+    /// invalidate a value's spill-slot location by removing its canonical slot
+    /// from this map.
     spillslot_values: SparseMap<SpillSlot, Value>,
 
     /// List of operands whose allocation is reused in the current instruction.
@@ -373,7 +379,7 @@ struct StateTracker {
     /// time, we don't need to track the contents of multiple spill slots.
     emergency_spill: Vec<(RegUnit, PhysReg, Value)>,
 
-    /// Block in which a value was last spilled to its spillslot.
+    /// Block in which a value was last spilled to its canonical spillslot.
     ///
     /// If that block dominates the current block then all spills in the current
     /// block are redundant and can be eliminated.
@@ -461,11 +467,12 @@ impl StateTracker {
 
     /// Handles the definition of a value.
     ///
-    /// This consists of 3 parts:
+    /// This consists of 4 parts:
     /// 1) Invalidating any previous mapping for the same value, since those are
     ///    from the previous loop iteration and no longer valid.
     /// 2) Invalidating any previous value at the destination location.
     /// 3) Recording the location of the new value.
+    /// 4) Updating spill-slot availability for redundant spill elimination.
     fn def_value(&mut self, value: Value, alloc: Allocation, block: Block, reginfo: &impl RegInfo) {
         self.value_def_block[value] = block;
         match alloc.kind() {
@@ -483,8 +490,15 @@ impl StateTracker {
             }
             AllocationKind::SpillSlot(slot) => {
                 self.value_regs.remove(value);
-                if self.slot_for_value[value].expand() == Some(slot) {
+                let canonical_slot = self.slot_for_value[value].expand();
+                if canonical_slot == Some(slot) {
                     self.spillslot_values.insert(slot, value);
+                    self.last_spilled_in[value] = Some(block).into();
+                } else {
+                    if let Some(canonical_slot) = canonical_slot {
+                        self.spillslot_values.remove(canonical_slot);
+                    }
+                    self.spillslot_values.remove(slot);
                 }
             }
         }
@@ -570,6 +584,11 @@ impl StateTracker {
                 AllocationKind::SpillSlot(slot) => {
                     if self.slot_for_value[value].expand() == Some(slot) {
                         self.spillslot_values.insert(slot, value);
+                    } else {
+                        // Don't track values stored to a non-canonical stack
+                        // slot. Instead just invalidate anything that was
+                        // previously there.
+                        self.spillslot_values.remove(slot);
                     }
                 }
             }
