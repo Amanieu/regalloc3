@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 use smallvec::{SmallVec, smallvec};
 
-use super::move_resolver::Edit;
+pub use super::move_resolver::Edit;
 use crate::allocation_unit::AllocationUnit;
 use crate::entity::packed_option::ReservedValue;
 use crate::entity::{PrimaryMap, SecondaryMap, SparseMap};
@@ -206,10 +206,9 @@ impl ScratchAllocator {
             // the scratch register in program order. Save the scratch register
             // value into the emergency spill slot.
             trace!("-> Restoring evicted {reg} from {spillslot}");
-            edits.push(Edit {
-                value: None.into(),
-                from: Some(Allocation::reg(reg)).into(),
-                to: Some(Allocation::spillslot(spillslot)).into(),
+            edits.push(Edit::EmergencySpill {
+                to: spillslot,
+                from: reg,
             });
             self.evicted_reg = None;
             self.emergency_spillslot_cache.release(spillslot, size);
@@ -242,10 +241,9 @@ impl ScratchAllocator {
             // the scratch register in program order. Save the scratch register
             // value into the emergency spill slot.
             trace!("-> Restoring evicted {evicted_reg} from {spillslot}");
-            edits.push(Edit {
-                value: None.into(),
-                from: Some(Allocation::reg(evicted_reg)).into(),
-                to: Some(Allocation::spillslot(spillslot)).into(),
+            edits.push(Edit::EmergencySpill {
+                to: spillslot,
+                from: evicted_reg,
             });
             self.evicted_reg = None;
             self.emergency_spillslot_cache.release(spillslot, size);
@@ -339,10 +337,9 @@ impl ScratchAllocator {
         // Since we are emitting moves in reverse order, this is after the
         // *last* use of the scratch register. We need to restore the scratch
         // register contents from the emergency spill slot.
-        edits.push(Edit {
-            value: None.into(),
-            from: Some(Allocation::spillslot(spillslot)).into(),
-            to: Some(Allocation::reg(reg)).into(),
+        edits.push(Edit::EmergencyReload {
+            to: reg,
+            from: spillslot,
         });
 
         self.evicted_reg = Some((reg, spillslot, size));
@@ -472,22 +469,18 @@ impl ScratchAllocator {
                 is_unit_free,
                 alloc_emergency_spillslot,
             );
-            edits.push(Edit {
-                value: Some(value).into(),
-                from: Some(scratch).into(),
-                to: Some(to).into(),
+            edits.push(Edit::Move {
+                to,
+                from: scratch,
+                value,
             });
-            edits.push(Edit {
-                value: Some(value).into(),
-                from: Some(from).into(),
-                to: Some(scratch).into(),
+            edits.push(Edit::Move {
+                to: scratch,
+                from,
+                value,
             });
         } else {
-            edits.push(Edit {
-                value: Some(value).into(),
-                from: Some(from).into(),
-                to: Some(to).into(),
-            });
+            edits.push(Edit::Move { to, from, value });
         }
 
         // Make the destination register available as a scratch
@@ -696,11 +689,7 @@ impl ParallelMoves {
         for &(value, class, dest) in &self.remat {
             trace!("Processing remat of {value} into {dest} with {class}");
 
-            self.edits.push(Edit {
-                value: Some(value).into(),
-                from: None.into(),
-                to: Some(dest).into(),
-            });
+            self.edits.push(Edit::Rematerialize { to: dest, value });
 
             // Make the destination register available as a scratch register.
             if let AllocationKind::PhysReg(reg) = dest.kind() {
@@ -744,30 +733,26 @@ impl ParallelMoves {
                     &is_unit_free,
                     &mut alloc_emergency_spillslot,
                 );
-                self.edits.push(Edit {
-                    value: Some(value).into(),
-                    from: Some(scratch2).into(),
-                    to: Some(dest).into(),
+                self.edits.push(Edit::Move {
+                    to: dest,
+                    from: scratch2,
+                    value,
                 });
-                self.edits.push(Edit {
-                    value: Some(value).into(),
-                    from: Some(scratch).into(),
-                    to: Some(scratch2).into(),
+                self.edits.push(Edit::Move {
+                    to: scratch2,
+                    from: scratch,
+                    value,
                 });
             } else {
-                self.edits.push(Edit {
-                    value: Some(value).into(),
-                    from: Some(scratch).into(),
-                    to: Some(dest).into(),
+                self.edits.push(Edit::Move {
+                    to: dest,
+                    from: scratch,
+                    value,
                 });
             }
 
             // Rematerialize into the scratch register.
-            self.edits.push(Edit {
-                value: Some(value).into(),
-                from: None.into(),
-                to: Some(scratch).into(),
-            });
+            self.edits.push(Edit::Rematerialize { to: scratch, value });
 
             // If get_scratch_reg gave us an emergency spillslot, release it so
             // that is can later be reused.

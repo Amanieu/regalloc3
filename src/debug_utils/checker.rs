@@ -351,7 +351,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         }
         match inst {
             OutputInst::Inst { .. } => self.can_have_move = true,
-            OutputInst::Rematerialize { .. } => ensure!(
+            OutputInst::Rematerialize { .. } | OutputInst::IndirectRematerialize { .. } => ensure!(
                 self.can_have_move,
                 "Cannot have remat before first instruction"
             ),
@@ -410,6 +410,39 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     bail!("{value} is not rematerializable");
                 };
                 self.check_class(to, class)?;
+
+                for unit in to.units(reginfo) {
+                    self.state.set_value(unit, value);
+                }
+                if let AllocationKind::SpillSlot(slot) = to.kind() {
+                    self.evicted.remove(slot);
+                }
+            }
+            OutputInst::IndirectRematerialize { value, to, inputs } => {
+                let Some(remat) = func.can_indirectly_rematerialize(value) else {
+                    bail!("{value} is not indirectly rematerializable");
+                };
+                ensure!(
+                    inputs.len() == remat.inputs.len(),
+                    "Indirect remat of {value} expected {} inputs, got {}",
+                    remat.inputs.len(),
+                    inputs.len()
+                );
+                self.check_constraint(
+                    to,
+                    Operand::new(OperandKind::Def(value), remat.constraint),
+                    inputs,
+                )?;
+                for (idx, (&input, &input_alloc)) in remat.inputs.iter().zip(inputs).enumerate() {
+                    self.check_remat_input(
+                        idx,
+                        input_alloc,
+                        input,
+                        to,
+                        remat.constraint,
+                        remat.allow_destination_overlap,
+                    )?;
+                }
 
                 for unit in to.units(reginfo) {
                     self.state.set_value(unit, value);
@@ -557,6 +590,74 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 );
             }
         }
+        Ok(())
+    }
+
+    /// Checks an indirect-remat input allocation.
+    fn check_remat_input(
+        &mut self,
+        idx: usize,
+        alloc: Allocation,
+        input: Operand,
+        target_alloc: Allocation,
+        target_constraint: OperandConstraint,
+        allow_destination_overlap: bool,
+    ) -> Result<()> {
+        self.check_constraint(alloc, input, &[])?;
+
+        let reginfo = self.output.reginfo();
+        let check_input_value =
+            |state: &CheckerState, input_value: Value, input_alloc: Allocation| -> Result<()> {
+                for unit in input_alloc.units(reginfo) {
+                    ensure!(
+                        state.unit_contains(unit, input_value),
+                        "Indirect remat input {idx}: {unit} in {input_alloc} does not contain \
+                         {input_value}"
+                    );
+                }
+                if !allow_destination_overlap && target_constraint != OperandConstraint::Reuse(idx)
+                {
+                    for target_unit in target_alloc.units(reginfo) {
+                        for input_unit in input_alloc.units(reginfo) {
+                            ensure!(
+                                target_unit != input_unit,
+                                "Indirect remat destination {target_alloc} overlaps input {idx} \
+                                 allocation {input_alloc}"
+                            );
+                        }
+                    }
+                }
+
+                Ok(())
+            };
+
+        match input.kind() {
+            OperandKind::Use(value) => {
+                check_input_value(&self.state, value, alloc)?;
+            }
+            OperandKind::UseGroup(group) => {
+                let OperandConstraint::Class(class) = input.constraint() else {
+                    unreachable!();
+                };
+                let reg_group = self.check_group_class(alloc, class)?;
+                let func = self.output.function();
+                for (&value, &reg) in func
+                    .value_group_members(group)
+                    .iter()
+                    .zip(reginfo.reg_group_members(reg_group))
+                {
+                    check_input_value(&self.state, value, Allocation::reg(reg))?;
+                }
+            }
+            OperandKind::NonAllocatable => {}
+            OperandKind::Def(_)
+            | OperandKind::EarlyDef(_)
+            | OperandKind::DefGroup(_)
+            | OperandKind::EarlyDefGroup(_) => {
+                unreachable!();
+            }
+        }
+
         Ok(())
     }
 

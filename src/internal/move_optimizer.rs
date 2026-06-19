@@ -43,6 +43,7 @@ use super::allocations::Allocations;
 use super::coalescing::Coalescing;
 use super::move_resolver::{Edit, MoveResolver};
 use super::spill_allocator::SpillAllocator;
+use crate::entity::CompactList;
 use crate::entity::packed_option::{PackedOption, ReservedValue};
 use crate::entity::sparse::Entry;
 use crate::entity::{EntitySet, PrimaryMap, SecondaryMap, SparseMap};
@@ -384,6 +385,9 @@ struct StateTracker {
     /// If that block dominates the current block then all spills in the current
     /// block are redundant and can be eliminated.
     last_spilled_in: SecondaryMap<Value, PackedOption<Block>>,
+
+    /// Scratch space for indirect rematerialization input allocations.
+    remat_inputs: Vec<Allocation>,
 }
 
 impl fmt::Display for StateTracker {
@@ -422,6 +426,7 @@ impl StateTracker {
             def_units: RegUnitSet::new(),
             emergency_spill: vec![],
             last_spilled_in: SecondaryMap::new(),
+            remat_inputs: vec![],
         }
     }
 
@@ -565,75 +570,73 @@ impl StateTracker {
 
     /// Applies the effects of an edit on the state.
     fn process_edit(&mut self, edit: Edit, reginfo: &impl RegInfo) {
-        // Nothing to do if the edit has been optimized away.
-        let Some(to) = edit.to.expand() else {
-            return;
-        };
-
-        if let Some(value) = edit.value.expand() {
-            // For normal moves, clobber the destination and then add it as
-            // a location for the given value.
-            match to.kind() {
-                AllocationKind::PhysReg(reg) => {
-                    for unit in reginfo.reg_units(reg) {
-                        self.clobber_unit(unit);
-                        self.last_unit_write.insert(unit, (reg, value));
+        match edit {
+            Edit::Move { to, value, .. }
+            | Edit::Rematerialize { to, value }
+            | Edit::IndirectRematerialize { to, value, .. } => {
+                // For normal moves, clobber the destination and then add it as
+                // a location for the given value.
+                match to.kind() {
+                    AllocationKind::PhysReg(reg) => {
+                        for unit in reginfo.reg_units(reg) {
+                            self.clobber_unit(unit);
+                            self.last_unit_write.insert(unit, (reg, value));
+                        }
+                        self.value_regs.entry(value).or_default().insert(reg);
                     }
-                    self.value_regs.entry(value).or_default().insert(reg);
-                }
-                AllocationKind::SpillSlot(slot) => {
-                    if self.slot_for_value[value].expand() == Some(slot) {
-                        self.spillslot_values.insert(slot, value);
-                    } else {
-                        // Don't track values stored to a non-canonical stack
-                        // slot. Instead just invalidate anything that was
-                        // previously there.
-                        self.spillslot_values.remove(slot);
+                    AllocationKind::SpillSlot(slot) => {
+                        if self.slot_for_value[value].expand() == Some(slot) {
+                            self.spillslot_values.insert(slot, value);
+                        } else {
+                            // Don't track values stored to a non-canonical stack
+                            // slot. Instead just invalidate anything that was
+                            // previously there.
+                            self.spillslot_values.remove(slot);
+                        }
                     }
                 }
             }
-        } else {
-            match (edit.from.unwrap().kind(), to.kind()) {
-                // For emergency spills, save the contents of `last_unit_write`
-                // for the affected units.
-                //
-                // Note that there can only be one emergency spill at any time.
-                // Also, emergency spill slots are not used to hold normal
-                // values and therefore don't need to be tracked.
-                (AllocationKind::PhysReg(reg), AllocationKind::SpillSlot(slot)) => {
-                    debug_assert!(!self.spillslot_values.contains_key(slot));
-                    self.emergency_spill.clear();
-                    for unit in reginfo.reg_units(reg) {
-                        if let Some(&(reg, value)) = self.last_unit_write.get(unit) {
-                            self.emergency_spill.push((unit, reg, value));
-                        }
+
+            // For emergency spills, save the contents of `last_unit_write`
+            // for the affected units.
+            //
+            // Note that there can only be one emergency spill at any time.
+            // Also, emergency spill slots are not used to hold normal
+            // values and therefore don't need to be tracked.
+            Edit::EmergencySpill {
+                to: slot,
+                from: reg,
+            } => {
+                debug_assert!(!self.spillslot_values.contains_key(slot));
+                self.emergency_spill.clear();
+                for unit in reginfo.reg_units(reg) {
+                    if let Some(&(reg, value)) = self.last_unit_write.get(unit) {
+                        self.emergency_spill.push((unit, reg, value));
                     }
                 }
+            }
 
-                // For emergency reloads, clobber the destination units and then
-                // restore the saved `last_unit_write` contents.
-                (AllocationKind::SpillSlot(_), AllocationKind::PhysReg(reg)) => {
-                    for unit in reginfo.reg_units(reg) {
-                        self.clobber_unit(unit);
-                    }
-                    for &(unit, reg, value) in &self.emergency_spill {
-                        self.last_unit_write.insert(unit, (reg, value));
+            // For emergency reloads, clobber the destination units and then
+            // restore the saved `last_unit_write` contents.
+            Edit::EmergencyReload { to: reg, .. } => {
+                for unit in reginfo.reg_units(reg) {
+                    self.clobber_unit(unit);
+                }
+                for &(unit, reg, value) in &self.emergency_spill {
+                    self.last_unit_write.insert(unit, (reg, value));
 
-                        // Mark the value as being located in a register only if
-                        // all units have the same value.
-                        if reginfo.reg_units(reg).count() == 1
-                            || reginfo.reg_units(reg).all(|unit| {
-                                self.last_unit_write
-                                    .get(unit)
-                                    .is_some_and(|&(_, value2)| value2 == value)
-                            })
-                        {
-                            self.value_regs.entry(value).or_default().insert(reg);
-                        }
+                    // Mark the value as being located in a register only if
+                    // all units have the same value.
+                    if reginfo.reg_units(reg).count() == 1
+                        || reginfo.reg_units(reg).all(|unit| {
+                            self.last_unit_write
+                                .get(unit)
+                                .is_some_and(|&(_, value2)| value2 == value)
+                        })
+                    {
+                        self.value_regs.entry(value).or_default().insert(reg);
                     }
                 }
-                (AllocationKind::PhysReg(_), AllocationKind::PhysReg(_))
-                | (AllocationKind::SpillSlot(_), AllocationKind::SpillSlot(_)) => unreachable!(),
             }
         }
     }
@@ -667,8 +670,10 @@ impl StateTracker {
                     break;
                 }
                 trace!("Values: {self}");
-                trace!("Pre-processing edit: {}", first.1);
-                self.process_edit(first.1, reginfo);
+                if let Some(edit) = first.1 {
+                    trace!("Pre-processing edit: {edit}");
+                    self.process_edit(edit, reginfo);
+                }
                 edits = rest;
             }
 
@@ -707,92 +712,269 @@ impl StateTracker {
         trace!("Values: {self}");
     }
 
+    /// Finds the concrete input allocations needed for a shallow indirect
+    /// rematerialization of `value` into `dest`.
+    fn indirect_remat_inputs(
+        &mut self,
+        value: Value,
+        dest: Allocation,
+        allocations: &mut Allocations,
+        func: &impl Function,
+        reginfo: &impl RegInfo,
+    ) -> Option<CompactList<Allocation>> {
+        self.remat_inputs.clear();
+        let remat = func.can_indirectly_rematerialize(value)?;
+
+        // Check that the destination matches the constraints.
+        match remat.constraint {
+            OperandConstraint::Class(class) => match dest.kind() {
+                AllocationKind::PhysReg(reg) => {
+                    if !reginfo.class_members(class).contains(reg) {
+                        return None;
+                    }
+                }
+                AllocationKind::SpillSlot(_) => {
+                    if !reginfo.class_includes_spillslots(class) {
+                        return None;
+                    }
+                }
+            },
+            OperandConstraint::Fixed(reg) => {
+                if dest.kind() != AllocationKind::PhysReg(reg) {
+                    return None;
+                }
+            }
+            OperandConstraint::Reuse(_) => {
+                // Checked in the loop below.
+            }
+        }
+
+        for (idx, &input) in remat.inputs.iter().enumerate() {
+            let input_constraint = if remat.constraint == OperandConstraint::Reuse(idx) {
+                let AllocationKind::PhysReg(reg) = dest.kind() else {
+                    return None;
+                };
+                OperandConstraint::Fixed(reg)
+            } else {
+                input.constraint()
+            };
+            let check_overlap = !remat.allow_destination_overlap
+                && remat.constraint != OperandConstraint::Reuse(idx);
+
+            let input_alloc = match input.kind() {
+                OperandKind::Use(input_value) => match input_constraint {
+                    OperandConstraint::Class(class) => {
+                        let input_alloc = if let Some(reg) =
+                            self.value_regs.get(input_value).and_then(|&regs| {
+                                (regs & reginfo.class_members(class)).into_iter().next()
+                            }) {
+                            Allocation::reg(reg)
+                        } else if reginfo.class_includes_spillslots(class) {
+                            let slot = self.slot_for_value[input_value].expand()?;
+                            (self.spillslot_values.get(slot) == Some(&input_value))
+                                .then_some(Allocation::spillslot(slot))?
+                        } else {
+                            return None;
+                        };
+                        if check_overlap
+                            && dest.units(reginfo).any(|dest_unit| {
+                                input_alloc
+                                    .units(reginfo)
+                                    .any(|input_unit| dest_unit == input_unit)
+                            })
+                        {
+                            return None;
+                        }
+                        input_alloc
+                    }
+                    OperandConstraint::Fixed(reg) => {
+                        let input_alloc = self
+                            .value_regs
+                            .get(input_value)
+                            .is_some_and(|regs| regs.contains(reg))
+                            .then_some(Allocation::reg(reg))?;
+                        if check_overlap
+                            && dest.units(reginfo).any(|dest_unit| {
+                                input_alloc
+                                    .units(reginfo)
+                                    .any(|input_unit| dest_unit == input_unit)
+                            })
+                        {
+                            return None;
+                        }
+                        input_alloc
+                    }
+                    OperandConstraint::Reuse(_) => unreachable!(),
+                },
+                OperandKind::UseGroup(input_group) => {
+                    let OperandConstraint::Class(class) = input_constraint else {
+                        unreachable!();
+                    };
+                    let values = func.value_group_members(input_group);
+                    let mut alloc = None;
+                    if let Some(&regs) = self.value_regs.get(values[0]) {
+                        for reg in regs {
+                            let Some(reg_group) = reginfo.group_for_reg(reg, 0, class) else {
+                                continue;
+                            };
+                            let group_regs = reginfo.reg_group_members(reg_group);
+                            if values[1..]
+                                .iter()
+                                .zip(&group_regs[1..])
+                                .all(|(&value, &reg)| {
+                                    self.value_regs
+                                        .get(value)
+                                        .is_some_and(|regs| regs.contains(reg))
+                                })
+                            {
+                                alloc = Some((Allocation::reg(reg), reg_group));
+                                break;
+                            }
+                        }
+                    }
+                    let (input_alloc, reg_group) = alloc?;
+                    if check_overlap {
+                        if reginfo.reg_group_members(reg_group).iter().any(|&reg| {
+                            dest.units(reginfo).any(|dest_unit| {
+                                Allocation::reg(reg)
+                                    .units(reginfo)
+                                    .any(|input_unit| dest_unit == input_unit)
+                            })
+                        }) {
+                            return None;
+                        }
+                    }
+                    input_alloc
+                }
+                OperandKind::NonAllocatable => {
+                    let OperandConstraint::Fixed(reg) = input_constraint else {
+                        unreachable!();
+                    };
+                    Allocation::reg(reg)
+                }
+                OperandKind::Def(_)
+                | OperandKind::EarlyDef(_)
+                | OperandKind::DefGroup(_)
+                | OperandKind::EarlyDefGroup(_) => unreachable!(),
+            };
+            self.remat_inputs.push(input_alloc);
+        }
+
+        Some(CompactList::from_iter(
+            self.remat_inputs.iter().copied(),
+            &mut allocations.remat_inputs,
+        ))
+    }
+
     /// Attempts to optimize an `Edit` by eliminating it or making it cheaper.
     fn optimize_edit(
         &mut self,
-        edit: &mut Edit,
+        edit: &mut Option<Edit>,
+        allocations: &mut Allocations,
         block: Block,
         stats: &mut Stats,
         func: &impl Function,
         reginfo: &impl RegInfo,
     ) {
-        if let Some(value) = edit.value.expand() {
-            // First, see if the destination already contains the desired value.
-            // If that is the case then we can turn the edit into a `nop` by
-            // setting its destination to `None`.
-            match edit.to.unwrap().kind() {
-                AllocationKind::PhysReg(reg) => {
-                    if let Some(set) = self.value_regs.get(value) {
-                        if set.contains(reg) {
-                            match edit.from.expand() {
-                                Some(from) => match from.kind() {
-                                    AllocationKind::PhysReg(_) => {
-                                        stat!(stats, optimized_redundant_move);
-                                    }
-                                    AllocationKind::SpillSlot(_) => {
-                                        stat!(stats, optimized_redundant_reload);
-                                    }
-                                },
-                                None => stat!(stats, optimized_redundant_remat),
-                            }
-                            trace!("Eliminated redundant edit");
-                            edit.to = None.into();
-                            return;
-                        }
-                    }
-                }
-                AllocationKind::SpillSlot(slot) => {
-                    if self.spillslot_values.get(slot) == Some(&value) {
-                        stat!(stats, optimized_redundant_spill);
-                        trace!("Eliminated redundant spill");
-                        edit.to = None.into();
-                        return;
-                    }
+        let Some(edit_value) = *edit else {
+            return;
+        };
 
-                    // We may not know that the value is already in the spill
-                    // slot if we are using limited propagation (`Local` or
-                    // `Forward`). However we can still determine that a value
-                    // is already in the spill slot if it has been spilled in
-                    // a block that dominates the current block.
-                    //
-                    // This works because of several factors:
-                    // - spill slot allocation will allocate the entire live
-                    //   range of the value, not just the spilled portions.
-                    // - each value is only ever spilled to a single spill slot.
-                    // - we require that blocks be topologically ordered with
-                    //   regards to dominance.
-                    if self.slot_for_value[value].expand() == Some(slot) {
-                        if let Some(prev_block) = self.last_spilled_in[value].expand() {
-                            if func.block_dominates(prev_block, block) {
-                                stat!(stats, optimized_redundant_spill);
-                                edit.to = None.into();
-                                trace!(
-                                    "Eliminated redundant spill: already spilled in dominating \
-                                     block"
-                                );
-                                return;
+        let (value, to, from) = match edit_value {
+            Edit::Move { to, from, value } => (value, to, Some(from)),
+            Edit::Rematerialize { to, value } | Edit::IndirectRematerialize { to, value, .. } => {
+                (value, to, None)
+            }
+            Edit::EmergencySpill { .. } | Edit::EmergencyReload { .. } => return,
+        };
+
+        // First, see if the destination already contains the desired value.
+        // If that is the case then we can remove the edit.
+        match to.kind() {
+            AllocationKind::PhysReg(reg) => {
+                if let Some(set) = self.value_regs.get(value) {
+                    if set.contains(reg) {
+                        match from {
+                            Some(from) => {
+                                if from.is_memory(reginfo) {
+                                    stat!(stats, optimized_redundant_reload);
+                                } else {
+                                    stat!(stats, optimized_redundant_move);
+                                }
                             }
+                            None => stat!(stats, optimized_redundant_remat),
                         }
-                        self.last_spilled_in[value] = Some(block).into();
+                        trace!("Eliminated redundant edit");
+                        *edit = None;
+                        return;
                     }
                 }
             }
+            AllocationKind::SpillSlot(slot) => {
+                if self.spillslot_values.get(slot) == Some(&value) {
+                    stat!(stats, optimized_redundant_spill);
+                    trace!("Eliminated redundant spill");
+                    *edit = None;
+                    return;
+                }
 
-            // We couldn't eliminate the move entirely, but we may be able to
-            // turn a load from memory into a register move if the desired value
-            // is already present in another register.
-            if let Some(from) = edit.from.expand() {
-                if from.is_memory(reginfo) {
-                    if let Some(&regs_with_value) = self.value_regs.get(value) {
-                        if let Some(reg) = regs_with_value
-                            .into_iter()
-                            .find(|&reg| !reginfo.is_memory(reg))
-                        {
-                            trace!("Optimizing reload to use {reg}");
-                            stat!(stats, optimized_reload_to_move);
-                            edit.from = Some(Allocation::reg(reg)).into();
+                // We may not know that the value is already in the spill
+                // slot if we are using limited propagation (`Local` or
+                // `Forward`). However we can still determine that a value
+                // is already in the spill slot if it has been spilled in
+                // a block that dominates the current block.
+                //
+                // This works because of several factors:
+                // - spill slot allocation will allocate the entire live
+                //   range of the value, not just the spilled portions.
+                // - each value is only ever spilled to a single spill slot.
+                // - we require that blocks be topologically ordered with
+                //   regards to dominance.
+                if self.slot_for_value[value].expand() == Some(slot) {
+                    if let Some(prev_block) = self.last_spilled_in[value].expand() {
+                        if func.block_dominates(prev_block, block) {
+                            stat!(stats, optimized_redundant_spill);
+                            *edit = None;
+                            trace!(
+                                "Eliminated redundant spill: already spilled in dominating block"
+                            );
+                            return;
                         }
                     }
+                    self.last_spilled_in[value] = Some(block).into();
+                }
+            }
+        }
+
+        // We couldn't eliminate the move entirely, but we may be able to
+        // turn a load from memory into something cheaper.
+        if let Some(from) = from {
+            if from.is_memory(reginfo) {
+                // Turn it into a move if the value is already available in
+                // another register.
+                if let Some(&regs_with_value) = self.value_regs.get(value) {
+                    if let Some(reg) = regs_with_value
+                        .into_iter()
+                        .find(|&reg| !reginfo.is_memory(reg))
+                    {
+                        trace!("Optimizing reload to use {reg}");
+                        stat!(stats, optimized_reload_to_move);
+                        *edit = Some(Edit::Move {
+                            to,
+                            from: Allocation::reg(reg),
+                            value,
+                        });
+                    }
+                }
+
+                // If this value can be indirectly rematerialized and all inputs
+                // are available then we can do that to avoid a load.
+                if let Some(inputs) =
+                    self.indirect_remat_inputs(value, to, allocations, func, reginfo)
+                {
+                    trace!("Optimizing reload to indirect remat");
+                    stat!(stats, optimized_reload_to_indirect_remat);
+                    *edit = Some(Edit::IndirectRematerialize { to, value, inputs });
                 }
             }
         }
@@ -825,9 +1007,13 @@ impl StateTracker {
                     break;
                 }
                 trace!("Values: {self}");
-                trace!("Optimizing edit: {}", first.1);
-                self.optimize_edit(&mut first.1, block, stats, func, reginfo);
-                self.process_edit(first.1, reginfo);
+                if let Some(edit) = first.1 {
+                    trace!("Optimizing edit: {edit}");
+                }
+                self.optimize_edit(&mut first.1, allocations, block, stats, func, reginfo);
+                if let Some(edit) = first.1 {
+                    self.process_edit(edit, reginfo);
+                }
                 edits = &mut edits[1..];
             }
 

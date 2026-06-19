@@ -7,7 +7,8 @@ use core::fmt;
 use crate::entity::PrimaryMap;
 use crate::entity::packed_option::PackedOption;
 use crate::function::{
-    Block, Function, Inst, InstRange, Operand, RematCost, TerminatorKind, Value, ValueGroup,
+    Block, Function, IndirectRemat, Inst, InstRange, Operand, OperandConstraint, RematCost,
+    TerminatorKind, Value, ValueGroup,
 };
 use crate::reginfo::{RegBank, RegClass, RegUnit};
 
@@ -45,9 +46,18 @@ struct InstData {
 
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+struct IndirectRematData {
+    constraint: OperandConstraint,
+    inputs: Vec<Operand>,
+    allow_destination_overlap: bool,
+}
+
+#[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct ValueData {
     bank: RegBank,
     remat: Option<(RematCost, RegClass)>,
+    indirect_remat: Option<IndirectRematData>,
 }
 
 /// A generic implementation of [`Function`] which can be constructed from an
@@ -109,9 +119,17 @@ impl GenericFunction {
             });
         }
         for value in func.values() {
+            let indirect_remat =
+                func.can_indirectly_rematerialize(value)
+                    .map(|remat| IndirectRematData {
+                        constraint: remat.constraint,
+                        inputs: remat.inputs.into(),
+                        allow_destination_overlap: remat.allow_destination_overlap,
+                    });
             values.push(ValueData {
                 bank: func.value_bank(value),
                 remat: func.can_rematerialize(value),
+                indirect_remat,
             });
         }
         for group in func.value_groups() {
@@ -226,6 +244,18 @@ impl Function for GenericFunction {
     #[inline]
     fn can_rematerialize(&self, value: Value) -> Option<(RematCost, RegClass)> {
         self.values[value].remat
+    }
+
+    #[inline]
+    fn can_indirectly_rematerialize(&self, value: Value) -> Option<IndirectRemat<'_>> {
+        self.values[value]
+            .indirect_remat
+            .as_ref()
+            .map(|data| IndirectRemat {
+                constraint: data.constraint,
+                inputs: &data.inputs,
+                allow_destination_overlap: data.allow_destination_overlap,
+            })
     }
 
     #[inline]

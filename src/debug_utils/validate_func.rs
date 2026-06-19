@@ -88,6 +88,21 @@ impl ValueOrGroup {
     }
 }
 
+#[derive(Copy, Clone)]
+enum ConstraintSource {
+    Inst(Inst),
+    Remat(Value),
+}
+
+impl fmt::Display for ConstraintSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            ConstraintSource::Inst(inst) => inst.fmt(f),
+            ConstraintSource::Remat(value) => write!(f, "{value} indirect remat"),
+        }
+    }
+}
+
 /// State used for validation.
 struct Context<'a, F, R> {
     func: &'a F,
@@ -150,24 +165,24 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     }
 
     /// Check for multiple conflicting uses of a fixed register in a single
-    /// instruction.
-    fn check_fixed(&mut self, inst: Inst, reg: PhysReg, early: bool) -> Result<()> {
+    /// constraint scope.
+    fn check_fixed(&mut self, source: ConstraintSource, reg: PhysReg, early: bool) -> Result<()> {
         let set = if early {
             &mut self.early_fixed
         } else {
             &mut self.late_fixed
         };
         for unit in self.reginfo.reg_units(reg) {
-            ensure!(!set.contains(unit), "{inst}: Conflicting uses of {reg}");
+            ensure!(!set.contains(unit), "{source}: Conflicting uses of {reg}");
             set.insert(unit);
         }
         Ok(())
     }
 
-    /// Check an operand with a constraint (not `NonAllocatable`).
+    /// Check an operand with a constraint.
     fn check_constraint(
         &mut self,
-        inst: Inst,
+        source: ConstraintSource,
         operands: &[Operand],
         operand: Operand,
         value_or_group: ValueOrGroup,
@@ -180,35 +195,35 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     ValueOrGroup::Value(value) => {
                         ensure!(
                             group_size == 1,
-                            "{inst} {operand}: Value used with group register class"
+                            "{source} {operand}: Value used with group register class"
                         );
                         ensure!(
                             !self.reginfo.class_members(class).is_empty(),
-                            "{inst} {operand}: {value} constrained to empty register class"
+                            "{source} {operand}: {value} constrained to empty register class"
                         );
                         let value_bank = self.func.value_bank(value);
                         ensure!(
                             bank == value_bank,
-                            "{inst} {operand}: {value} used with different register banks: {bank} \
-                             vs {value_bank}"
+                            "{source} {operand}: {value} used with different register banks: \
+                             {bank} vs {value_bank}"
                         );
                     }
                     ValueOrGroup::Group(group) => {
                         let members = self.func.value_group_members(group);
                         ensure!(
                             group_size == members.len(),
-                            "{inst} {operand}: group size mismatch {group_size} vs {}",
+                            "{source} {operand}: group size mismatch {group_size} vs {}",
                             members.len()
                         );
                         ensure!(
                             !self.reginfo.class_group_members(class).is_empty(),
-                            "{inst} {operand}: {group} constrained to empty register class"
+                            "{source} {operand}: {group} constrained to empty register class"
                         );
                         for &value in members {
                             let value_bank = self.func.value_bank(value);
                             ensure!(
                                 bank == value_bank,
-                                "{inst} {operand}: {value} used with different register banks: \
+                                "{source} {operand}: {value} used with different register banks: \
                                  {bank} vs {value_bank}"
                             );
                         }
@@ -219,18 +234,18 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 match value_or_group {
                     ValueOrGroup::Value(value) => {
                         let Some(bank) = self.reginfo.bank_for_reg(reg) else {
-                            bail!("{inst} {operand}: Use of non-allocatable register");
+                            bail!("{source} {operand}: Use of non-allocatable register");
                         };
                         let value_bank = self.func.value_bank(value);
                         ensure!(
                             bank == value_bank,
-                            "{inst} {operand}: {value} used with different register banks: {bank} \
-                             vs {value_bank}"
+                            "{source} {operand}: {value} used with different register banks: \
+                             {bank} vs {value_bank}"
                         );
                     }
                     ValueOrGroup::Group(_) => {
                         bail!(
-                            "{inst} {operand}: Fixed constraint cannot be used with register \
+                            "{source} {operand}: Fixed constraint cannot be used with register \
                              groups"
                         );
                     }
@@ -239,14 +254,14 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 // Check for conflicting fixed-register constraints.
                 match operand.kind() {
                     OperandKind::Def(_) => {
-                        self.check_fixed(inst, reg, false)?;
+                        self.check_fixed(source, reg, false)?;
                     }
                     OperandKind::Use(_) => {
-                        self.check_fixed(inst, reg, true)?;
+                        self.check_fixed(source, reg, true)?;
                     }
                     OperandKind::EarlyDef(_) => {
-                        self.check_fixed(inst, reg, true)?;
-                        self.check_fixed(inst, reg, false)?;
+                        self.check_fixed(source, reg, true)?;
+                        self.check_fixed(source, reg, false)?;
                     }
                     OperandKind::DefGroup(_)
                     | OperandKind::UseGroup(_)
@@ -263,15 +278,15 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     OperandKind::Use(_)
                     | OperandKind::UseGroup(_)
                     | OperandKind::NonAllocatable => {
-                        bail!("{inst} {operand}: Reuse operand must be a Def or EarlyDef")
+                        bail!("{source} {operand}: Reuse operand must be a Def or EarlyDef")
                     }
                 }
                 let Some(&target_operand) = operands.get(index) else {
-                    bail!("{inst} {operand}: Invalid index for reuse operand");
+                    bail!("{source} {operand}: Invalid index for reuse operand");
                 };
                 ensure!(
                     !self.reuse_targets.contains(&index),
-                    "{inst} {operand}: multiple reuse of same target operand {index}"
+                    "{source} {operand}: multiple reuse of same target operand {index}"
                 );
                 self.reuse_targets.push(index);
                 let target_value_or_group = match target_operand.kind() {
@@ -283,15 +298,15 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     | OperandKind::EarlyDefGroup(_)
                     | OperandKind::NonAllocatable => {
                         bail!(
-                            "{inst} {operand} -> {target_operand}: Reuse operand target must be a \
-                             Use"
+                            "{source} {operand} -> {target_operand}: Reuse operand target must be \
+                             a Use"
                         );
                     }
                 };
                 ensure!(
                     matches!(target_operand.constraint(), OperandConstraint::Class(_)),
-                    "{inst} {operand} -> {target_operand}: Reuse operand target must have a Class \
-                     constraint"
+                    "{source} {operand} -> {target_operand}: Reuse operand target must have a \
+                     Class constraint"
                 );
 
                 // Ensure both source and target have the same group width.
@@ -302,8 +317,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             == self.func.value_group_members(target_group).len() => {}
                     _ => {
                         bail!(
-                            "{inst} {operand} -> {target_operand}: Tied operands must either both \
-                             be values or both be groups of the same size"
+                            "{source} {operand} -> {target_operand}: Tied operands must either \
+                             both be values or both be groups of the same size"
                         );
                     }
                 }
@@ -318,7 +333,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     let source_bank = self.func.value_bank(source_value);
                     ensure!(
                         source_bank == target_bank,
-                        "{inst}: Tied operand with different register banks: {operand} \
+                        "{source}: Tied operand with different register banks: {operand} \
                          ({source_bank}) vs {target_operand} ({target_bank})"
                     );
                 }
@@ -340,16 +355,17 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             "{inst}: Too many operands: {} (max: {MAX_INST_OPERANDS})",
             operands.len(),
         );
+        let source = ConstraintSource::Inst(inst);
         for &op in operands {
             match op.kind() {
                 OperandKind::Def(value) | OperandKind::EarlyDef(value) => {
                     self.check_entity(Entity::Value(value))?;
                     self.check_value_def(value, ValueDef::Inst(block, inst))?;
-                    self.check_constraint(inst, operands, op, ValueOrGroup::Value(value))?;
+                    self.check_constraint(source, operands, op, ValueOrGroup::Value(value))?;
                 }
                 OperandKind::Use(value) => {
                     self.check_entity(Entity::Value(value))?;
-                    self.check_constraint(inst, operands, op, ValueOrGroup::Value(value))?;
+                    self.check_constraint(source, operands, op, ValueOrGroup::Value(value))?;
                 }
                 OperandKind::DefGroup(group) | OperandKind::EarlyDefGroup(group) => {
                     self.check_entity(Entity::ValueGroup(group))?;
@@ -357,14 +373,14 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         self.check_entity(Entity::Value(value))?;
                         self.check_value_def(value, ValueDef::Inst(block, inst))?;
                     }
-                    self.check_constraint(inst, operands, op, ValueOrGroup::Group(group))?;
+                    self.check_constraint(source, operands, op, ValueOrGroup::Group(group))?;
                 }
                 OperandKind::UseGroup(group) => {
                     self.check_entity(Entity::ValueGroup(group))?;
                     for &value in self.func.value_group_members(group) {
                         self.check_entity(Entity::Value(value))?;
                     }
-                    self.check_constraint(inst, operands, op, ValueOrGroup::Group(group))?;
+                    self.check_constraint(source, operands, op, ValueOrGroup::Group(group))?;
                 }
                 OperandKind::NonAllocatable => match op.constraint() {
                     OperandConstraint::Fixed(reg) => {
@@ -647,7 +663,56 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         Ok(())
     }
 
-    fn check_value(&self, value: Value) -> Result<()> {
+    /// Check dominance constraints on an indirect-rematerialization input.
+    fn check_indirect_remat_input_value(
+        &self,
+        value: Value,
+        input_idx: usize,
+        value_or_group: ValueOrGroup,
+    ) -> Result<()> {
+        let Some(value_def) = self.value_defs[value] else {
+            bail!("{value} is indirectly rematerializable but is not defined");
+        };
+        for &input_value in value_or_group.members(self.func) {
+            ensure!(
+                input_value != value,
+                "{value} cannot indirectly rematerialize itself as input {input_idx}"
+            );
+            let Some(input_def) = self.value_defs[input_value] else {
+                bail!("{input_value} used by indirect remat of {value} without being defined");
+            };
+            let dominates = match value_def {
+                ValueDef::Blockparam(value_block) => match input_def {
+                    ValueDef::Blockparam(input_block) => {
+                        self.domtree.dominates(input_block, value_block)
+                    }
+                    ValueDef::Inst(input_block, _) => {
+                        input_block != value_block
+                            && self.domtree.dominates(input_block, value_block)
+                    }
+                },
+                ValueDef::Inst(value_block, value_inst) => match input_def {
+                    ValueDef::Blockparam(input_block) => {
+                        self.domtree.dominates(input_block, value_block)
+                    }
+                    ValueDef::Inst(input_block, input_inst) => {
+                        if input_block == value_block {
+                            input_inst < value_inst
+                        } else {
+                            self.domtree.dominates(input_block, value_block)
+                        }
+                    }
+                },
+            };
+            ensure!(
+                dominates,
+                "{input_value} does not dominate indirect remat value {value}"
+            );
+        }
+        Ok(())
+    }
+
+    fn check_value(&mut self, value: Value) -> Result<()> {
         let value_bank = self.func.value_bank(value);
         ensure!(
             !self
@@ -659,26 +724,101 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         if let Some((_cost, class)) = self.func.can_rematerialize(value) {
             ensure!(
                 self.reginfo.class_group_size(class) == 1,
-                "{value} cannot be rematerialized with group register class {class}"
+                "{value} direct remat target: Value used with group register class"
             );
             let bank = self.reginfo.bank_for_class(class);
             ensure!(
                 bank == value_bank,
-                "{value} cannot be rematerialized with different register banks: {bank} vs \
-                     {value_bank}"
+                "{value} direct remat target: {value} used with different register banks: {bank} \
+                 vs {value_bank}"
             );
-
             ensure!(
                 !self.reginfo.allocation_order(class).is_empty(),
-                "{value} cannot be rematerialized into {class} which has an empty allocation \
-                     order"
+                "{value} direct remat target uses register class {class} with an empty allocation \
+                 order"
             );
             for reg in self.reginfo.class_members(class) {
                 ensure!(
                     self.reginfo.class_includes_spillslots(class) || !self.reginfo.is_memory(reg),
-                    "{value} cannot be rematerialized into {class} which has in-memory \
-                         members but doesn't include spill slots"
+                    "{value} direct remat target uses register class {class} which has in-memory \
+                     members but doesn't include spill slots"
                 );
+            }
+        }
+        if let Some(remat) = self.func.can_indirectly_rematerialize(value) {
+            ensure!(
+                !remat.inputs.is_empty(),
+                "{value} cannot have indirect rematerialization with no inputs"
+            );
+            ensure!(
+                remat.inputs.len() <= MAX_INST_OPERANDS,
+                "{value} indirect remat has too many inputs: {} (max: {MAX_INST_OPERANDS})",
+                remat.inputs.len(),
+            );
+            ensure!(
+                !remat
+                    .inputs
+                    .iter()
+                    .all(|op| matches!(op.kind(), OperandKind::NonAllocatable)),
+                "{value} cannot have indirect rematerialization with only NonAllocatable inputs"
+            );
+
+            self.early_fixed.clear();
+            self.late_fixed.clear();
+            self.reuse_targets.clear();
+            let source = ConstraintSource::Remat(value);
+            let dest = match remat.constraint {
+                OperandConstraint::Reuse(_) => {
+                    Operand::new(OperandKind::EarlyDef(value), remat.constraint)
+                }
+                OperandConstraint::Class(_) | OperandConstraint::Fixed(_) => {
+                    let kind = if remat.allow_destination_overlap {
+                        OperandKind::Def(value)
+                    } else {
+                        OperandKind::EarlyDef(value)
+                    };
+                    Operand::new(kind, remat.constraint)
+                }
+            };
+            self.check_constraint(source, remat.inputs, dest, ValueOrGroup::Value(value))?;
+            for (idx, &input) in remat.inputs.iter().enumerate() {
+                match input.kind() {
+                    OperandKind::Use(input_value) => {
+                        self.check_entity(Entity::Value(input_value))?;
+                        let value_or_group = ValueOrGroup::Value(input_value);
+                        self.check_constraint(source, remat.inputs, input, value_or_group)?;
+                        self.check_indirect_remat_input_value(value, idx, value_or_group)?;
+                    }
+                    OperandKind::UseGroup(group) => {
+                        self.check_entity(Entity::ValueGroup(group))?;
+                        for &input_value in self.func.value_group_members(group) {
+                            self.check_entity(Entity::Value(input_value))?;
+                        }
+                        let value_or_group = ValueOrGroup::Group(group);
+                        self.check_constraint(source, remat.inputs, input, value_or_group)?;
+                        self.check_indirect_remat_input_value(value, idx, value_or_group)?;
+                    }
+                    OperandKind::NonAllocatable => match input.constraint() {
+                        OperandConstraint::Fixed(reg) => {
+                            ensure!(
+                                self.reginfo.bank_for_reg(reg).is_none(),
+                                "{source} {input}: NonAllocatable register must be outside a bank"
+                            );
+                        }
+                        OperandConstraint::Class(_) | OperandConstraint::Reuse(_) => {
+                            bail!(
+                                "{source} {input}: NonAllocatable operand must have a Fixed \
+                                 constraint"
+                            )
+                        }
+                    },
+                    OperandKind::Def(_)
+                    | OperandKind::EarlyDef(_)
+                    | OperandKind::DefGroup(_)
+                    | OperandKind::EarlyDefGroup(_) => {
+                        bail!("{source} {input}: remat input cannot be def operand");
+                    }
+                }
             }
         }
         Ok(())

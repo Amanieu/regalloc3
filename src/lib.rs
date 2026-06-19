@@ -54,7 +54,7 @@
 //! impossible constraints on an instruction.
 
 #![no_std]
-#![warn(rust_2018_idioms, missing_docs)]
+#![warn(rust_2018_idioms, missing_docs, rustdoc::broken_intra_doc_links)]
 #![allow(
     clippy::too_many_arguments,
     clippy::collapsible_if,
@@ -382,6 +382,25 @@ pub struct Options {
     /// for most cases.
     #[cfg_attr(feature = "clap", clap(long, default_value = "200"))]
     pub spill_weight_adjust: u32,
+
+    /// Scale applied to the spill cost of directly rematerializable target
+    /// values with [`RematCost::CheaperThanMove`].
+    ///
+    /// [`RematCost::CheaperThanMove`]: crate::function::RematCost::CheaperThanMove
+    #[cfg_attr(feature = "clap", clap(long, default_value = "0.2"))]
+    pub direct_remat_cheaper_than_move_cost_scale: f32,
+
+    /// Scale applied to the spill cost of directly rematerializable target
+    /// values with [`RematCost::CheaperThanLoad`].
+    ///
+    /// [`RematCost::CheaperThanLoad`]: crate::function::RematCost::CheaperThanLoad
+    #[cfg_attr(feature = "clap", clap(long, default_value = "0.25"))]
+    pub direct_remat_cheaper_than_load_cost_scale: f32,
+
+    /// Scale applied to the spill cost of indirectly rematerializable target
+    /// values.
+    #[cfg_attr(feature = "clap", clap(long, default_value = "0.3"))]
+    pub indirect_remat_cost_scale: f32,
 }
 
 #[cfg(feature = "arbitrary")]
@@ -391,6 +410,9 @@ impl<'a> arbitrary::Arbitrary<'a> for Options {
             move_optimization: u.arbitrary()?,
             split_strategy: u.arbitrary()?,
             spill_weight_adjust: u.int_in_range(0..=1000000)?,
+            direct_remat_cheaper_than_move_cost_scale: u.int_in_range(0..=100)? as f32 / 100.0,
+            direct_remat_cheaper_than_load_cost_scale: u.int_in_range(0..=100)? as f32 / 100.0,
+            indirect_remat_cost_scale: u.int_in_range(0..=100)? as f32 / 100.0,
         })
     }
 }
@@ -402,6 +424,9 @@ impl Default for Options {
             move_optimization: MoveOptimizationLevel::Forward,
             split_strategy: SplitStrategy::Linear,
             spill_weight_adjust: 200,
+            direct_remat_cheaper_than_move_cost_scale: 0.2,
+            direct_remat_cheaper_than_load_cost_scale: 0.25,
+            indirect_remat_cost_scale: 0.3,
         }
     }
 }
@@ -550,6 +575,7 @@ pub struct Stats {
     blocks_preprocessed_for_optimizer: usize,
     optimized_stack_use: usize,
     optimized_reload_to_move: usize,
+    optimized_reload_to_indirect_remat: usize,
     optimized_redundant_remat: usize,
     optimized_redundant_move: usize,
     optimized_redundant_spill: usize,

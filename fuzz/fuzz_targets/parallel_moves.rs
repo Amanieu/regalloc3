@@ -10,10 +10,11 @@ use libfuzzer_sys::fuzz_target;
 use regalloc3::debug_utils::{self, GenericRegInfo};
 use regalloc3::entity::{PrimaryMap, SecondaryMap};
 use regalloc3::function::{
-    Block, Function, Inst, InstRange, Operand, RematCost, TerminatorKind, Value, ValueGroup,
+    Block, Function, IndirectRemat, Inst, InstRange, Operand, RematCost, TerminatorKind, Value,
+    ValueGroup,
 };
 use regalloc3::output::{Allocation, AllocationKind, SpillSlot};
-use regalloc3::parallel_moves::ParallelMoves;
+use regalloc3::parallel_moves::{Edit, ParallelMoves};
 use regalloc3::reginfo::{
     MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet, SpillSlotSize,
 };
@@ -316,6 +317,10 @@ impl Function for TestCase {
         self.values[value].remat
     }
 
+    fn can_indirectly_rematerialize(&self, _value: Value) -> Option<IndirectRemat<'_>> {
+        unreachable!()
+    }
+
     fn can_eliminate_dead_inst(&self, _inst: Inst) -> bool {
         unreachable!()
     }
@@ -427,31 +432,18 @@ fuzz_target!(|t: TestCase| {
 
     log::trace!("Generated move sequence:");
     for edit in parallel_moves.edits() {
-        if let Some(from) = edit.from.expand() {
-            log::trace!(
-                "move {} <- {from} ({:?})",
-                edit.to.unwrap(),
-                edit.value.expand()
-            );
-        } else {
-            let value = edit.value.unwrap();
-            log::trace!("remat {} <- {value}", edit.to.unwrap());
-        }
+        log::trace!("{edit}");
     }
 
     // Simulate the execution of the sequential moves.
     log::trace!("Executing sequential moves:");
     for edit in parallel_moves.edits() {
-        if let Some(from) = edit.from.expand() {
-            log::trace!(
-                "move {} <- {from} ({:?})",
-                edit.to.unwrap(),
-                edit.value.expand()
-            );
-            if from.is_memory(&t.reginfo) && edit.to.unwrap().is_memory(&t.reginfo) {
-                panic!("Stack-to-stack move from {from} to {}", edit.to.unwrap());
-            }
-            if let Some(value) = edit.value.expand() {
+        log::trace!("{edit}");
+        match edit {
+            Edit::Move { to, from, value } => {
+                if from.is_memory(&t.reginfo) && to.is_memory(&t.reginfo) {
+                    panic!("Stack-to-stack move from {from} to {to}");
+                }
                 match from.kind() {
                     AllocationKind::PhysReg(reg) => {
                         assert_eq!(t.reginfo.bank_for_reg(reg).unwrap(), t.value_bank(value));
@@ -467,7 +459,7 @@ fuzz_target!(|t: TestCase| {
                         );
                     }
                 }
-                match edit.to.unwrap().kind() {
+                match to.kind() {
                     AllocationKind::PhysReg(reg) => {
                         assert_eq!(t.reginfo.bank_for_reg(reg).unwrap(), t.value_bank(value));
                         t.reginfo
@@ -482,73 +474,63 @@ fuzz_target!(|t: TestCase| {
                         );
                     }
                 }
-            } else {
-                match (from.kind(), edit.to.unwrap().kind()) {
-                    (AllocationKind::PhysReg(_from), AllocationKind::PhysReg(_to)) => {
-                        unreachable!()
-                    }
-                    (AllocationKind::SpillSlot(from), AllocationKind::PhysReg(to)) => {
-                        match spillslot_values[from] {
-                            SpillSlotContents::None => {
-                                for unit in t.reginfo.reg_units(to) {
-                                    unit_values[unit] = None;
-                                }
-                            }
-                            SpillSlotContents::Value(value) => {
-                                for unit in t.reginfo.reg_units(to) {
-                                    unit_values[unit] = Some(value);
-                                }
-                            }
-                            SpillSlotContents::Spill(ref values) => {
-                                for (&value, unit) in values.iter().zip(t.reginfo.reg_units(to)) {
-                                    unit_values[unit] = value;
-                                }
-                            }
-                        }
-                        assert_eq!(
-                            spillslots[from],
-                            t.reginfo
-                                .spillslot_size(t.reginfo.bank_for_reg(to).unwrap())
-                        );
-                    }
-                    (AllocationKind::PhysReg(from), AllocationKind::SpillSlot(to)) => {
-                        let values = t
-                            .reginfo
-                            .reg_units(from)
-                            .map(|unit| unit_values[unit])
-                            .collect();
-                        spillslot_values[to] = SpillSlotContents::Spill(values);
-                        assert_eq!(
-                            spillslots[to],
-                            t.reginfo
-                                .spillslot_size(t.reginfo.bank_for_reg(from).unwrap())
-                        );
-                    }
-                    (AllocationKind::SpillSlot(_from), AllocationKind::SpillSlot(_to)) => {
-                        unreachable!()
-                    }
-                }
             }
-        } else {
-            let value = edit.value.unwrap();
-            log::trace!("remat {} <- {value}", edit.to.unwrap());
-            let Some((_cost, class)) = t.can_rematerialize(value) else {
-                panic!("Can't rematerialize {value}");
-            };
-            match edit.to.unwrap().kind() {
-                AllocationKind::PhysReg(reg) => {
-                    assert!(t.reginfo.class_members(class).contains(reg));
-                    for unit in t.reginfo.reg_units(reg) {
-                        unit_values[unit] = Some(value);
+            Edit::EmergencyReload { to, from } => {
+                match spillslot_values[from] {
+                    SpillSlotContents::None => {
+                        for unit in t.reginfo.reg_units(to) {
+                            unit_values[unit] = None;
+                        }
+                    }
+                    SpillSlotContents::Value(value) => {
+                        for unit in t.reginfo.reg_units(to) {
+                            unit_values[unit] = Some(value);
+                        }
+                    }
+                    SpillSlotContents::Spill(ref values) => {
+                        for (&value, unit) in values.iter().zip(t.reginfo.reg_units(to)) {
+                            unit_values[unit] = value;
+                        }
                     }
                 }
-                AllocationKind::SpillSlot(slot) => {
-                    assert!(t.reginfo.class_includes_spillslots(class));
-                    assert_eq!(
-                        spillslots[slot],
-                        t.reginfo.spillslot_size(t.value_bank(value))
-                    );
-                    spillslot_values[slot] = SpillSlotContents::Value(value);
+                assert_eq!(
+                    spillslots[from],
+                    t.reginfo
+                        .spillslot_size(t.reginfo.bank_for_reg(to).unwrap())
+                );
+            }
+            Edit::EmergencySpill { to, from } => {
+                let values = t
+                    .reginfo
+                    .reg_units(from)
+                    .map(|unit| unit_values[unit])
+                    .collect();
+                spillslot_values[to] = SpillSlotContents::Spill(values);
+                assert_eq!(
+                    spillslots[to],
+                    t.reginfo
+                        .spillslot_size(t.reginfo.bank_for_reg(from).unwrap())
+                );
+            }
+            Edit::Rematerialize { to, value } | Edit::IndirectRematerialize { to, value, .. } => {
+                let Some((_cost, class)) = t.can_rematerialize(value) else {
+                    panic!("Can't rematerialize {value}");
+                };
+                match to.kind() {
+                    AllocationKind::PhysReg(reg) => {
+                        assert!(t.reginfo.class_members(class).contains(reg));
+                        for unit in t.reginfo.reg_units(reg) {
+                            unit_values[unit] = Some(value);
+                        }
+                    }
+                    AllocationKind::SpillSlot(slot) => {
+                        assert!(t.reginfo.class_includes_spillslots(class));
+                        assert_eq!(
+                            spillslots[slot],
+                            t.reginfo.spillslot_size(t.value_bank(value))
+                        );
+                        spillslot_values[slot] = SpillSlotContents::Value(value);
+                    }
                 }
             }
         }

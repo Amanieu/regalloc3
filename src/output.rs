@@ -332,7 +332,7 @@ impl StackLayout {
 /// Iterator over the [`OutputInst`] of a block after register allocation.
 pub struct OutputIter<'a> {
     insts: InstRange,
-    edits: &'a [(Inst, Edit)],
+    edits: &'a [(Inst, Option<Edit>)],
     regalloc: &'a RegisterAllocator,
 }
 
@@ -352,20 +352,34 @@ impl<'a> Iterator for OutputIter<'a> {
                 self.edits = rest;
 
                 // Skip edits that have been optimized away.
-                let Some(to) = edit.to.expand() else {
+                let Some(edit) = edit else {
                     continue;
                 };
 
-                return Some(match edit.from.expand() {
-                    Some(from) => OutputInst::Move {
+                return Some(match edit {
+                    Edit::Move { to, from, value } => OutputInst::Move {
                         from,
                         to,
-                        value: edit.value.expand(),
+                        value: Some(value),
                     },
-                    None => OutputInst::Rematerialize {
-                        to,
-                        value: edit.value.expect("remat without value"),
+                    Edit::EmergencySpill { to, from } => OutputInst::Move {
+                        from: Allocation::reg(from),
+                        to: Allocation::spillslot(to),
+                        value: None,
                     },
+                    Edit::EmergencyReload { to, from } => OutputInst::Move {
+                        from: Allocation::spillslot(from),
+                        to: Allocation::reg(to),
+                        value: None,
+                    },
+                    Edit::Rematerialize { to, value } => OutputInst::Rematerialize { to, value },
+                    Edit::IndirectRematerialize { to, value, inputs } => {
+                        OutputInst::IndirectRematerialize {
+                            to,
+                            value,
+                            inputs: inputs.as_slice(&self.regalloc.allocations.remat_inputs),
+                        }
+                    }
                 });
             }
 
@@ -409,6 +423,20 @@ pub enum OutputInst<'a> {
 
         /// Destination into which the rematerialized value should be wrriten.
         to: Allocation,
+    },
+
+    /// A value which should be indirectly re-materialized from other
+    /// allocatable values.
+    IndirectRematerialize {
+        /// Value being rematerialized.
+        value: Value,
+
+        /// Destination into which the rematerialized value should be wrriten.
+        to: Allocation,
+
+        /// Input allocations, in the same order as the inputs from
+        /// [`IndirectRemat`](crate::function::IndirectRemat).
+        inputs: &'a [Allocation],
     },
 
     /// A move instruction inserted by the register allocator.

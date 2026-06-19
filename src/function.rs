@@ -519,7 +519,8 @@ impl fmt::Display for Operand {
     }
 }
 
-/// Information about the cost of rematerializing a value into a register.
+/// Information about the cost of directly rematerializing a value into a
+/// register.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RematCost {
@@ -531,6 +532,32 @@ pub enum RematCost {
     /// memory load. It should only be performed if doing so avoids a memory
     /// access instrution.
     CheaperThanLoad,
+}
+
+/// Description of an indirect rematerialization recipe for a value.
+///
+/// Unlike direct rematerialization, this recomputes the value by reading other
+/// values or fixed non-allocatable registers.
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct IndirectRemat<'a> {
+    /// Constraint required for the rematerialization destination.
+    ///
+    /// If this is [`OperandConstraint::Reuse`], then the index refers to a
+    /// scalar [`OperandKind::Use`] entry in [`IndirectRemat::inputs`].
+    pub constraint: OperandConstraint,
+
+    /// Operands read by the rematerialization instruction.
+    ///
+    /// Input operands must be [`OperandKind::Use`], [`OperandKind::UseGroup`]
+    /// or [`OperandKind::NonAllocatable`], and otherwise follow the normal
+    /// rules for operands.
+    pub inputs: &'a [Operand],
+
+    /// Whether the destination allocation may overlap with any input
+    /// allocation, except for overlaps explicitly requested with
+    /// [`OperandConstraint::Reuse`].
+    pub allow_destination_overlap: bool,
 }
 
 /// Type of terminator instruction at the end of a basic block.
@@ -762,6 +789,18 @@ pub trait Function {
     ///
     /// [`RegInfo::is_memory`]: super::reginfo::RegInfo::is_memory
     fn can_rematerialize(&self, value: Value) -> Option<(RematCost, RegClass)>;
+
+    /// Whether a [`Value`] can be indirectly rematerialized from other values.
+    ///
+    /// The returned descriptor describes which operands need to be available
+    /// and which constraints their allocations must satisfy.
+    ///
+    /// It is possible for the same value to be both directly and indirectly
+    /// rematerializable. For example, a constant value that requires several
+    /// instructions to rematerialize could be either directly rematerialized
+    /// by emitting all of these instructions, or indirectly rematerialized by
+    /// reusing an intermediate value that is already in a register.
+    fn can_indirectly_rematerialize(&self, value: Value) -> Option<IndirectRemat<'_>>;
 
     /// If all the outputs of an instruction are dead (never used), can the
     /// instruction be removed (i.e. it has no side effects apart from its
