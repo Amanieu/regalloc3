@@ -4,12 +4,14 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::Reverse;
 
+use super::allocations::Allocations;
 use super::coalescing::Coalescing;
 use super::live_range::{LiveRangeSegment, Slot, ValueSegment};
+use super::move_resolver::{Edit, MoveResolver};
 use super::value_live_ranges::ValueSet;
-use crate::entity::{PrimaryMap, SecondaryMap};
+use crate::entity::{EntitySet, PrimaryMap, SecondaryMap};
 use crate::function::{Function, Inst, Value};
-use crate::output::{SpillSlot, StackLayout};
+use crate::output::{Allocation, AllocationKind, SpillSlot, StackLayout};
 use crate::reginfo::SpillSlotSize;
 use crate::{RegAllocError, Stats};
 
@@ -46,8 +48,8 @@ pub struct SpillAllocator {
     /// Stack frame layout.
     pub stack_layout: StackLayout,
 
-    // Everything below this point is temporary storage used in the linear scan
-    // allocation algorithm.
+    // Everything below this point is temporary storage used in the spillslot
+    // allocation and layout algorithms.
     //
     /// List of `ValueSet` for which a spill slot needs to be allocated. This is
     /// grouped by spill slot size, and within each group the value sets are
@@ -61,6 +63,12 @@ pub struct SpillAllocator {
     /// Set of `SpillSlot`s that are free for allocation at this point in the
     /// scan.
     available_slots: Vec<SpillSlot>,
+
+    /// Active spill slots and their sizes while assigning final stack offsets.
+    final_slots: Vec<(SpillSlot, SpillSlotSize)>,
+
+    /// Scratch set of spill slots still referenced after optimization.
+    used_spillslots: EntitySet<SpillSlot>,
 }
 
 impl SpillAllocator {
@@ -75,6 +83,8 @@ impl SpillAllocator {
             sets_to_allocate: vec![],
             active_sets: vec![],
             available_slots: vec![],
+            final_slots: vec![],
+            used_spillslots: EntitySet::new(),
         }
     }
 
@@ -144,20 +154,13 @@ impl SpillAllocator {
         self.sets[set].spilled.then_some(self.sets[set].slot)
     }
 
-    /// Allocates a `SpillSlot` of the given size after stack allocation has
-    /// already finished.
+    /// Allocates a logical `SpillSlot` of the given size after regular spill
+    /// slot allocation has already finished.
     ///
     /// This is used in the move resolver when a scratch register is needed but
     /// none is available.
     pub fn alloc_emergency_spillslot(&mut self, size: SpillSlotSize) -> SpillSlot {
-        // Ensure the new slot is properly aligned.
-        self.stack_layout.spillslot_area_size += size.bytes() - 1;
-        self.stack_layout.spillslot_area_size &= !(size.bytes() - 1);
-
-        // Allocate a new slot.
-        let offset = self.stack_layout.spillslot_area_size;
-        self.stack_layout.spillslot_area_size += size.bytes();
-        self.stack_layout.slots.push((offset, size))
+        self.stack_layout.slots.push(Some((0, size)))
     }
 
     /// Assigns a `SpillSlot` to each `ValueSet` that has segments spilled into
@@ -171,7 +174,6 @@ impl SpillAllocator {
     /// registers though since spill slots are effectively unlimited.
     pub fn allocate(&mut self, stats: &mut Stats) -> Result<(), RegAllocError> {
         self.stack_layout.slots.clear();
-        self.stack_layout.spillslot_area_size = 0;
         self.active_sets.clear();
         self.available_slots.clear();
 
@@ -182,10 +184,7 @@ impl SpillAllocator {
         stat!(stats, spilled_sets, self.sets_to_allocate.len());
         stat!(stats, spill_segments, self.spilled_segments.len());
         self.sets_to_allocate.sort_unstable_by_key(|&set| {
-            (
-                Reverse(self.sets[set].size),
-                self.sets[set].live_range_union.from,
-            )
+            (self.sets[set].size, self.sets[set].live_range_union.from)
         });
 
         for &set in &self.sets_to_allocate {
@@ -221,32 +220,108 @@ impl SpillAllocator {
             // Assign the set to an available slot or allocate a new slot.
             let slot = match self.available_slots.pop() {
                 Some(slot) => slot,
-                None => {
-                    let slot = self
-                        .stack_layout
-                        .slots
-                        .push((self.stack_layout.spillslot_area_size, current_size));
-
-                    // This is guaranteed to be properly aligned because we start
-                    // allocating from larger sizes first, and all sizes are
-                    // powers of 2.
-                    debug_assert_eq!(
-                        self.stack_layout.spillslot_area_size % current_size.bytes(),
-                        0
-                    );
-                    self.stack_layout.spillslot_area_size = self
-                        .stack_layout
-                        .spillslot_area_size
-                        .checked_add(current_size.bytes())
-                        .ok_or(RegAllocError::FunctionTooBig)?;
-                    slot
-                }
+                None => self.stack_layout.slots.push(Some((0, current_size))),
             };
             self.sets[set].slot = slot;
             trace!("Assigned {set} to {slot}");
             self.active_sets.push(set);
         }
-        stat!(stats, spillslots, self.stack_layout.slots.len());
+
+        stat!(stats, initial_spillslots, self.stack_layout.slots.len());
+        Ok(())
+    }
+
+    /// Removes spill slots that are no longer referenced after optimization.
+    fn collect_used_spillslots(&mut self, move_resolver: &MoveResolver, allocations: &Allocations) {
+        self.used_spillslots
+            .clear_and_resize(self.stack_layout.slots.len());
+
+        let mut mark_used_allocation = |alloc: Allocation| {
+            if let AllocationKind::SpillSlot(slot) = alloc.kind() {
+                self.used_spillslots.insert(slot);
+            }
+        };
+
+        for &alloc in allocations.allocations() {
+            mark_used_allocation(alloc);
+        }
+
+        for &(_, edit) in move_resolver.edits() {
+            let Some(edit) = edit else {
+                continue;
+            };
+            match edit {
+                Edit::Move { to, from, .. } => {
+                    mark_used_allocation(to);
+                    mark_used_allocation(from);
+                }
+                Edit::EmergencySpill { to, .. } => {
+                    mark_used_allocation(Allocation::spillslot(to));
+                }
+                Edit::EmergencyReload { from, .. } => {
+                    mark_used_allocation(Allocation::spillslot(from));
+                }
+                Edit::Rematerialize { to, .. } => {
+                    mark_used_allocation(to);
+                }
+                Edit::IndirectRematerialize { to, inputs, .. } => {
+                    mark_used_allocation(to);
+                    for &input in inputs.as_slice(&allocations.remat_inputs) {
+                        mark_used_allocation(input);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Assigns final stack offsets to all active spill slots.
+    pub fn finalize_stack_layout(
+        &mut self,
+        move_resolver: &MoveResolver,
+        allocations: &Allocations,
+        stats: &mut Stats,
+    ) -> Result<(), RegAllocError> {
+        self.stack_layout.spillslot_area_size = 0;
+
+        // Collect the set of spillslots that are used in the function. Some
+        // spillslots may end up unused due to move optimization.
+        self.collect_used_spillslots(move_resolver, allocations);
+
+        // Process spill slots from largest to smallest.
+        self.final_slots.clear();
+        self.final_slots.extend(
+            self.stack_layout
+                .slots
+                .iter_mut()
+                .filter_map(|(slot, layout)| {
+                    // Remove any unused spillslots from the layout.
+                    if self.used_spillslots.contains(slot) {
+                        Some((slot, layout.unwrap().1))
+                    } else {
+                        *layout = None;
+                        None
+                    }
+                }),
+        );
+        self.final_slots
+            .sort_unstable_by_key(|&(_slot, size)| Reverse(size));
+
+        for &(slot, size) in &self.final_slots {
+            // This is guaranteed to be properly aligned because we start
+            // allocating from larger sizes first, and all sizes are
+            // powers of 2.
+            debug_assert_eq!(self.stack_layout.spillslot_area_size % size.bytes(), 0);
+
+            let offset = self.stack_layout.spillslot_area_size;
+            self.stack_layout.spillslot_area_size = self
+                .stack_layout
+                .spillslot_area_size
+                .checked_add(size.bytes())
+                .ok_or(RegAllocError::FunctionTooBig)?;
+            self.stack_layout.slots[slot] = Some((offset, size));
+        }
+
+        stat!(stats, final_spillslots, self.final_slots.len());
         stat!(
             stats,
             spill_area_size,

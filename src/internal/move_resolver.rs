@@ -536,10 +536,21 @@ impl MoveResolver {
         &self.edits[idx..]
     }
 
+    /// Returns the full list of edits.
+    pub fn edits(&self) -> &[(Inst, Option<Edit>)] {
+        &self.edits
+    }
+
     /// Returns the mutable list of edits starting from the given instruction.
     pub fn edits_from_mut(&mut self, inst: Inst) -> &mut [(Inst, Option<Edit>)] {
         let idx = self.edits.partition_point(|&(pos, _)| pos < inst);
         &mut self.edits[idx..]
+    }
+
+    /// Returns the mutable list of edits ending at the given instruction.
+    pub fn edits_to_mut(&mut self, inst: Inst) -> &mut [(Inst, Option<Edit>)] {
+        let idx = self.edits.partition_point(|&(pos, _)| pos < inst);
+        &mut self.edits[..idx]
     }
 
     /// Returns the locations for block parameter values at the start of a

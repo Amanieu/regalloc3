@@ -471,9 +471,9 @@ impl<F: Function, R: RegInfo> fmt::Display for Output<'_, F, R> {
         let spillslot_area_size = self.stack_layout().spillslot_area_size();
         writeln!(f, "spillslot_area_size = {spillslot_area_size}")?;
         for slot in self.stack_layout().spillslots() {
-            let offset = self.stack_layout().spillslot_offset(slot);
-            let size = self.stack_layout().spillslot_size(slot);
-            writeln!(f, "{slot}: offset={offset} size={size}")?;
+            if let Some((offset, size)) = self.stack_layout().spillslot_layout(slot) {
+                writeln!(f, "{slot}: offset={offset} size={size}")?;
+            }
         }
 
         // Blocks

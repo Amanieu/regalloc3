@@ -217,8 +217,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     fn check_stack(&self) -> Result<()> {
         let stack_layout = self.output.stack_layout();
         for slot in stack_layout.spillslots() {
-            let size = stack_layout.spillslot_size(slot);
-            let offset = stack_layout.spillslot_offset(slot);
+            let Some((offset, size)) = stack_layout.spillslot_layout(slot) else {
+                continue;
+            };
             ensure!(
                 offset.is_multiple_of(size.bytes()),
                 "{slot} offset {offset} is not aligned to size {size}"
@@ -496,12 +497,16 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 !self.output.reginfo().is_memory(reg),
                                 "Stack to stack move between {from} and {to}"
                             );
+                            let Some((_offset, spillslot_size)) =
+                                self.output.stack_layout().spillslot_layout(slot)
+                            else {
+                                bail!("{slot} has no stack layout");
+                            };
                             ensure!(
-                                reginfo.spillslot_size(bank)
-                                    == self.output.stack_layout().spillslot_size(slot),
+                                reginfo.spillslot_size(bank) == spillslot_size,
                                 "{slot} has wrong size for {bank}: expected {}, got {}",
                                 reginfo.spillslot_size(bank),
-                                self.output.stack_layout().spillslot_size(slot)
+                                spillslot_size
                             );
                             match to.kind() {
                                 AllocationKind::PhysReg(_) => {
@@ -582,11 +587,16 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 "{bank} doesn't contain {reg}"
             ),
             AllocationKind::SpillSlot(slot) => {
+                let Some((_offset, spillslot_size)) =
+                    self.output.stack_layout().spillslot_layout(slot)
+                else {
+                    bail!("{slot} has no stack layout");
+                };
                 ensure!(
-                    reginfo.spillslot_size(bank) == self.output.stack_layout().spillslot_size(slot),
+                    reginfo.spillslot_size(bank) == spillslot_size,
                     "{slot} has wrong size for {bank}: expected {}, got {}",
                     reginfo.spillslot_size(bank),
-                    self.output.stack_layout().spillslot_size(slot)
+                    spillslot_size
                 );
             }
         }
@@ -675,11 +685,16 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     "{class} doesn't allow spillslots"
                 );
                 let bank = reginfo.bank_for_class(class);
+                let Some((_offset, spillslot_size)) =
+                    self.output.stack_layout().spillslot_layout(slot)
+                else {
+                    bail!("{slot} has no stack layout");
+                };
                 ensure!(
-                    reginfo.spillslot_size(bank) == self.output.stack_layout().spillslot_size(slot),
+                    reginfo.spillslot_size(bank) == spillslot_size,
                     "{slot} has wrong size for {bank}: expected {}, got {}",
                     reginfo.spillslot_size(bank),
-                    self.output.stack_layout().spillslot_size(slot)
+                    spillslot_size
                 );
             }
         }

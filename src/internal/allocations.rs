@@ -82,6 +82,11 @@ impl Allocations {
         &mut self.allocations[start..end]
     }
 
+    /// Returns all operand allocations in the function.
+    pub fn allocations(&self) -> &[Allocation] {
+        &self.allocations
+    }
+
     /// Asserts that all allocations have been assigned.
     pub fn assert_all_assigned(&self) {
         self.allocations

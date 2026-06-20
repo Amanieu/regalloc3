@@ -13,7 +13,7 @@ use crate::function::{
     Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost,
     TerminatorKind, Value,
 };
-use crate::reginfo::{PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet, MAX_REG_UNITS};
+use crate::reginfo::{MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet};
 
 /// Configuration options for [`GenericFunction::arbitrary_with_config`].
 ///

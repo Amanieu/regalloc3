@@ -279,10 +279,13 @@ where
     }
 }
 
-/// Positions of all the spill slots in the stack frame.
+/// Positions of spill slots in the stack frame.
 pub struct StackLayout {
-    /// Size and offset of each spill slot.
-    pub(crate) slots: PrimaryMap<SpillSlot, (u32, SpillSlotSize)>,
+    /// Size and offset of each logical spill slot.
+    ///
+    /// Spill slots with `None` have been optimized away and don't take up space
+    /// in the spill area.
+    pub(crate) slots: PrimaryMap<SpillSlot, Option<(u32, SpillSlotSize)>>,
 
     /// Total size of the spill area.
     pub(crate) spillslot_area_size: u32,
@@ -303,22 +306,18 @@ impl StackLayout {
         self.slots.keys()
     }
 
-    /// Returns the offset of a spill slot in the spill area.
+    /// Returns the offset and size of a spill slot in the spill area.
+    ///
+    /// `None` is returned for spill slots that have been optimized away because
+    /// they are never read from in the final code.
     #[inline]
     #[must_use]
-    pub fn spillslot_offset(&self, slot: SpillSlot) -> u32 {
-        self.slots[slot].0
+    pub fn spillslot_layout(&self, slot: SpillSlot) -> Option<(u32, SpillSlotSize)> {
+        self.slots[slot]
     }
 
-    /// Returns the size of a spill slot.
-    #[inline]
-    #[must_use]
-    pub fn spillslot_size(&self, slot: SpillSlot) -> SpillSlotSize {
-        self.slots[slot].1
-    }
-
-    /// Returns the amount of space on the stack needed for all allocated
-    /// spill slots.
+    /// Returns the amount of space on the stack needed for all active spill
+    /// slots.
     ///
     /// Each spill slot used by the allocator encodes an offset from the start
     /// of this spill area.

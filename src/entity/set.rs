@@ -15,13 +15,31 @@ type SignedWord = isize;
 ///
 /// This is conceptually equivalent to a `HashSet<K>` or a `SecondaryMap<K, bool>`
 /// but is encoded much more efficiently as a bit vector.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash)]
 pub struct EntitySet<T>
 where
     T: EntityRef,
 {
     storage: Vec<Word>,
     marker: PhantomData<T>,
+}
+
+impl<T> Clone for EntitySet<T>
+where
+    T: EntityRef,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            storage: self.storage.clone(),
+            marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    fn clone_from(&mut self, source: &Self) {
+        self.storage.clone_from(&source.storage);
+    }
 }
 
 impl<T> EntitySet<T>
@@ -85,6 +103,25 @@ where
     pub fn remove(&mut self, entity: T) {
         let (idx, bit) = Self::index(entity);
         self.storage[idx] &= !(1 << bit);
+    }
+
+    /// Adds all elements from `other` to this set.
+    ///
+    /// Returns whether this changed the set.
+    ///
+    /// This set must already be large enough to hold all elements in `other`.
+    #[inline]
+    #[track_caller]
+    pub fn union(&mut self, other: &Self) -> bool {
+        debug_assert!(self.storage.len() >= other.storage.len());
+
+        let mut changed = false;
+        for (word, &other_word) in self.storage.iter_mut().zip(&other.storage) {
+            let old_word = *word;
+            *word |= other_word;
+            changed |= *word != old_word;
+        }
+        changed
     }
 
     /// Removes all elements from the set and resizes it to be large enough to
