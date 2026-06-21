@@ -318,7 +318,7 @@ impl fmt::Display for OperandConstraint {
 /// instruction: the associated SSA value, how it is used by the instruction
 /// (read, write), and any constraints on the `Allocation` that will be
 /// selected for the operand.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 // Packing so that the overall size is 6 bytes instead of 8.
 #[repr(Rust, packed(2))]
@@ -520,7 +520,7 @@ impl fmt::Display for Operand {
 }
 
 /// Information about the cost of rematerializing a value into a register.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RematCost {
     /// Rematerialization is cheaper than a register-register move and should
@@ -534,7 +534,7 @@ pub enum RematCost {
 }
 
 /// Type of terminator instruction at the end of a basic block.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TerminatorKind {
     /// Blocks that end with a `Branch` terminator have one or more successor

@@ -75,7 +75,7 @@ pub enum AllocationKind {
 }
 
 /// An `Allocation` represents the end result of regalloc for an `Operand`.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Allocation {
     /// Bit-pack in 32 bits.

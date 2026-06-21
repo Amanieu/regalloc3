@@ -394,7 +394,7 @@ impl fmt::Display for StateTracker {
                 alloc_values.push((Allocation::reg(reg), value));
             }
         }
-        alloc_values.sort_unstable_by_key(|&(alloc, _)| alloc);
+        alloc_values.sort_unstable_by_key(|&(alloc, _)| alloc.kind());
         for &(alloc, value) in &alloc_values {
             write!(f, "{alloc}({value}) ")?;
         }
@@ -402,7 +402,7 @@ impl fmt::Display for StateTracker {
         for &(slot, value) in &self.spillslot_values {
             alloc_values.push((Allocation::spillslot(slot), value));
         }
-        alloc_values.sort_unstable_by_key(|&(alloc, _)| alloc);
+        alloc_values.sort_unstable_by_key(|&(alloc, _)| alloc.kind());
         for &(alloc, value) in &alloc_values {
             write!(f, "{alloc}({value}) ")?;
         }
