@@ -391,7 +391,7 @@ pub enum SplitStrategy {
 #[non_exhaustive]
 pub struct Options {
     /// Controls how moves are optimized after register allocation.
-    #[cfg_attr(feature = "clap", clap(long, default_value = "forward"))]
+    #[cfg_attr(feature = "clap", clap(long, default_value = "global"))]
     pub move_optimization: MoveOptimizationLevel,
 
     /// Enable elimination of spills whose destination is never read.
@@ -455,7 +455,7 @@ impl Default for Options {
     #[inline]
     fn default() -> Self {
         Self {
-            move_optimization: MoveOptimizationLevel::Forward,
+            move_optimization: MoveOptimizationLevel::Global,
             dead_spill_elimination: true,
             split_strategy: SplitStrategy::Linear,
             spill_weight_adjust: 200,
