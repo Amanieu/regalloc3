@@ -622,11 +622,15 @@ impl ParallelMoves {
 
         // Handle cases where rematerialization is always better than a move.
         if let Some((cost, class)) = func.can_rematerialize(value) {
-            if cost == RematCost::CheaperThanMove || source.is_memory(reginfo) {
-                let need_scratch = match dest.kind() {
-                    AllocationKind::PhysReg(reg) => !reginfo.class_members(class).contains(reg),
-                    AllocationKind::SpillSlot(_) => !reginfo.class_includes_spillslots(class),
-                };
+            // Rematerialization is profitable if:
+            // - It saves us a load from memory.
+            // - It saves us a move, but only if the remat is cheaper than the
+            //   move and no scratch register is needed.
+            let need_scratch = match dest.kind() {
+                AllocationKind::PhysReg(reg) => !reginfo.class_members(class).contains(reg),
+                AllocationKind::SpillSlot(_) => !reginfo.class_includes_spillslots(class),
+            };
+            if source.is_memory(reginfo) || (cost == RematCost::CheaperThanMove && !need_scratch) {
                 if need_scratch {
                     self.remat_with_scratch.push((value, class, dest));
                 } else {
