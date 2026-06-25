@@ -79,9 +79,7 @@ impl SpillAllocator {
     }
 
     pub fn clear(&mut self, func: &impl Function) {
-        // We don't need to clear self.sets, entries are initialized by
-        // set_range and the uninitialized entries can be ignored.
-        self.sets.grow_to_with(func.num_values(), || {
+        self.sets.clear_and_resize_with(func.num_values(), || {
             let zero_point = Inst::new(0).slot(Slot::Boundary);
             SpillData {
                 size: SpillSlotSize::from_log2_bytes(0),
