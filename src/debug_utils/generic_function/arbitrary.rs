@@ -10,8 +10,8 @@ use crate::debug_utils::generic_function::ValueData;
 use crate::debug_utils::postorder::PostOrder;
 use crate::entity::{PrimaryMap, SecondaryMap};
 use crate::function::{
-    Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost,
-    TerminatorKind, Value,
+    Block, Function, Inst, InstRange, MAX_INST_OPERANDS, Operand, OperandConstraint, OperandKind,
+    RematCost, TerminatorKind, Value,
 };
 use crate::reginfo::{MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet};
 
@@ -429,6 +429,8 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             self.block_insts[block].push(inst);
         }
 
+        self.gen_block_start_defs(block)?;
+
         Ok(())
     }
 
@@ -690,6 +692,52 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         Ok(Operand::new(kind, OperandConstraint::Class(class)))
     }
 
+    /// Generates instructions containing the remaining defs in a block after
+    /// other instructions have been emitted.
+    fn gen_block_start_defs(&mut self, block: Block) -> Result<()> {
+        // We may need to emit multiple instructions due to MAX_INST_OPERANDS.
+        while !self.defs_by_blocks[block].is_empty() {
+            self.early_fixed.clear();
+            self.late_fixed.clear();
+            self.reuse_operands.clear();
+
+            let mut inst = InstData {
+                operands: vec![],
+                clobbers: vec![],
+                block,
+                terminator_kind: None,
+                is_pure: self.u.arbitrary()?,
+            };
+
+            let mut defined_values = vec![];
+            while inst.operands.len() < MAX_INST_OPERANDS {
+                let Some(value) = self.defs_by_blocks[block].pop() else {
+                    break;
+                };
+                let op = self.gen_def(
+                    block,
+                    value,
+                    false,
+                    inst.operands.len(),
+                    &mut defined_values,
+                )?;
+                inst.operands.push(op);
+            }
+
+            if self.domtree.immediate_dominator(block).is_some() {
+                for value in defined_values {
+                    if !self.u.arbitrary()? {
+                        self.add_indirect_remat(value, block, true)?;
+                    }
+                }
+            }
+
+            self.block_insts[block].push(inst);
+        }
+
+        Ok(())
+    }
+
     /// Generates a single instruction in the given block.
     fn gen_inst(&mut self, block: Block, is_first_inst: bool, is_ret: bool) -> Result<InstData> {
         // These are temporary for the scope of this instruction.
@@ -708,6 +756,10 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         // Add operands which define values.
         let mut defined_values = vec![];
         for _ in 0..self.u.int_in_range(self.config.defs_per_inst.clone())? {
+            if inst.operands.len() >= MAX_INST_OPERANDS {
+                break;
+            }
+
             // Generate a value that was previously used, otherwise generate a
             // new dead value.
             let value = if self.u.arbitrary()? && !self.defs_by_blocks[block].is_empty() {
@@ -726,21 +778,6 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             inst.operands.push(op);
         }
 
-        // If this is the first instruction in a block then we need to define
-        // any remaining values to be defined in this block.
-        if is_first_inst {
-            while let Some(value) = self.defs_by_blocks[block].pop() {
-                let op = self.gen_def(
-                    block,
-                    value,
-                    is_ret,
-                    inst.operands.len(),
-                    &mut defined_values,
-                )?;
-                inst.operands.push(op);
-            }
-        }
-
         let can_generate_uses = !is_first_inst || self.domtree.immediate_dominator(block).is_some();
         if can_generate_uses {
             for value in defined_values {
@@ -755,6 +792,9 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         // synthesize a new dominating definition if no reusable value exists.
         if can_generate_uses {
             for _ in 0..self.u.int_in_range(self.config.uses_per_inst.clone())? {
+                if inst.operands.len() >= MAX_INST_OPERANDS {
+                    break;
+                }
                 let op_idx = inst.operands.len();
                 let op = self.gen_use(block, is_first_inst, true, |this| {
                     if this.reuse_operands.is_empty() || this.u.arbitrary()? {
