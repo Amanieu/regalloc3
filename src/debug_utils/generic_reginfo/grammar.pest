@@ -1,0 +1,46 @@
+// Entities
+number    = @{ ASCII_DIGIT+ }
+float     = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+unit      = ${ "unit" ~ number }
+reg       = ${ "r" ~ number }
+reg_group = ${ "rg" ~ number }
+class     = ${ "class" ~ number }
+bank      = ${ "bank" ~ number }
+
+// Register declaration
+reg_location   = { "reg" | "stack" }
+nonallocatable = { "nonallocatable" }
+unit_list      = { unit+ }
+reg_kind       = { nonallocatable | unit_list }
+reg_def        = { reg ~ "=" ~ reg_location ~ reg_kind }
+
+// Register group declaration
+reg_list      = { reg+ }
+reg_group_def = { reg_group ~ "=" ~ reg_list }
+
+// Register class
+reg_group_list                  =  { reg_group+ }
+reg_or_reg_group_list           =  { (reg_list | reg_group_list)? }
+group_size                      =  { "group_size" ~ "=" ~ number }
+class_members                   =  { "members" ~ "=" ~ reg_or_reg_group_list }
+allows_spillslots               =  { "allows_spillslots" }
+spill_cost                      =  { "spill_cost" ~ "=" ~ float }
+allocation_order                =  { "allocation_order" ~ "=" ~ reg_or_reg_group_list }
+class_statement                 = _{ group_size | class_members | allows_spillslots | spill_cost | allocation_order }
+class_list                      =  { class+ }
+superclasses                    =  { ":" ~ class_list }
+class_def                       =  { class ~ superclasses? ~ "{" ~ (class_statement? ~ NEWLINE)* ~ "}" }
+
+// Register bank
+top_level_class      =  { "top_level_class" ~ "=" ~ class }
+stack_to_stack_class =  { "stack_to_stack_class" ~ "=" ~ class }
+spillslot_size       =  { "spillslot_size" ~ "=" ~ number }
+bank_statement       = _{ top_level_class | stack_to_stack_class | spillslot_size | class_def }
+bank_def             =  { bank ~ "{" ~ (bank_statement? ~ NEWLINE)* ~ "}" }
+
+// Top level
+def     = _{ reg_def | reg_group_def | bank_def }
+reginfo = _{ SOI ~ (def? ~ NEWLINE)* ~ def? ~ EOI }
+
+WHITESPACE = _{ " " | "\t" }
+COMMENT    = _{ ";" ~ (!NEWLINE ~ ANY)* }
