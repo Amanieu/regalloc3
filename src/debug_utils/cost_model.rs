@@ -104,6 +104,13 @@ impl CostModel {
                         };
                         score += (remat_cost + move_cost) * freq;
                     }
+                    OutputInst::IndirectRematerialize { to, .. } => {
+                        let move_cost = match to.is_memory(reginfo) {
+                            false => self.move_cost,
+                            true => self.store_cost,
+                        };
+                        score += (self.remat_cost + move_cost) * freq;
+                    }
                     OutputInst::Move { from, to, value: _ } => {
                         let cost = match (from.is_memory(reginfo), to.is_memory(reginfo)) {
                             (false, false) => self.move_cost,

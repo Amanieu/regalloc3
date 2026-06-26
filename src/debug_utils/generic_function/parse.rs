@@ -8,7 +8,7 @@ use pest::iterators::Pair;
 use pest::{Parser, Span};
 use pest_derive::Parser;
 
-use super::{BlockData, GenericFunction, InstData, ValueData};
+use super::{BlockData, GenericFunction, IndirectRematData, InstData, ValueData};
 use crate::debug_utils::dominator_tree::DominatorTree;
 use crate::debug_utils::postorder::PostOrder;
 use crate::entity::{EntityRef, PrimaryMap, SecondaryMap};
@@ -85,10 +85,12 @@ fn parse_entity_list<T: EntityRef>(pair: Pair<'_, Rule>) -> Result<Vec<T>> {
 fn parse_value_declaration(
     pair: Pair<'_, Rule>,
     values: &mut PrimaryMap<Value, ValueData>,
+    groups: &mut PrimaryMap<ValueGroup, Vec<Value>>,
 ) -> Result<()> {
     let span = pair.as_span();
     let mut bank = None;
     let mut remat = None;
+    let mut indirect_remat = None;
     for pair in pair.into_inner() {
         match pair.as_rule() {
             Rule::value => {
@@ -113,13 +115,46 @@ fn parse_value_declaration(
                 let class = parse_entity(class)?;
                 remat = Some((cost, class));
             }
+            Rule::indirect_remat => {
+                if indirect_remat.is_some() {
+                    Err(custom_error(pair.as_span(), "duplicate attribute"))?;
+                }
+
+                let mut inner = pair.into_inner();
+                let constraint = inner.next().unwrap();
+                assert_eq!(constraint.as_rule(), Rule::constraint);
+                let constraint = parse_constraint(constraint)?;
+
+                let mut inputs = inner.next().unwrap();
+                let allow_destination_overlap = inputs.as_rule() != Rule::indirect_remat_no_overlap;
+                if !allow_destination_overlap {
+                    inputs = inner.next().unwrap();
+                };
+
+                assert_eq!(inputs.as_rule(), Rule::indirect_remat_input_list);
+                assert!(inner.next().is_none());
+                let mut parsed_inputs: Vec<Operand> = vec![];
+                for input in inputs.into_inner() {
+                    parsed_inputs.push(parse_operand(input, groups)?);
+                }
+
+                indirect_remat = Some(IndirectRematData {
+                    constraint,
+                    inputs: parsed_inputs,
+                    allow_destination_overlap,
+                });
+            }
             _ => unreachable!(),
         }
     }
     let Some(bank) = bank else {
         Err(custom_error(span, "missing bank attribute"))?
     };
-    values.push(ValueData { bank, remat });
+    values.push(ValueData {
+        bank,
+        remat,
+        indirect_remat,
+    });
     Ok(())
 }
 
@@ -233,6 +268,17 @@ fn parse_operand(
     pair: Pair<'_, Rule>,
     groups: &mut PrimaryMap<ValueGroup, Vec<Value>>,
 ) -> Result<Operand> {
+    assert_eq!(pair.as_rule(), Rule::operand);
+    let mut inner = pair.into_inner();
+    let pair = inner.next().unwrap();
+    assert!(inner.next().is_none());
+
+    if pair.as_rule() == Rule::nonallocatable_operand {
+        let [physreg] = extract(pair, [Rule::physreg]);
+        return Ok(Operand::fixed_nonallocatable(parse_entity(physreg)?));
+    }
+
+    assert_eq!(pair.as_rule(), Rule::normal_operand);
     let [operand_kind, value_list, constraint] = extract(
         pair,
         [Rule::operand_kind, Rule::value_list, Rule::constraint],
@@ -254,7 +300,12 @@ fn parse_operand(
             _ => unreachable!(),
         }
     };
-    let constraint_pair = constraint.into_inner().next().unwrap();
+    let constraint = parse_constraint(constraint)?;
+    Ok(Operand::new(kind, constraint))
+}
+
+fn parse_constraint(pair: Pair<'_, Rule>) -> Result<OperandConstraint> {
+    let constraint_pair = pair.into_inner().next().unwrap();
     let constraint = match constraint_pair.as_rule() {
         Rule::physreg => OperandConstraint::Fixed(parse_entity(constraint_pair)?),
         Rule::regclass => OperandConstraint::Class(parse_entity(constraint_pair)?),
@@ -264,7 +315,7 @@ fn parse_operand(
         }
         _ => unreachable!(),
     };
-    Ok(Operand::new(kind, constraint))
+    Ok(constraint)
 }
 
 fn parse_instruction(
@@ -293,12 +344,7 @@ fn parse_instruction(
             }
             Rule::opcode => parse_opcode(pair, &mut data, block_data)?,
             Rule::attribute => parse_attribute(pair, &mut data.is_pure)?,
-            Rule::normal_operand => data.operands.push(parse_operand(pair, groups)?),
-            Rule::nonallocatable_operand => {
-                let [physreg] = extract(pair, [Rule::physreg]);
-                data.operands
-                    .push(Operand::fixed_nonallocatable(parse_entity(physreg)?));
-            }
+            Rule::operand => data.operands.push(parse_operand(pair, groups)?),
             Rule::clobber => {
                 let [unit] = extract(pair, [Rule::unit]);
                 data.clobbers.push(parse_entity(unit)?);
@@ -349,7 +395,7 @@ impl GenericFunction {
         for pair in parse_result {
             match pair.as_rule() {
                 Rule::value_declaration => {
-                    parse_value_declaration(pair, &mut values)?;
+                    parse_value_declaration(pair, &mut values, &mut value_groups)?;
                 }
                 Rule::block_label => {
                     parse_block_label(pair, &mut entry_points, &mut blocks, &mut insts)?;

@@ -11,7 +11,7 @@ use core::marker::PhantomData;
 /// 1. Memory is allocated from a `CompactListPool<T>` instead of the global heap.
 /// 2. The footprint of a list is 8 bytes, compared with 16 bytes for `Box<[T]>`.
 /// 3. A list doesn't implement `Drop`, leaving it to the pool to manage memory.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct CompactList<T> {
     start: u32,
     end: u32,
@@ -58,13 +58,13 @@ impl<T> CompactList<T> {
 
     /// Get the list as a slice.
     #[must_use]
-    pub fn as_slice<'a>(&'a self, pool: &'a CompactListPool<T>) -> &'a [T] {
+    pub fn as_slice<'a>(&self, pool: &'a CompactListPool<T>) -> &'a [T] {
         &pool.elems[self.start as usize..self.end as usize]
     }
 
     /// Get the list as a mutable slice.
     #[must_use]
-    pub fn as_mut_slice<'a>(&'a self, pool: &'a mut CompactListPool<T>) -> &'a mut [T] {
+    pub fn as_mut_slice<'a>(&self, pool: &'a mut CompactListPool<T>) -> &'a mut [T] {
         &mut pool.elems[self.start as usize..self.end as usize]
     }
 

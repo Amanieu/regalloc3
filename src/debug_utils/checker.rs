@@ -217,8 +217,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     fn check_stack(&self) -> Result<()> {
         let stack_layout = self.output.stack_layout();
         for slot in stack_layout.spillslots() {
-            let size = stack_layout.spillslot_size(slot);
-            let offset = stack_layout.spillslot_offset(slot);
+            let Some((offset, size)) = stack_layout.spillslot_layout(slot) else {
+                continue;
+            };
             ensure!(
                 offset.is_multiple_of(size.bytes()),
                 "{slot} offset {offset} is not aligned to size {size}"
@@ -351,7 +352,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         }
         match inst {
             OutputInst::Inst { .. } => self.can_have_move = true,
-            OutputInst::Rematerialize { .. } => ensure!(
+            OutputInst::Rematerialize { .. } | OutputInst::IndirectRematerialize { .. } => ensure!(
                 self.can_have_move,
                 "Cannot have remat before first instruction"
             ),
@@ -418,6 +419,39 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     self.evicted.remove(slot);
                 }
             }
+            OutputInst::IndirectRematerialize { value, to, inputs } => {
+                let Some(remat) = func.can_indirectly_rematerialize(value) else {
+                    bail!("{value} is not indirectly rematerializable");
+                };
+                ensure!(
+                    inputs.len() == remat.inputs.len(),
+                    "Indirect remat of {value} expected {} inputs, got {}",
+                    remat.inputs.len(),
+                    inputs.len()
+                );
+                self.check_constraint(
+                    to,
+                    Operand::new(OperandKind::Def(value), remat.constraint),
+                    inputs,
+                )?;
+                for (idx, (&input, &input_alloc)) in remat.inputs.iter().zip(inputs).enumerate() {
+                    self.check_remat_input(
+                        idx,
+                        input_alloc,
+                        input,
+                        to,
+                        remat.constraint,
+                        remat.allow_destination_overlap,
+                    )?;
+                }
+
+                for unit in to.units(reginfo) {
+                    self.state.set_value(unit, value);
+                }
+                if let AllocationKind::SpillSlot(slot) = to.kind() {
+                    self.evicted.remove(slot);
+                }
+            }
             OutputInst::Move { from, to, value } => {
                 if let Some(value) = value {
                     let bank = func.value_bank(value);
@@ -463,12 +497,16 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 !self.output.reginfo().is_memory(reg),
                                 "Stack to stack move between {from} and {to}"
                             );
+                            let Some((_offset, spillslot_size)) =
+                                self.output.stack_layout().spillslot_layout(slot)
+                            else {
+                                bail!("{slot} has no stack layout");
+                            };
                             ensure!(
-                                reginfo.spillslot_size(bank)
-                                    == self.output.stack_layout().spillslot_size(slot),
+                                reginfo.spillslot_size(bank) == spillslot_size,
                                 "{slot} has wrong size for {bank}: expected {}, got {}",
                                 reginfo.spillslot_size(bank),
-                                self.output.stack_layout().spillslot_size(slot)
+                                spillslot_size
                             );
                             match to.kind() {
                                 AllocationKind::PhysReg(_) => {
@@ -549,14 +587,87 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 "{bank} doesn't contain {reg}"
             ),
             AllocationKind::SpillSlot(slot) => {
+                let Some((_offset, spillslot_size)) =
+                    self.output.stack_layout().spillslot_layout(slot)
+                else {
+                    bail!("{slot} has no stack layout");
+                };
                 ensure!(
-                    reginfo.spillslot_size(bank) == self.output.stack_layout().spillslot_size(slot),
+                    reginfo.spillslot_size(bank) == spillslot_size,
                     "{slot} has wrong size for {bank}: expected {}, got {}",
                     reginfo.spillslot_size(bank),
-                    self.output.stack_layout().spillslot_size(slot)
+                    spillslot_size
                 );
             }
         }
+        Ok(())
+    }
+
+    /// Checks an indirect-remat input allocation.
+    fn check_remat_input(
+        &mut self,
+        idx: usize,
+        alloc: Allocation,
+        input: Operand,
+        target_alloc: Allocation,
+        target_constraint: OperandConstraint,
+        allow_destination_overlap: bool,
+    ) -> Result<()> {
+        self.check_constraint(alloc, input, &[])?;
+
+        let reginfo = self.output.reginfo();
+        let check_input_value =
+            |state: &CheckerState, input_value: Value, input_alloc: Allocation| -> Result<()> {
+                for unit in input_alloc.units(reginfo) {
+                    ensure!(
+                        state.unit_contains(unit, input_value),
+                        "Indirect remat input {idx}: {unit} in {input_alloc} does not contain \
+                         {input_value}"
+                    );
+                }
+                if !allow_destination_overlap && target_constraint != OperandConstraint::Reuse(idx)
+                {
+                    for target_unit in target_alloc.units(reginfo) {
+                        for input_unit in input_alloc.units(reginfo) {
+                            ensure!(
+                                target_unit != input_unit,
+                                "Indirect remat destination {target_alloc} overlaps input {idx} \
+                                 allocation {input_alloc}"
+                            );
+                        }
+                    }
+                }
+
+                Ok(())
+            };
+
+        match input.kind() {
+            OperandKind::Use(value) => {
+                check_input_value(&self.state, value, alloc)?;
+            }
+            OperandKind::UseGroup(group) => {
+                let OperandConstraint::Class(class) = input.constraint() else {
+                    unreachable!();
+                };
+                let reg_group = self.check_group_class(alloc, class)?;
+                let func = self.output.function();
+                for (&value, &reg) in func
+                    .value_group_members(group)
+                    .iter()
+                    .zip(reginfo.reg_group_members(reg_group))
+                {
+                    check_input_value(&self.state, value, Allocation::reg(reg))?;
+                }
+            }
+            OperandKind::NonAllocatable => {}
+            OperandKind::Def(_)
+            | OperandKind::EarlyDef(_)
+            | OperandKind::DefGroup(_)
+            | OperandKind::EarlyDefGroup(_) => {
+                unreachable!();
+            }
+        }
+
         Ok(())
     }
 
@@ -574,11 +685,16 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     "{class} doesn't allow spillslots"
                 );
                 let bank = reginfo.bank_for_class(class);
+                let Some((_offset, spillslot_size)) =
+                    self.output.stack_layout().spillslot_layout(slot)
+                else {
+                    bail!("{slot} has no stack layout");
+                };
                 ensure!(
-                    reginfo.spillslot_size(bank) == self.output.stack_layout().spillslot_size(slot),
+                    reginfo.spillslot_size(bank) == spillslot_size,
                     "{slot} has wrong size for {bank}: expected {}, got {}",
                     reginfo.spillslot_size(bank),
-                    self.output.stack_layout().spillslot_size(slot)
+                    spillslot_size
                 );
             }
         }

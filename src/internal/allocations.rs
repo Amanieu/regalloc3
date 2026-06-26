@@ -3,6 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::entity::CompactListPool;
 use crate::entity::packed_option::ReservedValue;
 use crate::function::{Function, Inst};
 use crate::output::Allocation;
@@ -16,6 +17,9 @@ pub struct Allocations {
     /// Offset of the allocations for a particular instruction in the
     /// `allocations` vector.
     operands_offset: Vec<u32>,
+
+    /// Allocations for synthetic indirect-rematerialization input operands.
+    pub remat_inputs: CompactListPool<Allocation>,
 }
 
 impl Allocations {
@@ -23,6 +27,7 @@ impl Allocations {
         Self {
             allocations: vec![],
             operands_offset: vec![],
+            remat_inputs: CompactListPool::new(),
         }
     }
 
@@ -35,6 +40,7 @@ impl Allocations {
     ) -> Result<(), RegAllocError> {
         self.allocations.clear();
         self.operands_offset.clear();
+        self.remat_inputs.clear();
 
         let mut offset = 0;
         for inst in func.insts() {
@@ -74,6 +80,11 @@ impl Allocations {
         let start = self.operands_offset[inst.index()] as usize;
         let end = self.operands_offset[inst.index() + 1] as usize;
         &mut self.allocations[start..end]
+    }
+
+    /// Returns all operand allocations in the function.
+    pub fn allocations(&self) -> &[Allocation] {
+        &self.allocations
     }
 
     /// Asserts that all allocations have been assigned.

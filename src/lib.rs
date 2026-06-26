@@ -54,7 +54,7 @@
 //! impossible constraints on an instruction.
 
 #![no_std]
-#![warn(rust_2018_idioms, missing_docs)]
+#![warn(rust_2018_idioms, missing_docs, rustdoc::broken_intra_doc_links)]
 #![allow(
     clippy::too_many_arguments,
     clippy::collapsible_if,
@@ -90,6 +90,7 @@ use function::Function;
 use internal::allocations::Allocations;
 use internal::allocator::Allocator;
 use internal::coalescing::Coalescing;
+use internal::dead_spill_elimination::DeadSpillElimination;
 use internal::hints::Hints;
 use internal::move_optimizer::MoveOptimizer;
 use internal::move_resolver::MoveResolver;
@@ -168,6 +169,7 @@ pub struct RegisterAllocator {
     spill_allocator: SpillAllocator,
     move_resolver: MoveResolver,
     move_optimizer: MoveOptimizer,
+    dead_spill_elimination: DeadSpillElimination,
     stats: Stats,
 }
 
@@ -196,6 +198,7 @@ impl RegisterAllocator {
             spill_allocator: SpillAllocator::new(),
             move_resolver: MoveResolver::new(),
             move_optimizer: MoveOptimizer::new(),
+            dead_spill_elimination: DeadSpillElimination::new(),
             stats: Stats::default(),
         }
     }
@@ -312,6 +315,25 @@ impl RegisterAllocator {
             options.move_optimization,
         );
 
+        // Eliminate moves that write to spill slots that are never read.
+        if options.dead_spill_elimination {
+            self.dead_spill_elimination.run(
+                &mut self.move_resolver,
+                &self.spill_allocator,
+                &self.allocations,
+                &mut self.stats,
+                func,
+            );
+        }
+
+        // Assign final stack offsets only after all move generation and
+        // optimization has finished.
+        self.spill_allocator.finalize_stack_layout(
+            &self.move_resolver,
+            &self.allocations,
+            &mut self.stats,
+        )?;
+
         let output = Output {
             regalloc: self,
             func,
@@ -325,12 +347,12 @@ impl RegisterAllocator {
     }
 }
 
-/// Controls how much optimization to perform after register allocation.
+/// Controls how much to optimize generated moves after register allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum MoveOptimizationLevel {
-    /// Don't do any optimizations.
+    /// Don't run the move optimizer.
     Off,
 
     /// Optimize moves within each block.
@@ -369,8 +391,19 @@ pub enum SplitStrategy {
 #[non_exhaustive]
 pub struct Options {
     /// Controls how moves are optimized after register allocation.
-    #[cfg_attr(feature = "clap", clap(long, default_value = "forward"))]
+    #[cfg_attr(feature = "clap", clap(long, default_value = "global"))]
     pub move_optimization: MoveOptimizationLevel,
+
+    /// Enable elimination of spills whose destination is never read.
+    #[cfg_attr(
+        feature = "clap",
+        clap(
+            long = "no-dead-spill-elimination",
+            action = clap::ArgAction::SetFalse,
+            help = "Disable the dead spill elimination pass"
+        )
+    )]
+    pub dead_spill_elimination: bool,
 
     /// Selects the algorithm for live range splitting.
     #[cfg_attr(feature = "clap", clap(long, default_value = "linear"))]
@@ -382,6 +415,25 @@ pub struct Options {
     /// for most cases.
     #[cfg_attr(feature = "clap", clap(long, default_value = "200"))]
     pub spill_weight_adjust: u32,
+
+    /// Scale applied to the spill cost of directly rematerializable target
+    /// values with [`RematCost::CheaperThanMove`].
+    ///
+    /// [`RematCost::CheaperThanMove`]: crate::function::RematCost::CheaperThanMove
+    #[cfg_attr(feature = "clap", clap(long, default_value = "0.2"))]
+    pub direct_remat_cheaper_than_move_cost_scale: f32,
+
+    /// Scale applied to the spill cost of directly rematerializable target
+    /// values with [`RematCost::CheaperThanLoad`].
+    ///
+    /// [`RematCost::CheaperThanLoad`]: crate::function::RematCost::CheaperThanLoad
+    #[cfg_attr(feature = "clap", clap(long, default_value = "0.25"))]
+    pub direct_remat_cheaper_than_load_cost_scale: f32,
+
+    /// Scale applied to the spill cost of indirectly rematerializable target
+    /// values.
+    #[cfg_attr(feature = "clap", clap(long, default_value = "0.3"))]
+    pub indirect_remat_cost_scale: f32,
 }
 
 #[cfg(feature = "arbitrary")]
@@ -389,8 +441,12 @@ impl<'a> arbitrary::Arbitrary<'a> for Options {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
         Ok(Self {
             move_optimization: u.arbitrary()?,
+            dead_spill_elimination: u.arbitrary()?,
             split_strategy: u.arbitrary()?,
             spill_weight_adjust: u.int_in_range(0..=1000000)?,
+            direct_remat_cheaper_than_move_cost_scale: u.int_in_range(0..=100)? as f32 / 100.0,
+            direct_remat_cheaper_than_load_cost_scale: u.int_in_range(0..=100)? as f32 / 100.0,
+            indirect_remat_cost_scale: u.int_in_range(0..=100)? as f32 / 100.0,
         })
     }
 }
@@ -399,9 +455,13 @@ impl Default for Options {
     #[inline]
     fn default() -> Self {
         Self {
-            move_optimization: MoveOptimizationLevel::Forward,
+            move_optimization: MoveOptimizationLevel::Global,
+            dead_spill_elimination: true,
             split_strategy: SplitStrategy::Linear,
             spill_weight_adjust: 200,
+            direct_remat_cheaper_than_move_cost_scale: 0.2,
+            direct_remat_cheaper_than_load_cost_scale: 0.25,
+            indirect_remat_cost_scale: 0.3,
         }
     }
 }
@@ -534,7 +594,8 @@ pub struct Stats {
     // Stats from spillslot allocation.
     spilled_sets: usize,
     spill_segments: usize,
-    spillslots: usize,
+    initial_spillslots: usize,
+    final_spillslots: usize,
     spill_area_size: usize,
 
     // Stats from move resolver.
@@ -550,10 +611,15 @@ pub struct Stats {
     blocks_preprocessed_for_optimizer: usize,
     optimized_stack_use: usize,
     optimized_reload_to_move: usize,
+    optimized_reload_to_indirect_remat: usize,
     optimized_redundant_remat: usize,
     optimized_redundant_move: usize,
     optimized_redundant_spill: usize,
     optimized_redundant_reload: usize,
+
+    // Stats from dead spill elimination.
+    eliminated_dead_spill: usize,
+    eliminated_dead_remat: usize,
 }
 
 impl fmt::Display for Stats {

@@ -30,11 +30,11 @@ use super::reg_matrix::RegMatrix;
 use super::spill_allocator::SpillAllocator;
 use super::uses::{Use, UseKind, Uses};
 use super::virt_regs::VirtRegs;
-use crate::entity::packed_option::PackedOption;
+use crate::entity::CompactList;
 use crate::function::{Block, Function, Inst, TerminatorKind, Value};
 use crate::internal::live_range::{LiveRangeSegment, ValueSegmentComponent};
-use crate::output::{Allocation, AllocationKind};
-use crate::reginfo::{RegClass, RegInfo};
+use crate::output::{Allocation, AllocationKind, SpillSlot};
+use crate::reginfo::{PhysReg, RegClass, RegInfo};
 use crate::{MoveOptimizationLevel, Stats};
 
 /// Position in which to insert a move.
@@ -105,32 +105,63 @@ impl MovePosition {
 
 /// An edit represents either a move between 2 locations or a rematerialization
 /// of a value into a location.
-///
-/// Valid combinations are:
-/// - Move: value:Some from:Some to:Some
-/// - Emergency spill: value:None from:Some(reg) to:None(spillslot)
-/// - Emergency reload: value:None from:Some(spillslot) to:None(reg)
-/// - Rematerialization: value:Some from:None to:Some
-///
-/// If `to` is `None` then it means the entire edit has be optimized away to a
-/// nop. This is only done in the move optimization pass.
 #[derive(Debug, Clone, Copy)]
-pub struct Edit {
-    pub value: PackedOption<Value>,
-    pub from: PackedOption<Allocation>,
-    pub to: PackedOption<Allocation>,
+pub enum Edit {
+    /// Move a value between two allocations.
+    Move {
+        /// Destination allocation.
+        to: Allocation,
+        /// Source allocation.
+        from: Allocation,
+        /// Value being moved.
+        value: Value,
+    },
+    /// Save an evicted register to an emergency spill slot.
+    EmergencySpill {
+        /// Emergency spill slot destination.
+        to: SpillSlot,
+        /// Evicted register source.
+        from: PhysReg,
+    },
+    /// Restore an evicted register from an emergency spill slot.
+    EmergencyReload {
+        /// Register destination.
+        to: PhysReg,
+        /// Emergency spill slot source.
+        from: SpillSlot,
+    },
+    /// Rematerialize a value into an allocation.
+    Rematerialize {
+        /// Destination allocation.
+        to: Allocation,
+        /// Value being rematerialized.
+        value: Value,
+    },
+    /// Rematerialize a value from other available input allocations.
+    IndirectRematerialize {
+        /// Destination allocation.
+        to: Allocation,
+        /// Value being rematerialized.
+        value: Value,
+        /// Input allocations for the rematerialization.
+        inputs: CompactList<Allocation>,
+    },
 }
 
 impl fmt::Display for Edit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(to) = self.to.expand() {
-            if let Some(from) = self.from.expand() {
-                write!(f, "move {:?} from {} to {to}", self.value, from,)
-            } else {
-                write!(f, "remat {} in {to}", self.value.unwrap())
+        match *self {
+            Edit::Move { to, from, value } => write!(f, "move {value} from {from} to {to}"),
+            Edit::EmergencySpill { to, from } => {
+                write!(f, "emergency spill {from} to {to}")
             }
-        } else {
-            f.write_str("nop")
+            Edit::EmergencyReload { to, from } => {
+                write!(f, "emergency reload {from} to {to}")
+            }
+            Edit::Rematerialize { to, value } => write!(f, "remat {value} in {to}"),
+            Edit::IndirectRematerialize { to, value, .. } => {
+                write!(f, "indirect remat {value} in {to}")
+            }
         }
     }
 }
@@ -177,7 +208,7 @@ pub struct MoveResolver {
     dest_half_moves: Vec<(MovePosition, Value, Allocation)>,
     tied_moves: Vec<TiedMove>,
     tied_operands: Vec<TiedOperands>,
-    edits: Vec<(Inst, Edit)>,
+    edits: Vec<(Inst, Option<Edit>)>,
     blockparam_allocs: Vec<(Block, Value, Allocation)>,
     parallel_move_resolver: ParallelMoves,
 }
@@ -387,27 +418,31 @@ impl MoveResolver {
                 .extend(self.parallel_move_resolver.edits().map(|edit| {
                     trace!("- {edit}");
                     stat!(stats, edits);
-                    if let Some(from) = edit.from.expand() {
-                        if from.is_memory(reginfo) {
-                            if edit.value.is_some() {
+                    match edit {
+                        Edit::Move { from, to, .. } => {
+                            if from.is_memory(reginfo) {
                                 stat!(stats, reloads);
-                            } else {
-                                stat!(stats, evict_reloads);
-                            }
-                        } else if edit.to.unwrap().is_memory(reginfo) {
-                            if edit.value.is_some() {
+                            } else if to.is_memory(reginfo) {
                                 stat!(stats, spills);
                             } else {
-                                stat!(stats, evict_spills);
+                                stat!(stats, moves);
                             }
-                        } else {
-                            stat!(stats, moves);
                         }
-                    } else {
-                        stat!(stats, remats);
+                        Edit::EmergencySpill { .. } => {
+                            stat!(stats, evict_spills);
+                        }
+                        Edit::EmergencyReload { .. } => {
+                            stat!(stats, evict_reloads);
+                        }
+                        Edit::Rematerialize { .. } => {
+                            stat!(stats, remats);
+                        }
+                        Edit::IndirectRematerialize { .. } => {
+                            unreachable!();
+                        }
                     }
 
-                    (pos.inst(), edit)
+                    (pos.inst(), Some(edit))
                 }));
         }
     }
@@ -496,15 +531,26 @@ impl MoveResolver {
     }
 
     /// Returns the list of edits starting from the given instruction.
-    pub fn edits_from(&self, inst: Inst) -> &[(Inst, Edit)] {
+    pub fn edits_from(&self, inst: Inst) -> &[(Inst, Option<Edit>)] {
         let idx = self.edits.partition_point(|&(pos, _)| pos < inst);
         &self.edits[idx..]
     }
 
-    /// Returns the list of edits starting from the given instruction.
-    pub fn edits_from_mut(&mut self, inst: Inst) -> &mut [(Inst, Edit)] {
+    /// Returns the full list of edits.
+    pub fn edits(&self) -> &[(Inst, Option<Edit>)] {
+        &self.edits
+    }
+
+    /// Returns the mutable list of edits starting from the given instruction.
+    pub fn edits_from_mut(&mut self, inst: Inst) -> &mut [(Inst, Option<Edit>)] {
         let idx = self.edits.partition_point(|&(pos, _)| pos < inst);
         &mut self.edits[idx..]
+    }
+
+    /// Returns the mutable list of edits ending at the given instruction.
+    pub fn edits_to_mut(&mut self, inst: Inst) -> &mut [(Inst, Option<Edit>)] {
+        let idx = self.edits.partition_point(|&(pos, _)| pos < inst);
+        &mut self.edits[..idx]
     }
 
     /// Returns the locations for block parameter values at the start of a

@@ -82,7 +82,7 @@ impl AllocationUnit {
 }
 
 /// Expanded form of `AllocationUnit` as an enum.
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) enum AllocationUnitKind {
     Reg(RegUnit),
     SpillSlot(SpillSlot),

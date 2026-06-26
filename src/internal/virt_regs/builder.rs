@@ -26,7 +26,7 @@ use rustc_hash::FxBuildHasher;
 
 use crate::entity::CompactList;
 use crate::entity::packed_option::ReservedValue;
-use crate::function::{Function, Inst, OperandKind, Value};
+use crate::function::{Function, Inst, OperandKind, RematCost, Value};
 use crate::internal::coalescing::Coalescing;
 use crate::internal::hints::Hints;
 use crate::internal::live_range::{LiveRangeSegment, Slot, ValueSegment};
@@ -54,6 +54,30 @@ pub fn normalize_spill_weight(spill_cost: f32, num_insts: u32, options: &Options
     // Cap the spill weight at f32::MAX. Infinite spill weights are only
     // for unspillable virtual registers.
     weight.min(f32::MAX)
+}
+
+/// Computes the spill cost for a single use after applying allocator-level
+/// rematerialization heuristics.
+pub(crate) fn use_spill_cost(
+    func: &impl Function,
+    reginfo: &impl RegInfo,
+    options: &Options,
+    value: Value,
+    u: Use,
+) -> f32 {
+    let spill_cost = u.spill_cost(reginfo);
+
+    if let Some((cost, _class)) = func.can_rematerialize(value) {
+        let scale = match cost {
+            RematCost::CheaperThanMove => options.direct_remat_cheaper_than_move_cost_scale,
+            RematCost::CheaperThanLoad => options.direct_remat_cheaper_than_load_cost_scale,
+        };
+        spill_cost * scale
+    } else if func.can_indirectly_rematerialize(value).is_some() {
+        spill_cost * options.indirect_remat_cost_scale
+    } else {
+        spill_cost
+    }
 }
 
 /// Utility type for building a virtual register from value live ranges.
@@ -741,7 +765,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             let mut total_spill_cost = 0.0;
             for seg in segments {
                 for u in &self.uses[seg.use_list] {
-                    let spill_cost = u.spill_cost(self.reginfo);
+                    let spill_cost =
+                        use_spill_cost(self.func, self.reginfo, self.options, seg.value, *u);
                     if spill_cost == 0.0 {
                         // Fast path for spill cost of 0.
                         continue;

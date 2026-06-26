@@ -75,7 +75,7 @@ pub enum AllocationKind {
 }
 
 /// An `Allocation` represents the end result of regalloc for an `Operand`.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Allocation {
     /// Bit-pack in 32 bits.
@@ -279,10 +279,13 @@ where
     }
 }
 
-/// Positions of all the spill slots in the stack frame.
+/// Positions of spill slots in the stack frame.
 pub struct StackLayout {
-    /// Size and offset of each spill slot.
-    pub(crate) slots: PrimaryMap<SpillSlot, (u32, SpillSlotSize)>,
+    /// Size and offset of each logical spill slot.
+    ///
+    /// Spill slots with `None` have been optimized away and don't take up space
+    /// in the spill area.
+    pub(crate) slots: PrimaryMap<SpillSlot, Option<(u32, SpillSlotSize)>>,
 
     /// Total size of the spill area.
     pub(crate) spillslot_area_size: u32,
@@ -303,22 +306,18 @@ impl StackLayout {
         self.slots.keys()
     }
 
-    /// Returns the offset of a spill slot in the spill area.
+    /// Returns the offset and size of a spill slot in the spill area.
+    ///
+    /// `None` is returned for spill slots that have been optimized away because
+    /// they are never read from in the final code.
     #[inline]
     #[must_use]
-    pub fn spillslot_offset(&self, slot: SpillSlot) -> u32 {
-        self.slots[slot].0
+    pub fn spillslot_layout(&self, slot: SpillSlot) -> Option<(u32, SpillSlotSize)> {
+        self.slots[slot]
     }
 
-    /// Returns the size of a spill slot.
-    #[inline]
-    #[must_use]
-    pub fn spillslot_size(&self, slot: SpillSlot) -> SpillSlotSize {
-        self.slots[slot].1
-    }
-
-    /// Returns the amount of space on the stack needed for all allocated
-    /// spill slots.
+    /// Returns the amount of space on the stack needed for all active spill
+    /// slots.
     ///
     /// Each spill slot used by the allocator encodes an offset from the start
     /// of this spill area.
@@ -332,7 +331,7 @@ impl StackLayout {
 /// Iterator over the [`OutputInst`] of a block after register allocation.
 pub struct OutputIter<'a> {
     insts: InstRange,
-    edits: &'a [(Inst, Edit)],
+    edits: &'a [(Inst, Option<Edit>)],
     regalloc: &'a RegisterAllocator,
 }
 
@@ -352,20 +351,34 @@ impl<'a> Iterator for OutputIter<'a> {
                 self.edits = rest;
 
                 // Skip edits that have been optimized away.
-                let Some(to) = edit.to.expand() else {
+                let Some(edit) = edit else {
                     continue;
                 };
 
-                return Some(match edit.from.expand() {
-                    Some(from) => OutputInst::Move {
+                return Some(match edit {
+                    Edit::Move { to, from, value } => OutputInst::Move {
                         from,
                         to,
-                        value: edit.value.expand(),
+                        value: Some(value),
                     },
-                    None => OutputInst::Rematerialize {
-                        to,
-                        value: edit.value.expect("remat without value"),
+                    Edit::EmergencySpill { to, from } => OutputInst::Move {
+                        from: Allocation::reg(from),
+                        to: Allocation::spillslot(to),
+                        value: None,
                     },
+                    Edit::EmergencyReload { to, from } => OutputInst::Move {
+                        from: Allocation::spillslot(from),
+                        to: Allocation::reg(to),
+                        value: None,
+                    },
+                    Edit::Rematerialize { to, value } => OutputInst::Rematerialize { to, value },
+                    Edit::IndirectRematerialize { to, value, inputs } => {
+                        OutputInst::IndirectRematerialize {
+                            to,
+                            value,
+                            inputs: inputs.as_slice(&self.regalloc.allocations.remat_inputs),
+                        }
+                    }
                 });
             }
 
@@ -409,6 +422,20 @@ pub enum OutputInst<'a> {
 
         /// Destination into which the rematerialized value should be wrriten.
         to: Allocation,
+    },
+
+    /// A value which should be indirectly re-materialized from other
+    /// allocatable values.
+    IndirectRematerialize {
+        /// Value being rematerialized.
+        value: Value,
+
+        /// Destination into which the rematerialized value should be wrriten.
+        to: Allocation,
+
+        /// Input allocations, in the same order as the inputs from
+        /// [`IndirectRemat`](crate::function::IndirectRemat).
+        inputs: &'a [Allocation],
     },
 
     /// A move instruction inserted by the register allocator.

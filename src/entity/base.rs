@@ -23,7 +23,7 @@ pub trait EntityRef: Copy + Eq + ReservedValue {
 ///
 /// A range is considered empty if the index of `from` is greater than or equal
 /// to the index of `to`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EntityRange<T: EntityRef> {
     /// Inclusive lower bound of the range.

@@ -4,14 +4,14 @@ use core::ops::RangeInclusive;
 
 use arbitrary::{Result, Unstructured};
 
-use super::{BlockData, GenericFunction, InstData};
+use super::{BlockData, GenericFunction, IndirectRematData, InstData};
 use crate::debug_utils::dominator_tree::DominatorTree;
 use crate::debug_utils::generic_function::ValueData;
 use crate::debug_utils::postorder::PostOrder;
 use crate::entity::{PrimaryMap, SecondaryMap};
 use crate::function::{
-    Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost,
-    TerminatorKind, Value,
+    Block, Function, Inst, InstRange, MAX_INST_OPERANDS, Operand, OperandConstraint, OperandKind,
+    RematCost, TerminatorKind, Value,
 };
 use crate::reginfo::{MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet};
 
@@ -128,7 +128,7 @@ struct FunctionBuilder<'a, 'b, R> {
     /// List of register classes per register bank.
     class_per_bank: SecondaryMap<RegBank, Vec<RegClass>>,
 
-    /// List of register classes that are suitable for rematerialization.
+    /// List of register classes that are suitable for direct rematerialization.
     remat_class_per_bank: SecondaryMap<RegBank, Vec<RegClass>>,
 
     /// List of registers per register bank.
@@ -326,7 +326,11 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         } else {
             None
         };
-        let value = self.func.values.push(ValueData { bank, remat });
+        let value = self.func.values.push(ValueData {
+            bank,
+            remat,
+            indirect_remat: None,
+        });
         Ok(value)
     }
 
@@ -341,6 +345,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             if self.func.blocks[block].preds.len() <= 1 {
                 continue;
             }
+            let can_add_indirect_remats = self.domtree.immediate_dominator(block).is_some();
 
             // Define some values for incoming blockparams.
             for _ in 0..self
@@ -349,6 +354,9 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             {
                 let bank = RegBank::new(self.u.choose_index(self.reginfo.num_banks())?);
                 let value = self.new_value(bank)?;
+                if can_add_indirect_remats && !self.u.arbitrary()? {
+                    self.add_indirect_remat(value, block, true)?;
+                }
                 self.func.blocks[block].block_params_in.push(value);
             }
         }
@@ -420,6 +428,8 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             let inst = self.gen_inst(block, idx == num_insts - 1, false)?;
             self.block_insts[block].push(inst);
         }
+
+        self.gen_block_start_defs(block)?;
 
         Ok(())
     }
@@ -510,10 +520,11 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         &mut self,
         block: Block,
         is_first_inst: bool,
-        inst: &mut InstData,
+        allow_non_allocatable: bool,
+        mut try_reuse_operand: impl FnMut(&mut Self) -> Result<Option<RegClass>>,
     ) -> Result<Operand> {
         // Generate a NonAllocatable operand if we have non-allocatable registers.
-        if !self.non_allocatable_regs.is_empty() && self.u.arbitrary()? {
+        if allow_non_allocatable && !self.non_allocatable_regs.is_empty() && self.u.arbitrary()? {
             let reg = *self.u.choose(&self.non_allocatable_regs)?;
             return Ok(Operand::fixed_nonallocatable(reg));
         }
@@ -532,17 +543,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             }
         }
 
-        let class = if !self.reuse_operands.is_empty() && self.u.arbitrary()? {
-            // Reuse the class of a Def and turn that Def into a Reuse.
-            let idx = self.u.choose_index(self.reuse_operands.len())?;
-            let def_idx = self.reuse_operands.swap_remove(idx);
-            let OperandConstraint::Class(class) = inst.operands[def_idx].constraint() else {
-                unreachable!();
-            };
-            inst.operands[def_idx] = Operand::new(
-                inst.operands[def_idx].kind(),
-                OperandConstraint::Reuse(inst.operands.len()),
-            );
+        let class = if let Some(class) = try_reuse_operand(self)? {
             class
         } else {
             // Pick a register class to use.
@@ -565,6 +566,61 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         Ok(Operand::new(kind, OperandConstraint::Class(class)))
     }
 
+    /// Adds an indirect rematerialization recipe for a value defined at
+    /// the current program point.
+    fn add_indirect_remat(
+        &mut self,
+        value: Value,
+        block: Block,
+        is_first_inst: bool,
+    ) -> Result<()> {
+        let saved_early_fixed = self.early_fixed;
+        let saved_late_fixed = self.late_fixed;
+        self.early_fixed.clear();
+        self.late_fixed.clear();
+
+        let allow_destination_overlap: bool = self.u.arbitrary()?;
+        let bank = self.func.values[value].bank;
+        let mut constraint = OperandConstraint::Class(self.reginfo.top_level_class(bank));
+        if self.u.arbitrary()? {
+            let reg = *self.u.choose(&self.reg_per_bank[bank])?;
+            if self.check_fixed_conflict(reg, !allow_destination_overlap, true) {
+                constraint = OperandConstraint::Fixed(reg);
+            }
+        }
+
+        let input_count = self.u.int_in_range(self.config.uses_per_inst.clone())?;
+        if input_count != 0 {
+            let mut inputs = vec![];
+            for _ in 0..input_count {
+                let input_idx = inputs.len();
+                let input = self.gen_use(block, is_first_inst, input_idx != 0, |this| {
+                    let OperandConstraint::Class(class) = constraint else {
+                        return Ok(None);
+                    };
+                    if this.u.arbitrary()? {
+                        constraint = OperandConstraint::Reuse(input_idx);
+                        Ok(Some(class))
+                    } else {
+                        Ok(None)
+                    }
+                })?;
+                inputs.push(input);
+            }
+
+            self.func.values[value].indirect_remat = Some(IndirectRematData {
+                constraint,
+                inputs,
+                allow_destination_overlap,
+            });
+        }
+
+        self.early_fixed = saved_early_fixed;
+        self.late_fixed = saved_late_fixed;
+
+        Ok(())
+    }
+
     /// Generates an operand which defines a value.
     fn gen_def(
         &mut self,
@@ -572,6 +628,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         value: Value,
         is_ret: bool,
         op_idx: usize,
+        defined_values: &mut Vec<Value>,
     ) -> Result<Operand> {
         let bank = self.func.values[value].bank;
 
@@ -584,6 +641,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
                 OperandKind::EarlyDef(value)
             };
             if self.check_fixed_conflict(reg, matches!(kind, OperandKind::EarlyDef(_)), true) {
+                defined_values.push(value);
                 return Ok(Operand::new(kind, OperandConstraint::Fixed(reg)));
             }
         }
@@ -612,6 +670,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
                 // Later change this into a Reuse.
                 self.reuse_operands.push(op_idx);
             }
+            defined_values.extend_from_slice(&values);
             let value_group = self.func.value_groups.push(values);
             if !is_ret && self.u.arbitrary()? {
                 OperandKind::DefGroup(value_group)
@@ -623,6 +682,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
                 // Later change this into a Reuse.
                 self.reuse_operands.push(op_idx);
             }
+            defined_values.push(value);
             if !is_ret && self.u.arbitrary()? {
                 OperandKind::Def(value)
             } else {
@@ -630,6 +690,52 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             }
         };
         Ok(Operand::new(kind, OperandConstraint::Class(class)))
+    }
+
+    /// Generates instructions containing the remaining defs in a block after
+    /// other instructions have been emitted.
+    fn gen_block_start_defs(&mut self, block: Block) -> Result<()> {
+        // We may need to emit multiple instructions due to MAX_INST_OPERANDS.
+        while !self.defs_by_blocks[block].is_empty() {
+            self.early_fixed.clear();
+            self.late_fixed.clear();
+            self.reuse_operands.clear();
+
+            let mut inst = InstData {
+                operands: vec![],
+                clobbers: vec![],
+                block,
+                terminator_kind: None,
+                is_pure: self.u.arbitrary()?,
+            };
+
+            let mut defined_values = vec![];
+            while inst.operands.len() < MAX_INST_OPERANDS {
+                let Some(value) = self.defs_by_blocks[block].pop() else {
+                    break;
+                };
+                let op = self.gen_def(
+                    block,
+                    value,
+                    false,
+                    inst.operands.len(),
+                    &mut defined_values,
+                )?;
+                inst.operands.push(op);
+            }
+
+            if self.domtree.immediate_dominator(block).is_some() {
+                for value in defined_values {
+                    if !self.u.arbitrary()? {
+                        self.add_indirect_remat(value, block, true)?;
+                    }
+                }
+            }
+
+            self.block_insts[block].push(inst);
+        }
+
+        Ok(())
     }
 
     /// Generates a single instruction in the given block.
@@ -648,7 +754,12 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         };
 
         // Add operands which define values.
+        let mut defined_values = vec![];
         for _ in 0..self.u.int_in_range(self.config.defs_per_inst.clone())? {
+            if inst.operands.len() >= MAX_INST_OPERANDS {
+                break;
+            }
+
             // Generate a value that was previously used, otherwise generate a
             // new dead value.
             let value = if self.u.arbitrary()? && !self.defs_by_blocks[block].is_empty() {
@@ -657,25 +768,52 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
                 let bank = RegBank::new(self.u.choose_index(self.reginfo.num_banks())?);
                 self.new_value(bank)?
             };
-            inst.operands
-                .push(self.gen_def(block, value, is_ret, inst.operands.len())?);
+            let op = self.gen_def(
+                block,
+                value,
+                is_ret,
+                inst.operands.len(),
+                &mut defined_values,
+            )?;
+            inst.operands.push(op);
         }
 
-        // If this is the first instruction in a block then we need to define
-        // any remaining values to be defined in this block.
-        if is_first_inst {
-            while let Some(value) = self.defs_by_blocks[block].pop() {
-                inst.operands
-                    .push(self.gen_def(block, value, is_ret, inst.operands.len())?);
+        let can_generate_uses = !is_first_inst || self.domtree.immediate_dominator(block).is_some();
+        if can_generate_uses {
+            for value in defined_values {
+                if !self.u.arbitrary()? {
+                    self.add_indirect_remat(value, block, is_first_inst)?;
+                }
             }
         }
 
         // Add operands which use values, unless we are the first instruction of
         // a block without a real dominator. In such blocks there is nowhere to
         // synthesize a new dominating definition if no reusable value exists.
-        if !is_first_inst || self.domtree.immediate_dominator(block).is_some() {
+        if can_generate_uses {
             for _ in 0..self.u.int_in_range(self.config.uses_per_inst.clone())? {
-                let op = self.gen_use(block, is_first_inst, &mut inst)?;
+                if inst.operands.len() >= MAX_INST_OPERANDS {
+                    break;
+                }
+                let op_idx = inst.operands.len();
+                let op = self.gen_use(block, is_first_inst, true, |this| {
+                    if this.reuse_operands.is_empty() || this.u.arbitrary()? {
+                        return Ok(None);
+                    }
+
+                    // Reuse the class of a Def and turn that Def into a Reuse.
+                    let idx = this.u.choose_index(this.reuse_operands.len())?;
+                    let def_idx = this.reuse_operands.swap_remove(idx);
+                    let OperandConstraint::Class(class) = inst.operands[def_idx].constraint()
+                    else {
+                        unreachable!();
+                    };
+                    inst.operands[def_idx] = Operand::new(
+                        inst.operands[def_idx].kind(),
+                        OperandConstraint::Reuse(op_idx),
+                    );
+                    Ok(Some(class))
+                })?;
                 inst.operands.push(op);
             }
         }

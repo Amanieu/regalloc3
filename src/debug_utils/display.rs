@@ -4,7 +4,9 @@
 use core::cell::Cell;
 use core::fmt;
 
-use crate::function::{Block, Function, OperandConstraint, OperandKind, RematCost, TerminatorKind};
+use crate::function::{
+    Block, Function, Operand, OperandConstraint, OperandKind, RematCost, TerminatorKind,
+};
 use crate::output::{Allocation, AllocationKind, Output, OutputInst};
 use crate::reginfo::{RegClass, RegClassSet, RegInfo};
 
@@ -50,6 +52,34 @@ pub(crate) fn display_iter<I: IntoIterator<Item = impl fmt::Display>>(
 /// [`Display`]: core::fmt::Display
 pub struct DisplayFunction<'a, F: Function>(pub &'a F);
 
+impl<F: Function> DisplayFunction<'_, F> {
+    /// Displays an operand, expanding value groups to their members.
+    fn display_operand(&self, f: &mut fmt::Formatter<'_>, operand: Operand) -> fmt::Result {
+        let constraint = operand.constraint();
+        match operand.kind() {
+            OperandKind::Def(value) => write!(f, "Def({value}):{constraint}"),
+            OperandKind::Use(value) => write!(f, "Use({value}):{constraint}"),
+            OperandKind::EarlyDef(value) => write!(f, "EarlyDef({value}):{constraint}"),
+            OperandKind::DefGroup(group) => write!(
+                f,
+                "Def({}):{constraint}",
+                display_iter(self.0.value_group_members(group), ",")
+            ),
+            OperandKind::UseGroup(group) => write!(
+                f,
+                "Use({}):{constraint}",
+                display_iter(self.0.value_group_members(group), ",")
+            ),
+            OperandKind::EarlyDefGroup(group) => write!(
+                f,
+                "EarlyDef({}):{constraint}",
+                display_iter(self.0.value_group_members(group), ",")
+            ),
+            OperandKind::NonAllocatable => write!(f, "NonAllocatable:{constraint}"),
+        }
+    }
+}
+
 impl<F: Function> fmt::Debug for DisplayFunction<'_, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
@@ -68,6 +98,19 @@ impl<F: Function> fmt::Display for DisplayFunction<'_, F> {
                     RematCost::CheaperThanLoad => "cheaper_than_load",
                 };
                 write!(f, " remat({cost}, {class})")?;
+            }
+            if let Some(remat) = self.0.can_indirectly_rematerialize(value) {
+                write!(f, " indirect_remat({}, ", remat.constraint)?;
+                if !remat.allow_destination_overlap {
+                    f.write_str("no_overlap, ")?;
+                }
+                for (idx, &input) in remat.inputs.iter().enumerate() {
+                    if idx != 0 {
+                        f.write_str(", ")?;
+                    }
+                    self.display_operand(f, input)?;
+                }
+                f.write_str(")")?;
             }
             writeln!(f)?;
         }
@@ -121,34 +164,9 @@ impl<F: Function> fmt::Display for DisplayFunction<'_, F> {
                 }
 
                 // Operands and clobbers
-                for operand in self.0.inst_operands(inst) {
+                for &operand in self.0.inst_operands(inst) {
                     f.write_str(" ")?;
-                    let constraint = operand.constraint();
-                    match operand.kind() {
-                        OperandKind::Def(value) => write!(f, "Def({value}):{constraint}")?,
-                        OperandKind::Use(value) => write!(f, "Use({value}):{constraint}")?,
-                        OperandKind::EarlyDef(value) => {
-                            write!(f, "EarlyDef({value}):{constraint}")?;
-                        }
-                        OperandKind::DefGroup(group) => write!(
-                            f,
-                            "Def({}):{constraint}",
-                            display_iter(self.0.value_group_members(group), ",")
-                        )?,
-                        OperandKind::UseGroup(group) => write!(
-                            f,
-                            "Use({}):{constraint}",
-                            display_iter(self.0.value_group_members(group), ",")
-                        )?,
-                        OperandKind::EarlyDefGroup(group) => write!(
-                            f,
-                            "EarlyDef({}):{constraint}",
-                            display_iter(self.0.value_group_members(group), ",")
-                        )?,
-                        OperandKind::NonAllocatable => {
-                            write!(f, "NonAllocatable:{constraint}")?;
-                        }
-                    }
+                    self.display_operand(f, operand)?;
                 }
                 for unit in self.0.inst_clobbers(inst) {
                     write!(f, " Clobber:{unit}")?;
@@ -419,6 +437,16 @@ impl<F: Function, R: RegInfo> fmt::Display for DisplayOutputInst<'_, F, R> {
             OutputInst::Rematerialize { value, to } => {
                 write!(f, "remat {to} <- {value}")?;
             }
+            OutputInst::IndirectRematerialize { value, to, inputs } => {
+                write!(f, "indirect_remat {to} <- {value}(")?;
+                for (idx, input) in inputs.iter().enumerate() {
+                    if idx != 0 {
+                        f.write_str(",")?;
+                    }
+                    write!(f, "{input}")?;
+                }
+                f.write_str(")")?;
+            }
             OutputInst::Move { from, to, value } => {
                 if let Some(value) = value {
                     write!(f, "move {to} <- {from} ({value})")?;
@@ -443,9 +471,9 @@ impl<F: Function, R: RegInfo> fmt::Display for Output<'_, F, R> {
         let spillslot_area_size = self.stack_layout().spillslot_area_size();
         writeln!(f, "spillslot_area_size = {spillslot_area_size}")?;
         for slot in self.stack_layout().spillslots() {
-            let offset = self.stack_layout().spillslot_offset(slot);
-            let size = self.stack_layout().spillslot_size(slot);
-            writeln!(f, "{slot}: offset={offset} size={size}")?;
+            if let Some((offset, size)) = self.stack_layout().spillslot_layout(slot) {
+                writeln!(f, "{slot}: offset={offset} size={size}")?;
+            }
         }
 
         // Blocks

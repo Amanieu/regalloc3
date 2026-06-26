@@ -14,10 +14,16 @@ value_list = { (value ~ ",")* ~ value? }
 block_list = { (block ~ ",")* ~ block? }
 
 // Value declaration
-remat_cost        =  { "cheaper_than_move" | "cheaper_than_load" }
-remat             =  { "remat" ~ "(" ~ remat_cost ~ "," ~ regclass ~ ")" }
-value_attribute   = _{ regbank | remat }
-value_declaration =  { value ~ "=" ~ value_attribute+ }
+remat_cost                  =  { "cheaper_than_move" | "cheaper_than_load" }
+remat                       =  { "remat" ~ "(" ~ remat_cost ~ "," ~ regclass ~ ")" }
+indirect_remat_no_overlap   =  { "no_overlap" }
+indirect_remat_input_list   =  { operand ~ ("," ~ operand)* }
+indirect_remat              =  {
+    "indirect_remat" ~ "(" ~ constraint ~ "," ~ (indirect_remat_no_overlap ~ ",")? ~
+    indirect_remat_input_list ~ ")"
+}
+value_attribute             = _{ regbank | remat | indirect_remat }
+value_declaration           =  { value ~ "=" ~ value_attribute+ }
 
 // Start of block label
 frequency       = { "freq" ~ "(" ~ float ~ ")" }
@@ -30,7 +36,7 @@ constraint             =  { physreg | regclass | reuse }
 nonallocatable_operand =  { "NonAllocatable" ~ ":" ~ physreg }
 operand_kind           =  { "Def" | "EarlyDef" | "Use" }
 normal_operand         =  { operand_kind ~ "(" ~ value_list ~ ")" ~ ":" ~ constraint }
-operand                = _{ normal_operand | nonallocatable_operand }
+operand                =  { normal_operand | nonallocatable_operand }
 clobber                =  { "Clobber" ~ ":" ~ unit }
 
 // Instruction
