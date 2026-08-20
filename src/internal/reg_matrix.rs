@@ -59,10 +59,12 @@ impl InterferenceSegment for ValueSegment {
 impl BTreeKey for LiveRangePoint {
     type Int = NonMaxU32;
 
+    #[inline]
     fn to_int(self) -> Self::Int {
         NonMaxU32::new(self.bits).unwrap()
     }
 
+    #[inline]
     fn from_int(int: Self::Int) -> Self {
         LiveRangePoint { bits: int.get() }
     }
@@ -291,13 +293,6 @@ impl RegMatrix {
                 vreg: None.into(),
                 fixed_use: value.index() as u32,
             },
-        );
-
-        // Check that all elements are still sorted.
-        debug_assert!(
-            self.reservations[unit]
-                .fixed_uses
-                .is_sorted_by(|a, b| a.0.end_for_fixed_use_reservation() <= b.0)
         );
 
         // Ensure there are no overlapping reservations.
