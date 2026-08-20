@@ -253,14 +253,12 @@ where
 
     /// Iterate over all the keys in this map.
     #[inline]
-    #[must_use]
     pub fn keys(&self) -> impl DoubleEndedIterator<Item = K> + ExactSizeIterator + '_ {
         self.dense.iter().map(|(k, _v)| *k)
     }
 
     /// Iterate over all the values in this map.
     #[inline]
-    #[must_use]
     pub fn values(&self) -> impl DoubleEndedIterator<Item = &V> + ExactSizeIterator + '_ {
         self.dense.iter().map(|(_k, v)| v)
     }
@@ -275,7 +273,6 @@ where
 
     /// Return an owning iterator over the values of the map.
     #[inline]
-    #[must_use]
     pub fn into_values(self) -> impl DoubleEndedIterator<Item = V> + ExactSizeIterator {
         self.dense.into_iter().map(|(_k, v)| v)
     }
