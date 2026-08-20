@@ -1,0 +1,851 @@
+use alloc::vec;
+use alloc::vec::Vec;
+use core::ops::RangeInclusive;
+
+use arbitrary::{Result, Unstructured};
+
+use super::{BlockData, GenericFunction, IndirectRematData, InstData};
+use crate::debug_utils::dominator_tree::DominatorTree;
+use crate::debug_utils::generic_function::ValueData;
+use crate::debug_utils::postorder::PostOrder;
+use crate::entity::{PrimaryMap, SecondaryMap};
+use crate::function::{
+    Block, Function, Inst, InstRange, MAX_INST_OPERANDS, Operand, OperandConstraint, OperandKind,
+    RematCost, TerminatorKind, Value,
+};
+use crate::reginfo::{MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet};
+
+/// Configuration options for [`GenericFunction::arbitrary_with_config`].
+///
+/// These are ranges from which a value is arbitrarily chosen when generating a
+/// function.
+///
+/// It's generally fine to just use `Default::default` for this.
+#[derive(Debug, Clone)]
+pub struct ArbitraryFunctionConfig {
+    /// Number of CFG edges. This also implicitly controls the number of blocks
+    /// in a function since all blocks must be reachable from an entry point.
+    pub cfg_edges: RangeInclusive<usize>,
+
+    /// Number of entry points in the function.
+    pub entry_points: RangeInclusive<usize>,
+
+    /// Number of block parameters for each block that is allowed to have them.
+    pub blockparams_per_block: RangeInclusive<usize>,
+
+    /// Number of instructions per block, excluding the terminator instruction.
+    pub insts_per_block: RangeInclusive<usize>,
+
+    /// Number of definition operands (`Def` and `EarlyDef`) per instruction.
+    ///
+    /// Some instructions may exceed this limit due to the way the algorithm
+    /// works. This is because all used values need a definition, which may
+    /// force extra definitions to be added.
+    pub defs_per_inst: RangeInclusive<usize>,
+
+    /// Number of non-definition operands (`Use` and `NonAllocatable`) per
+    /// instruction.
+    pub uses_per_inst: RangeInclusive<usize>,
+
+    /// Number of clobbers per instruction.
+    pub clobbers_per_inst: RangeInclusive<usize>,
+}
+
+impl Default for ArbitraryFunctionConfig {
+    fn default() -> Self {
+        Self {
+            cfg_edges: 0..=20,
+            entry_points: 1..=4,
+            blockparams_per_block: 0..=30,
+            insts_per_block: 0..=15,
+            defs_per_inst: 0..=20,
+            uses_per_inst: 0..=20,
+            clobbers_per_inst: 0..=20,
+        }
+    }
+}
+
+impl GenericFunction {
+    /// Constructs a randomly-generated `GenericFunction`.
+    ///
+    /// This function is guaranteed to pass validation with the given (valid)
+    /// [`RegInfo`] implementation.
+    pub fn arbitrary_with_config(
+        reginfo: &impl RegInfo,
+        u: &mut Unstructured<'_>,
+        config: ArbitraryFunctionConfig,
+    ) -> Result<Self> {
+        let mut builder = FunctionBuilder::new(u, reginfo, config);
+        builder.gen_cfg_skeleton()?;
+        builder.block_insts.grow_to(builder.func.num_blocks());
+        builder.defs_by_blocks.grow_to(builder.func.num_blocks());
+
+        let postorder = PostOrder::for_function(&builder.func);
+        builder.domtree.compute(&builder.func, &postorder);
+
+        builder.add_blockparams()?;
+
+        for block in postorder.cfg_postorder() {
+            builder.func.blocks[block].immediate_dominator =
+                builder.domtree.immediate_dominator(block).into();
+            builder.gen_block_insts(block)?;
+        }
+
+        // Generate some unused values.
+        for _ in 0..builder.u.int_in_range(0..=10)? {
+            let bank = RegBank::new(builder.u.choose_index(reginfo.num_banks())?);
+            builder.new_value(bank)?;
+        }
+
+        builder.finalize()?;
+
+        Ok(builder.func)
+    }
+}
+
+struct FunctionBuilder<'a, 'b, R> {
+    /// Source of randomness.
+    u: &'a mut Unstructured<'b>,
+
+    /// Register description.
+    reginfo: &'a R,
+
+    /// Function that is being built.
+    func: GenericFunction,
+
+    /// Configuration options
+    config: ArbitraryFunctionConfig,
+
+    /// Dominator tree of the function.
+    domtree: DominatorTree,
+
+    /// Instructions for each basic block, in reverse order.
+    ///
+    /// These are later copied to the `GenericFunction` in proper block order
+    /// once instructions for all blocks have been generated.
+    block_insts: SecondaryMap<Block, Vec<InstData>>,
+
+    /// List of register classes per register bank.
+    class_per_bank: SecondaryMap<RegBank, Vec<RegClass>>,
+
+    /// List of register classes that are suitable for direct rematerialization.
+    remat_class_per_bank: SecondaryMap<RegBank, Vec<RegClass>>,
+
+    /// List of registers per register bank.
+    reg_per_bank: SecondaryMap<RegBank, Vec<PhysReg>>,
+
+    /// List of non-allocatable registers.
+    non_allocatable_regs: Vec<PhysReg>,
+
+    /// Values that have been used but not yet defined, for each block they
+    /// should be defined in. This does not include incoming blockparams for
+    /// this block.
+    ///
+    /// As values are defined, they are removed from this list.
+    defs_by_blocks: SecondaryMap<Block, Vec<Value>>,
+
+    /// Scratch space used to collect candidates for using an existing value.
+    use_candidates: Vec<Value>,
+
+    /// Registers currently allocated with a fixed constraint in the current
+    /// instruction.
+    early_fixed: RegUnitSet,
+    late_fixed: RegUnitSet,
+
+    /// Def operands which are suitable for `OperandConstraint::Reuse`.
+    reuse_operands: Vec<usize>,
+}
+
+impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
+    /// Initializes the `FunctionBuilder`.
+    fn new(u: &'a mut Unstructured<'b>, reginfo: &'a R, config: ArbitraryFunctionConfig) -> Self {
+        let func = GenericFunction {
+            entry_points: vec![],
+            blocks: PrimaryMap::new(),
+            insts: PrimaryMap::new(),
+            values: PrimaryMap::new(),
+            value_groups: PrimaryMap::new(),
+        };
+
+        let mut class_per_bank: SecondaryMap<RegBank, Vec<RegClass>> =
+            SecondaryMap::with_max_index(reginfo.num_banks());
+        let mut remat_class_per_bank: SecondaryMap<RegBank, Vec<RegClass>> =
+            SecondaryMap::with_max_index(reginfo.num_banks());
+        let mut reg_per_bank: SecondaryMap<RegBank, Vec<PhysReg>> =
+            SecondaryMap::with_max_index(reginfo.num_banks());
+        let mut non_allocatable_regs = vec![];
+        for class in reginfo.classes() {
+            class_per_bank[reginfo.bank_for_class(class)].push(class);
+            if reginfo.class_group_size(class) == 1
+                && !reginfo.allocation_order(class).is_empty()
+                && (reginfo.class_includes_spillslots(class)
+                    || reginfo
+                        .class_members(class)
+                        .into_iter()
+                        .all(|reg| !reginfo.is_memory(reg)))
+            {
+                remat_class_per_bank[reginfo.bank_for_class(class)].push(class);
+            }
+        }
+        for reg in reginfo.regs() {
+            if let Some(bank) = reginfo.bank_for_reg(reg) {
+                reg_per_bank[bank].push(reg);
+            } else {
+                non_allocatable_regs.push(reg);
+            }
+        }
+
+        Self {
+            u,
+            reginfo,
+            func,
+            config,
+            domtree: DominatorTree::new(),
+            block_insts: SecondaryMap::new(),
+            class_per_bank,
+            remat_class_per_bank,
+            reg_per_bank,
+            non_allocatable_regs,
+            defs_by_blocks: SecondaryMap::new(),
+            use_candidates: vec![],
+            early_fixed: RegUnitSet::new(),
+            late_fixed: RegUnitSet::new(),
+            reuse_operands: vec![],
+        }
+    }
+
+    /// Generates a reasonable block frequency.
+    fn block_frequency(&mut self) -> Result<f32> {
+        Ok(2.0f32.powi(self.u.int_in_range(-10..=10)?))
+    }
+
+    /// Generates a function skeleton with a randomly generated CFG.
+    ///
+    /// These blocks do not contain any instructions yet.
+    fn gen_cfg_skeleton(&mut self) -> Result<()> {
+        // To avoid critical edges, we need to ensure that blocks with multiple
+        // successors only jump to blocks with a single predecessors, and that
+        // blocks with multiple predecessors are only jumped to from blocks with
+        // a single successor.
+        let mut can_add_succ = vec![];
+        let mut can_add_pred = vec![];
+
+        // Create the entry points.
+        let num_entries = self
+            .u
+            .int_in_range(self.config.entry_points.clone())?
+            .max(1);
+        for _ in 0..num_entries {
+            let entry_frequency = self.block_frequency()?;
+            let entry = self.func.blocks.push(BlockData {
+                insts: InstRange::new(Inst::new(0), Inst::new(0)),
+                preds: vec![],
+                succs: vec![],
+                block_params_in: vec![],
+                block_params_out: vec![],
+                immediate_dominator: None.into(),
+                frequency: entry_frequency,
+                is_critical_edge: false,
+            });
+            self.func.entry_points.push(entry);
+            can_add_succ.push(entry);
+        }
+
+        // Repeatedly add edges to the CFG, either to a new block, or to an
+        // existing block.
+        for _ in 0..self.u.int_in_range(self.config.cfg_edges.clone())? {
+            if can_add_succ.is_empty() {
+                break;
+            }
+
+            let from = *self.u.choose(&can_add_succ)?;
+            let mut to = None;
+
+            // If the chosen block has no successors, try linking it to an
+            // existing block that accepts predecessors.
+            if !can_add_pred.is_empty()
+                && self.func.blocks[from].succs.is_empty()
+                && self.u.arbitrary()?
+            {
+                to = Some(*self.u.choose(&can_add_pred)?);
+            }
+
+            if let Some(to) = to {
+                // Create an edge to an existing block.
+                self.func.blocks[from].succs.push(to);
+                self.func.blocks[to].preds.push(from);
+
+                // If the `to` block now has multiple predecessors, prevent
+                // adding new successors to them.
+                if self.func.blocks[to].preds.len() > 1 {
+                    can_add_succ.retain(|b| !self.func.blocks[to].preds.contains(b));
+                }
+            } else {
+                // Create an edge to a new block.
+                let frequency = self.block_frequency()?;
+                let to = self.func.blocks.push(BlockData {
+                    insts: InstRange::new(Inst::new(0), Inst::new(0)),
+                    preds: vec![from],
+                    succs: vec![],
+                    block_params_in: vec![],
+                    block_params_out: vec![],
+                    immediate_dominator: None.into(),
+                    frequency,
+                    is_critical_edge: self.u.arbitrary()?,
+                });
+                self.func.blocks[from].succs.push(to);
+
+                // We can add more predecessors to the new block if it is the
+                // only successor of `from`.
+                if self.func.blocks[from].succs.len() == 1 {
+                    can_add_pred.push(to);
+                }
+                can_add_succ.push(to);
+            }
+
+            // If the `from` block now has multiple successors, prevent
+            // adding new predecessors to them.
+            if self.func.blocks[from].succs.len() > 1 {
+                can_add_pred.retain(|b| !self.func.blocks[from].succs.contains(b));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Defines a new value with randomized properties.
+    fn new_value(&mut self, bank: RegBank) -> Result<Value> {
+        let remat = if !self.remat_class_per_bank[bank].is_empty() && self.u.arbitrary()? {
+            let cost = if self.u.arbitrary()? {
+                RematCost::CheaperThanMove
+            } else {
+                RematCost::CheaperThanLoad
+            };
+            let class = *self.u.choose(&self.remat_class_per_bank[bank])?;
+            Some((cost, class))
+        } else {
+            None
+        };
+        let value = self.func.values.push(ValueData {
+            bank,
+            remat,
+            indirect_remat: None,
+        });
+        Ok(value)
+    }
+
+    /// Adds incoming block parameters to blocks that allow them.
+    fn add_blockparams(&mut self) -> Result<()> {
+        // Entry points cannot have blockparams.
+        for block in self.func.blocks.keys() {
+            if self.func.entry_points.contains(&block) {
+                continue;
+            }
+            // Blockparams are only allowed if we have multiple predecessors.
+            if self.func.blocks[block].preds.len() <= 1 {
+                continue;
+            }
+            let can_add_indirect_remats = self.domtree.immediate_dominator(block).is_some();
+
+            // Define some values for incoming blockparams.
+            for _ in 0..self
+                .u
+                .int_in_range(self.config.blockparams_per_block.clone())?
+            {
+                let bank = RegBank::new(self.u.choose_index(self.reginfo.num_banks())?);
+                let value = self.new_value(bank)?;
+                if can_add_indirect_remats && !self.u.arbitrary()? {
+                    self.add_indirect_remat(value, block, true)?;
+                }
+                self.func.blocks[block].block_params_in.push(value);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Generate the contents of a basic block.
+    ///
+    /// This should be called in CFG post-order so that uses come before
+    /// definitions.
+    fn gen_block_insts(&mut self, block: Block) -> Result<()> {
+        // We generate instructions in reverse, starting with the terminator.
+        // This allows us to know exactly what values need to be defined later.
+        let mut num_insts = self.u.int_in_range(self.config.insts_per_block.clone())?;
+
+        // Set up outgoing blockparams if we have a single successor that itself
+        // has multiple predecessors.
+        if let [succ] = self.func.blocks[block].succs[..] {
+            if self.func.blocks[succ].preds.len() > 1 {
+                for idx in 0..self.func.blocks[succ].block_params_in.len() {
+                    let bank = self.func.values[self.func.blocks[succ].block_params_in[idx]].bank;
+                    // It's fine if this adds defs to the current block, we will
+                    // increase num_insts below to ensure these have a defining
+                    // instruction.
+                    let value = self.get_value_for_use(bank, block, false)?;
+                    self.func.blocks[block].block_params_out.push(value);
+                }
+
+                // Our terminator cannot have operands. Create an empty
+                // terminator now before adding any instructions.
+                self.block_insts[block].push(InstData {
+                    operands: vec![],
+                    clobbers: vec![],
+                    block,
+                    terminator_kind: Some(TerminatorKind::Jump),
+                    is_pure: false,
+                });
+
+                // If there are values that need to be defined in this block for
+                // outgoing blockparams, make sure it has at least one
+                // instruction.
+                if num_insts == 0 && !self.defs_by_blocks[block].is_empty() {
+                    num_insts = 1;
+                }
+            }
+        }
+
+        // We need a terminator instruction if an empty one wasn't created
+        // above. This one is allowed to have operands like a normal
+        // instruction.
+        if self.block_insts[block].is_empty() {
+            let is_ret = self.func.blocks[block].succs.is_empty();
+            let mut terminator = self.gen_inst(block, num_insts == 0, is_ret)?;
+            terminator.is_pure = false;
+            terminator.terminator_kind = Some(if is_ret {
+                TerminatorKind::Ret
+            } else {
+                TerminatorKind::Branch
+            });
+            self.block_insts[block].push(terminator);
+        }
+
+        // Generate a sequence of instructions in the block.
+        for idx in 0..num_insts {
+            // If this is the last instruction we generate (i.e. the first one
+            // in the block) then we need to ensure all definitions assigned to
+            // this block are actually processed.
+            let inst = self.gen_inst(block, idx == num_insts - 1, false)?;
+            self.block_insts[block].push(inst);
+        }
+
+        self.gen_block_start_defs(block)?;
+
+        Ok(())
+    }
+
+    /// Checks if the given register can be used as an early/late fixed-register
+    /// constraint, and if successful, marks all of the register's sub-units as
+    /// in-use for the current instruction.
+    fn check_fixed_conflict(&mut self, reg: PhysReg, early: bool, late: bool) -> bool {
+        if self.reginfo.reg_units(reg).any(|unit| {
+            (early && self.early_fixed.contains(unit)) || (late && self.late_fixed.contains(unit))
+        }) {
+            return false;
+        }
+        if early {
+            self.early_fixed.extend(self.reginfo.reg_units(reg));
+        }
+        if late {
+            self.late_fixed.extend(self.reginfo.reg_units(reg));
+        }
+        true
+    }
+
+    /// Returns a value for use as an `OperandKind::Use` in the given block.
+    ///
+    /// Because we process instructions in post-order, uses are processed before
+    /// definitions. If necessary, this function will create a new value to be
+    /// defined as a later point in the current block or in a dominating block.
+    fn get_value_for_use(
+        &mut self,
+        bank: RegBank,
+        block: Block,
+        is_first_inst: bool,
+    ) -> Result<Value> {
+        // Try to reuse an existing value.
+        if self.u.arbitrary()? {
+            self.use_candidates.clear();
+
+            // Walk up the dominator tree to collect all values that we can use.
+            // Specifically: any value whose definition dominates us and which
+            // comes from a compatible register bank.
+            let mut reuse_block = block;
+            loop {
+                self.use_candidates.extend(
+                    self.defs_by_blocks[reuse_block]
+                        .iter()
+                        .chain(&self.func.blocks[reuse_block].block_params_in)
+                        .copied()
+                        .filter(|&value| self.func.values[value].bank == bank),
+                );
+
+                let Some(idom) = self.domtree.immediate_dominator(reuse_block) else {
+                    break;
+                };
+                reuse_block = idom;
+            }
+
+            // If no suitable values exist, just define a new one.
+            if !self.use_candidates.is_empty() {
+                return self.u.choose(&self.use_candidates).copied();
+            }
+        }
+
+        // Walk up the dominator tree to find a block in which to define this
+        // value. If this is the first instruction then we cannot add a new
+        // definition in the current block.
+        let mut def_block = if is_first_inst {
+            self.domtree.immediate_dominator(block).unwrap()
+        } else {
+            block
+        };
+        while let Some(idom) = self.domtree.immediate_dominator(def_block) {
+            // This halves the probability every time we go up the tree.
+            if self.u.arbitrary()? {
+                break;
+            }
+
+            def_block = idom;
+        }
+
+        // Define a new value and record it to be defined in the chosen block.
+        let value = self.new_value(bank)?;
+        self.defs_by_blocks[def_block].push(value);
+        Ok(value)
+    }
+
+    /// Generates an operand which uses a value.
+    fn gen_use(
+        &mut self,
+        block: Block,
+        is_first_inst: bool,
+        allow_non_allocatable: bool,
+        mut try_reuse_operand: impl FnMut(&mut Self) -> Result<Option<RegClass>>,
+    ) -> Result<Operand> {
+        // Generate a NonAllocatable operand if we have non-allocatable registers.
+        if allow_non_allocatable && !self.non_allocatable_regs.is_empty() && self.u.arbitrary()? {
+            let reg = *self.u.choose(&self.non_allocatable_regs)?;
+            return Ok(Operand::fixed_nonallocatable(reg));
+        }
+
+        // Try to use a fixed register. We only do this if it doesn't introduce
+        // a conflict with an existing fixed-register constraint.
+        if self.u.arbitrary()? {
+            let bank = RegBank::new(self.u.choose_index(self.reginfo.num_banks())?);
+            let reg = *self.u.choose(&self.reg_per_bank[bank])?;
+            if self.check_fixed_conflict(reg, true, false) {
+                let value = self.get_value_for_use(bank, block, is_first_inst)?;
+                return Ok(Operand::new(
+                    OperandKind::Use(value),
+                    OperandConstraint::Fixed(reg),
+                ));
+            }
+        }
+
+        let class = if let Some(class) = try_reuse_operand(self)? {
+            class
+        } else {
+            // Pick a register class to use.
+            RegClass::new(self.u.choose_index(self.reginfo.num_classes())?)
+        };
+
+        let bank = self.reginfo.bank_for_class(class);
+        let group_size = self.reginfo.class_group_size(class);
+        let kind = if group_size > 1 {
+            let mut values = vec![];
+            for _ in 0..group_size {
+                values.push(self.get_value_for_use(bank, block, is_first_inst)?);
+            }
+            let value_group = self.func.value_groups.push(values);
+            OperandKind::UseGroup(value_group)
+        } else {
+            let value = self.get_value_for_use(bank, block, is_first_inst)?;
+            OperandKind::Use(value)
+        };
+        Ok(Operand::new(kind, OperandConstraint::Class(class)))
+    }
+
+    /// Adds an indirect rematerialization recipe for a value defined at
+    /// the current program point.
+    fn add_indirect_remat(
+        &mut self,
+        value: Value,
+        block: Block,
+        is_first_inst: bool,
+    ) -> Result<()> {
+        let saved_early_fixed = self.early_fixed;
+        let saved_late_fixed = self.late_fixed;
+        self.early_fixed.clear();
+        self.late_fixed.clear();
+
+        let allow_destination_overlap: bool = self.u.arbitrary()?;
+        let bank = self.func.values[value].bank;
+        let mut constraint = OperandConstraint::Class(self.reginfo.top_level_class(bank));
+        if self.u.arbitrary()? {
+            let reg = *self.u.choose(&self.reg_per_bank[bank])?;
+            if self.check_fixed_conflict(reg, !allow_destination_overlap, true) {
+                constraint = OperandConstraint::Fixed(reg);
+            }
+        }
+
+        let input_count = self.u.int_in_range(self.config.uses_per_inst.clone())?;
+        if input_count != 0 {
+            let mut inputs = vec![];
+            for _ in 0..input_count {
+                let input_idx = inputs.len();
+                let input = self.gen_use(block, is_first_inst, input_idx != 0, |this| {
+                    let OperandConstraint::Class(class) = constraint else {
+                        return Ok(None);
+                    };
+                    if this.u.arbitrary()? {
+                        constraint = OperandConstraint::Reuse(input_idx);
+                        Ok(Some(class))
+                    } else {
+                        Ok(None)
+                    }
+                })?;
+                inputs.push(input);
+            }
+
+            self.func.values[value].indirect_remat = Some(IndirectRematData {
+                constraint,
+                inputs,
+                allow_destination_overlap,
+            });
+        }
+
+        self.early_fixed = saved_early_fixed;
+        self.late_fixed = saved_late_fixed;
+
+        Ok(())
+    }
+
+    /// Generates an operand which defines a value.
+    fn gen_def(
+        &mut self,
+        block: Block,
+        value: Value,
+        is_ret: bool,
+        op_idx: usize,
+        defined_values: &mut Vec<Value>,
+    ) -> Result<Operand> {
+        let bank = self.func.values[value].bank;
+
+        // Try to use a fixed register.
+        if self.u.arbitrary()? {
+            let reg = *self.u.choose(&self.reg_per_bank[bank])?;
+            let kind = if !is_ret && self.u.arbitrary()? {
+                OperandKind::Def(value)
+            } else {
+                OperandKind::EarlyDef(value)
+            };
+            if self.check_fixed_conflict(reg, matches!(kind, OperandKind::EarlyDef(_)), true) {
+                defined_values.push(value);
+                return Ok(Operand::new(kind, OperandConstraint::Fixed(reg)));
+            }
+        }
+
+        // Pick a register class to use.
+        let class = *self.u.choose(&self.class_per_bank[bank])?;
+        let group_size = self.reginfo.class_group_size(class);
+        let kind = if group_size > 1 {
+            let mut values = vec![value];
+            for _ in 1..group_size {
+                // Try to find another definition from the definition list in
+                // the current block.
+                let value = if !self.defs_by_blocks[block].is_empty() && self.u.arbitrary()? {
+                    let value_idx = self.u.choose_index(self.defs_by_blocks[block].len())?;
+                    if self.func.values[self.defs_by_blocks[block][value_idx]].bank == bank {
+                        self.defs_by_blocks[block].remove(value_idx)
+                    } else {
+                        self.new_value(bank)?
+                    }
+                } else {
+                    self.new_value(bank)?
+                };
+                values.push(value);
+            }
+            if self.u.arbitrary()? {
+                // Later change this into a Reuse.
+                self.reuse_operands.push(op_idx);
+            }
+            defined_values.extend_from_slice(&values);
+            let value_group = self.func.value_groups.push(values);
+            if !is_ret && self.u.arbitrary()? {
+                OperandKind::DefGroup(value_group)
+            } else {
+                OperandKind::EarlyDefGroup(value_group)
+            }
+        } else {
+            if self.u.arbitrary()? {
+                // Later change this into a Reuse.
+                self.reuse_operands.push(op_idx);
+            }
+            defined_values.push(value);
+            if !is_ret && self.u.arbitrary()? {
+                OperandKind::Def(value)
+            } else {
+                OperandKind::EarlyDef(value)
+            }
+        };
+        Ok(Operand::new(kind, OperandConstraint::Class(class)))
+    }
+
+    /// Generates instructions containing the remaining defs in a block after
+    /// other instructions have been emitted.
+    fn gen_block_start_defs(&mut self, block: Block) -> Result<()> {
+        // We may need to emit multiple instructions due to MAX_INST_OPERANDS.
+        while !self.defs_by_blocks[block].is_empty() {
+            self.early_fixed.clear();
+            self.late_fixed.clear();
+            self.reuse_operands.clear();
+
+            let mut inst = InstData {
+                operands: vec![],
+                clobbers: vec![],
+                block,
+                terminator_kind: None,
+                is_pure: self.u.arbitrary()?,
+            };
+
+            let mut defined_values = vec![];
+            while inst.operands.len() < MAX_INST_OPERANDS {
+                let Some(value) = self.defs_by_blocks[block].pop() else {
+                    break;
+                };
+                let op = self.gen_def(
+                    block,
+                    value,
+                    false,
+                    inst.operands.len(),
+                    &mut defined_values,
+                )?;
+                inst.operands.push(op);
+            }
+
+            if self.domtree.immediate_dominator(block).is_some() {
+                for value in defined_values {
+                    if !self.u.arbitrary()? {
+                        self.add_indirect_remat(value, block, true)?;
+                    }
+                }
+            }
+
+            self.block_insts[block].push(inst);
+        }
+
+        Ok(())
+    }
+
+    /// Generates a single instruction in the given block.
+    fn gen_inst(&mut self, block: Block, is_first_inst: bool, is_ret: bool) -> Result<InstData> {
+        // These are temporary for the scope of this instruction.
+        self.early_fixed.clear();
+        self.late_fixed.clear();
+        self.reuse_operands.clear();
+
+        let mut inst = InstData {
+            operands: vec![],
+            clobbers: vec![],
+            block,
+            terminator_kind: None,
+            is_pure: self.u.arbitrary()?,
+        };
+
+        // Add operands which define values.
+        let mut defined_values = vec![];
+        for _ in 0..self.u.int_in_range(self.config.defs_per_inst.clone())? {
+            if inst.operands.len() >= MAX_INST_OPERANDS {
+                break;
+            }
+
+            // Generate a value that was previously used, otherwise generate a
+            // new dead value.
+            let value = if self.u.arbitrary()? && !self.defs_by_blocks[block].is_empty() {
+                self.defs_by_blocks[block].pop().unwrap()
+            } else {
+                let bank = RegBank::new(self.u.choose_index(self.reginfo.num_banks())?);
+                self.new_value(bank)?
+            };
+            let op = self.gen_def(
+                block,
+                value,
+                is_ret,
+                inst.operands.len(),
+                &mut defined_values,
+            )?;
+            inst.operands.push(op);
+        }
+
+        let can_generate_uses = !is_first_inst || self.domtree.immediate_dominator(block).is_some();
+        if can_generate_uses {
+            for value in defined_values {
+                if !self.u.arbitrary()? {
+                    self.add_indirect_remat(value, block, is_first_inst)?;
+                }
+            }
+        }
+
+        // Add operands which use values, unless we are the first instruction of
+        // a block without a real dominator. In such blocks there is nowhere to
+        // synthesize a new dominating definition if no reusable value exists.
+        if can_generate_uses {
+            for _ in 0..self.u.int_in_range(self.config.uses_per_inst.clone())? {
+                if inst.operands.len() >= MAX_INST_OPERANDS {
+                    break;
+                }
+                let op_idx = inst.operands.len();
+                let op = self.gen_use(block, is_first_inst, true, |this| {
+                    if this.reuse_operands.is_empty() || this.u.arbitrary()? {
+                        return Ok(None);
+                    }
+
+                    // Reuse the class of a Def and turn that Def into a Reuse.
+                    let idx = this.u.choose_index(this.reuse_operands.len())?;
+                    let def_idx = this.reuse_operands.swap_remove(idx);
+                    let OperandConstraint::Class(class) = inst.operands[def_idx].constraint()
+                    else {
+                        unreachable!();
+                    };
+                    inst.operands[def_idx] = Operand::new(
+                        inst.operands[def_idx].kind(),
+                        OperandConstraint::Reuse(op_idx),
+                    );
+                    Ok(Some(class))
+                })?;
+                inst.operands.push(op);
+            }
+        }
+
+        // Add clobbers which don't conflict with fixed defs or other clobbers.
+        if !is_ret {
+            for _ in 0..self.u.int_in_range(self.config.clobbers_per_inst.clone())? {
+                let unit = RegUnit::new(self.u.int_in_range(0..=MAX_REG_UNITS - 1)?);
+                if self.late_fixed.contains(unit) {
+                    continue;
+                }
+                self.late_fixed.insert(unit);
+                inst.clobbers.push(unit);
+            }
+        }
+
+        Ok(inst)
+    }
+
+    /// Finalizes the function by assigning instruction numbers to each
+    /// instruction, in block order.
+    fn finalize(&mut self) -> Result<()> {
+        for (block, blockdata) in &mut self.func.blocks {
+            // Instructions were generated in reverse, un-reverse them and add them
+            // to the block.
+            let from = self.func.insts.next_key();
+            for inst_data in self.block_insts[block].drain(..).rev() {
+                self.func.insts.push(inst_data);
+            }
+            let to = self.func.insts.next_key();
+            blockdata.insts = InstRange::new(from, to);
+        }
+        Ok(())
+    }
+}
