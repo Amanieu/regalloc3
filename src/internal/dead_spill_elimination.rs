@@ -62,7 +62,7 @@ impl DeadSpillElimination {
         for live_out in self.block_live_out.values_mut() {
             live_out.clear_and_resize(num_spillslots);
         }
-        self.live.grow_to(num_spillslots);
+        self.live.resize(num_spillslots);
 
         // Start by inserting all blocks into the queue.
         self.blocks_to_process.clear();

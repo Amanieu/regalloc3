@@ -48,7 +48,7 @@ where
 {
     /// Creates an empty set.
     ///
-    /// The set must be grown with [`EntitySet::grow_to`] or [`EntitySet::clear_and_resize`]
+    /// The set must be sized with [`EntitySet::resize`] or [`EntitySet::clear_and_resize`]
     /// before any elements can be inserted.
     #[inline]
     #[must_use]
@@ -64,7 +64,7 @@ where
     #[must_use]
     pub fn with_max_index(max_index: usize) -> Self {
         let mut set = Self::new();
-        set.grow_to(max_index);
+        set.resize(max_index);
         set
     }
 
@@ -129,15 +129,17 @@ where
     #[inline]
     pub fn clear_and_resize(&mut self, max_index: usize) {
         self.storage.clear();
-        self.grow_to(max_index);
+        self.resize(max_index);
     }
 
     /// Resizes the set to be large enough to hold entity references with an
     /// index below `max_index`.
     ///
-    /// Any existing elements are not modified.
+    /// The storage size is rounded up to a whole machine word. Shrinking
+    /// discards elements beyond this rounded size; elements in retained words
+    /// are not modified. Newly added words contain no elements.
     #[inline]
-    pub fn grow_to(&mut self, max_index: usize) {
+    pub fn resize(&mut self, max_index: usize) {
         let words = max_index.div_ceil(Word::BITS as usize);
         self.storage.resize(words, 0);
     }
@@ -186,10 +188,15 @@ where
     }
 
     /// Returns the next entity starting from `from` that is absent from the set.
+    ///
+    /// `from` must be within the set's current storage range, which is rounded
+    /// up to a whole machine word. If all entities from `from` to the end of
+    /// that range are present, returns the entity immediately beyond the range.
     #[inline]
     #[must_use]
     pub fn next_absent_from(&self, from: T) -> T {
         let (idx, bit) = Self::index(from);
+        debug_assert!(idx < self.storage.len());
 
         if idx < self.storage.len() {
             // Search for another zero bit in the current word. We use a
