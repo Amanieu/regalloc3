@@ -198,7 +198,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                             "{source} {operand}: Value used with group register class"
                         );
                         ensure!(
-                            !self.reginfo.class_members(class).is_empty(),
+                            !self.reginfo.class_members(class).is_empty()
+                                || self.reginfo.class_includes_spillslots(class),
                             "{source} {operand}: {value} constrained to empty register class"
                         );
                         let value_bank = self.func.value_bank(value);
@@ -466,6 +467,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 self.func.block_preds(succ).contains(&block),
                 "Inconsistent predecessors and successors between {block} and {succ}"
             );
+            ensure!(
+                self.func.block_params(succ).len() == self.func.jump_blockparams(block).len(),
+                "Blockparam count mismatch between {block} and {succ}"
+            );
         }
 
         // Check for crtical edges. If we have more than one predecessors, those
@@ -500,10 +505,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             let &[succ] = self.func.block_succs(block) else {
                 bail!("{block}: Jump blockparams can only be used with a single successor");
             };
-            ensure!(
-                self.func.block_params(succ).len() == self.func.jump_blockparams(block).len(),
-                "Blockparam count mismatch between {block} and {succ}"
-            );
             for (&blockparam_out, &blockparam_in) in self
                 .func
                 .jump_blockparams(block)
@@ -559,6 +560,15 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                         self.func.jump_blockparams(block).is_empty(),
                         "{inst}: Only jump terminators may have outgoing block parameters"
                     );
+                }
+                if kind == TerminatorKind::Branch {
+                    for &succ in self.func.block_succs(block) {
+                        ensure!(
+                            self.func.block_preds(succ).len() == 1,
+                            "{inst}: Branch terminators can only target blocks with a single \
+                             predecessor (use a Jump terminator instead)"
+                        );
+                    }
                 }
                 if kind == TerminatorKind::Ret {
                     ensure!(
@@ -624,7 +634,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         for inst in self.func.block_insts(block).iter() {
             for op in self.func.inst_operands(inst) {
-                if let OperandKind::Use(value) = op.kind() {
+                let values = match op.kind() {
+                    OperandKind::Use(value) => ValueOrGroup::Value(value),
+                    OperandKind::UseGroup(group) => ValueOrGroup::Group(group),
+                    _ => continue,
+                };
+                for &value in values.members(self.func) {
                     let Some(def) = self.value_defs[value] else {
                         bail!("{value} used without being defined");
                     };

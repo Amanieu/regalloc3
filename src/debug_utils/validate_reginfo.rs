@@ -304,11 +304,20 @@ impl<R: RegInfo> Context<'_, R> {
                     self.reginfo.class_group_size(subclass) == group_size,
                     "Subclass {subclass} must have same group size as {class}"
                 );
-                for reg in self.reginfo.class_members(subclass) {
-                    ensure!(
-                        self.reginfo.class_members(class).contains(reg),
-                        "Subclass {subclass} of {class} doesn't contain {reg}"
-                    );
+                if group_size == 1 {
+                    for reg in self.reginfo.class_members(subclass) {
+                        ensure!(
+                            self.reginfo.class_members(class).contains(reg),
+                            "Superclass {class} of {subclass} doesn't contain {reg}"
+                        );
+                    }
+                } else {
+                    for group in self.reginfo.class_group_members(subclass) {
+                        ensure!(
+                            self.reginfo.class_group_members(class).contains(group),
+                            "Superclass {class} of {subclass} doesn't contain {group}"
+                        );
+                    }
                 }
             }
         }
@@ -348,7 +357,7 @@ impl<R: RegInfo> Context<'_, R> {
     fn check_reg_group(&mut self, group: RegGroup) -> Result<()> {
         let members = self.reginfo.reg_group_members(group);
         ensure!(
-            members.len() >= 2 || members.len() > MAX_GROUP_SIZE,
+            members.len() >= 2 && members.len() <= MAX_GROUP_SIZE,
             "{group}: Invalid group size {}",
             members.len()
         );

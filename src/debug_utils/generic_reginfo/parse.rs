@@ -11,7 +11,8 @@ use pest_derive::Parser;
 use super::{GenericRegInfo, PhysRegData, RegBankData, RegClassData, RegGroupData};
 use crate::entity::{EntityRef, PrimaryMap, SecondaryMap};
 use crate::reginfo::{
-    PhysReg, PhysRegSet, RegBank, RegClass, RegClassSet, RegGroup, RegGroupSet, SpillSlotSize,
+    MAX_PHYSREGS, MAX_REG_BANKS, MAX_REG_CLASSES, MAX_REG_GROUPS, MAX_REG_UNITS, PhysReg,
+    PhysRegSet, RegBank, RegClass, RegClassSet, RegGroup, RegGroupSet, SpillSlotSize,
 };
 
 #[derive(Parser)]
@@ -50,8 +51,20 @@ fn parse_number<T: FromStr>(pair: Pair<'_, Rule>) -> Result<T> {
 }
 
 fn parse_entity<T: EntityRef>(pair: Pair<'_, Rule>) -> Result<T> {
+    let span = pair.as_span();
+    let limit = match pair.as_rule() {
+        Rule::reg => MAX_PHYSREGS,
+        Rule::unit => MAX_REG_UNITS,
+        Rule::reg_group => MAX_REG_GROUPS,
+        Rule::class => MAX_REG_CLASSES,
+        Rule::bank => MAX_REG_BANKS,
+        _ => unreachable!(),
+    };
     let [number] = extract(pair, [Rule::number]);
     let index = parse_number(number)?;
+    if index >= limit {
+        Err(custom_error(span, "entity index out of range"))?;
+    }
     Ok(T::new(index))
 }
 
@@ -164,7 +177,16 @@ fn parse_class_def(
             }
             Rule::superclasses => {
                 let [class_list] = extract(pair, [Rule::class_list]);
-                let list = parse_entity_list(class_list)?;
+                let span = class_list.as_span();
+                let list: Vec<RegClass> = parse_entity_list(class_list)?;
+                for superclass in &list {
+                    if superclass.index() >= classes.len() {
+                        Err(custom_error(
+                            span,
+                            "superclass must be declared before subclass",
+                        ))?;
+                    }
+                }
                 superclasses.grow_to(classes.len() + 1);
                 superclasses[classes.next_key()].extend(list);
             }
@@ -223,6 +245,9 @@ fn parse_class_def(
         if !is_group {
             if let RegList::Regs(members) = &members {
                 for &reg in members {
+                    if reg.index() >= regs.len() {
+                        Err(custom_error(span, "undeclared register in class members"))?;
+                    }
                     if regs[reg].bank.is_some_and(|reg_bank| reg_bank != bank) {
                         Err(custom_error(span, "register used with different banks"))?;
                     }

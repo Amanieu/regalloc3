@@ -2,7 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::str::FromStr;
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use pest::error::{Error, ErrorVariant};
 use pest::iterators::Pair;
 use pest::{Parser, Span};
@@ -13,9 +13,10 @@ use crate::debug_utils::dominator_tree::DominatorTree;
 use crate::debug_utils::postorder::PostOrder;
 use crate::entity::{EntityRef, PrimaryMap, SecondaryMap};
 use crate::function::{
-    Block, Function, Inst, InstRange, Operand, OperandConstraint, OperandKind, RematCost,
-    TerminatorKind, Value, ValueGroup,
+    Block, Function, Inst, InstRange, MAX_BLOCKS, MAX_INST_OPERANDS, MAX_INSTS, MAX_VALUES,
+    Operand, OperandConstraint, OperandKind, RematCost, TerminatorKind, Value, ValueGroup,
 };
+use crate::reginfo::{MAX_PHYSREGS, MAX_REG_BANKS, MAX_REG_CLASSES, MAX_REG_UNITS};
 
 #[derive(Parser)]
 #[grammar = "debug_utils/generic_function/grammar.pest"]
@@ -53,8 +54,22 @@ fn parse_number<T: FromStr>(pair: Pair<'_, Rule>) -> Result<T> {
 }
 
 fn parse_entity<T: EntityRef>(pair: Pair<'_, Rule>) -> Result<T> {
+    let span = pair.as_span();
+    let limit = match pair.as_rule() {
+        Rule::block => MAX_BLOCKS,
+        Rule::inst => MAX_INSTS,
+        Rule::value => MAX_VALUES,
+        Rule::physreg => MAX_PHYSREGS,
+        Rule::regclass => MAX_REG_CLASSES,
+        Rule::regbank => MAX_REG_BANKS,
+        Rule::unit => MAX_REG_UNITS,
+        _ => unreachable!(),
+    };
     let [number] = extract(pair, [Rule::number]);
     let index = parse_number(number)?;
+    if index >= limit {
+        Err(custom_error(span, "entity index out of range"))?;
+    }
     Ok(T::new(index))
 }
 
@@ -311,7 +326,12 @@ fn parse_constraint(pair: Pair<'_, Rule>) -> Result<OperandConstraint> {
         Rule::regclass => OperandConstraint::Class(parse_entity(constraint_pair)?),
         Rule::reuse => {
             let [number] = extract(constraint_pair, [Rule::number]);
-            OperandConstraint::Reuse(parse_number(number)?)
+            let span = number.as_span();
+            let index = parse_number(number)?;
+            if index >= MAX_INST_OPERANDS {
+                Err(custom_error(span, "reuse index out of range"))?;
+            }
+            OperandConstraint::Reuse(index)
         }
         _ => unreachable!(),
     };
@@ -415,6 +435,16 @@ impl GenericFunction {
             values,
             value_groups,
         };
+
+        // Reject unresolved successors before CFG analysis indexes the block maps.
+        for (block, data) in &func.blocks {
+            for &succ in &data.succs {
+                ensure!(
+                    succ.index() < func.num_blocks(),
+                    "{block}: undeclared successor {succ}"
+                );
+            }
+        }
 
         // Compute block predecessors and immediate dominators since they are
         // not encoded in the dump.

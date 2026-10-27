@@ -13,7 +13,7 @@ use crate::debug_utils::DisplayOutputInst;
 use crate::entity::{EntitySet, SecondaryMap, SparseMap};
 use crate::function::{Block, Function, Inst, Operand, OperandConstraint, OperandKind, Value};
 use crate::output::{Allocation, AllocationKind, Output, OutputInst, SpillSlot};
-use crate::reginfo::{MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegGroup, RegInfo, RegUnitSet};
+use crate::reginfo::{MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegGroup, RegInfo};
 
 /// Type representing a set of values. A `SmallVec` is used instead of a
 /// `HashSet` for efficiency since sets tend to be small (1-2 elements).
@@ -76,7 +76,7 @@ impl CheckerState {
                 });
                 !values.is_empty()
             } else {
-                *changed = !values.is_empty();
+                *changed |= !values.is_empty();
                 false
             }
         });
@@ -179,7 +179,6 @@ struct Context<'a, F, R> {
     evicted: SparseMap<SpillSlot, EvictedReg>,
     blockparams_to_insert: Vec<(AllocationUnit, Value)>,
     def_units: EntitySet<AllocationUnit>,
-    fixed_def_units: RegUnitSet,
     early_reused_operands: Vec<usize>,
     next_inst: Inst,
     terminated: bool,
@@ -216,6 +215,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// Checks the stack layout and spill slot definitions.
     fn check_stack(&self) -> Result<()> {
         let stack_layout = self.output.stack_layout();
+        let mut ranges = Vec::new();
         for slot in stack_layout.spillslots() {
             let Some((offset, size)) = stack_layout.spillslot_layout(slot) else {
                 continue;
@@ -224,12 +224,21 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 offset.is_multiple_of(size.bytes()),
                 "{slot} offset {offset} is not aligned to size {size}"
             );
-            let end = offset + size.bytes();
+            let Some(end) = offset.checked_add(size.bytes()) else {
+                bail!("{slot} offset {offset} plus size {size} overflows");
+            };
             ensure!(
                 end <= stack_layout.spillslot_area_size(),
                 "{slot} ends at {end} which exceeds spill area size {}",
                 stack_layout.spillslot_area_size()
             );
+            ranges.push((offset, end, slot));
+        }
+        ranges.sort_unstable_by_key(|&(offset, _, _)| offset);
+        for pair in ranges.windows(2) {
+            let (_, end, slot) = pair[0];
+            let (next_offset, _, next_slot) = pair[1];
+            ensure!(end <= next_offset, "{slot} overlaps {next_slot}");
         }
         Ok(())
     }
@@ -385,7 +394,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 // units are written to detect conflicting outputs.
                 self.def_units
                     .clear_and_resize(self.output.stack_layout().num_spillslots() + MAX_REG_UNITS);
-                self.fixed_def_units.clear();
                 self.early_reused_operands.clear();
                 for pass in [Pass::EarlyDef, Pass::Use, Pass::Def] {
                     for (idx, (&op, &alloc)) in operands.iter().zip(operand_allocs).enumerate() {
@@ -393,17 +401,14 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     }
                 }
 
-                // Clear any clobbers, except when the corresponding unit has
-                // been written to by a fixed def.
+                // Clobbers must not overlap definitions.
                 for clobber in func.inst_clobbers(inst) {
-                    if !self.fixed_def_units.contains(clobber) {
-                        let unit = AllocationUnit::reg(clobber);
-                        ensure!(
-                            !self.def_units.contains(unit),
-                            "Def operand conflicts with clobber {unit}"
-                        );
-                        self.state.clobber_unit(unit);
-                    }
+                    let unit = AllocationUnit::reg(clobber);
+                    ensure!(
+                        !self.def_units.contains(unit),
+                        "Def operand conflicts with clobber {unit}"
+                    );
+                    self.state.clobber_unit(unit);
                 }
             }
             OutputInst::Rematerialize { value, to } => {
@@ -886,11 +891,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     alloc.kind() == AllocationKind::PhysReg(reg),
                     "Expected {reg} for fixed constraint, got {alloc}"
                 );
-
-                // Track fixed definitions so we ignore clobbers for those units.
-                for unit in self.output.reginfo().reg_units(reg) {
-                    self.fixed_def_units.insert(unit);
-                }
             }
             OperandConstraint::Reuse(idx) => {
                 ensure!(
@@ -919,7 +919,6 @@ pub fn check_output(output: &Output<'_, impl Function, impl RegInfo>) -> Result<
         next_inst: Inst::new(0),
         early_reused_operands: vec![],
         def_units: EntitySet::new(),
-        fixed_def_units: RegUnitSet::new(),
         terminated: false,
         can_have_move: false,
     };
