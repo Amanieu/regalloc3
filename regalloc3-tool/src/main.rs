@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use arbitrary::Unstructured;
 use clap::Parser;
 use example_reginfo::Arch;
-use rand::RngCore;
+use rand::Rng;
 use regalloc3::debug_utils::{
     self, ArbitraryFunctionConfig, ArbitraryRegInfoConfig, GenericFunction, GenericRegInfo,
 };

@@ -2,7 +2,6 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::ops::{Bound, ControlFlow};
 
-use brie_tree::nonmax::NonMaxU32;
 use brie_tree::{BTree, BTreeKey, Cursor, Iter};
 
 use super::live_range::{LiveRangePoint, LiveRangeSegment, Slot, ValueSegment};
@@ -57,16 +56,16 @@ impl InterferenceSegment for ValueSegment {
 }
 
 impl BTreeKey for LiveRangePoint {
-    type Int = NonMaxU32;
+    type Int = u32;
 
     #[inline]
     fn to_int(self) -> Self::Int {
-        NonMaxU32::new(self.bits).unwrap()
+        self.bits
     }
 
     #[inline]
     fn from_int(int: Self::Int) -> Self {
-        LiveRangePoint { bits: int.get() }
+        LiveRangePoint { bits: int }
     }
 }
 
@@ -286,7 +285,8 @@ impl RegMatrix {
         debug_assert_eq!(range.to, range.from.end_for_fixed_use_reservation());
 
         self.reservations[unit].fixed_uses.push((range.from, value));
-        let prev = self.reservations[unit].btree.insert(
+        debug_assert!(self.reservations[unit].btree.get(range.to).is_none());
+        self.reservations[unit].btree.insert(
             range.to,
             Entry {
                 from: range.from,
@@ -294,9 +294,6 @@ impl RegMatrix {
                 fixed_use: value.index() as u32,
             },
         );
-
-        // Ensure there are no overlapping reservations.
-        debug_assert!(prev.is_none());
     }
 
     /// Indicates that a portion of the given register is reserved for a fixed
@@ -308,7 +305,8 @@ impl RegMatrix {
         trace!("Reserving {range} in {unit} for fixed def");
         debug_assert_eq!(range.to.slot(), Slot::Boundary);
 
-        let prev = self.reservations[unit].btree.insert(
+        debug_assert!(self.reservations[unit].btree.get(range.to).is_none());
+        self.reservations[unit].btree.insert(
             range.to,
             Entry {
                 from: range.from,
@@ -316,9 +314,6 @@ impl RegMatrix {
                 fixed_use: !0,
             },
         );
-
-        // Ensure there are no overlapping reservations.
-        debug_assert!(prev.is_none());
     }
 
     /// Checks whether the given register unit is free for the given live range
