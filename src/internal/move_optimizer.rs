@@ -754,6 +754,12 @@ impl StateTracker {
                 let AllocationKind::PhysReg(reg) = dest.kind() else {
                     return None;
                 };
+                let OperandConstraint::Class(class) = input.constraint() else {
+                    unreachable!();
+                };
+                if !reginfo.class_members(class).contains(reg) {
+                    return None;
+                }
                 OperandConstraint::Fixed(reg)
             } else {
                 input.constraint()

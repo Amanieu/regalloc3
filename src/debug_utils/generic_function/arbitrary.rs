@@ -595,12 +595,13 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             for _ in 0..input_count {
                 let input_idx = inputs.len();
                 let input = self.gen_use(block, is_first_inst, input_idx != 0, |this| {
-                    let OperandConstraint::Class(class) = constraint else {
+                    let OperandConstraint::Class(_) = constraint else {
                         return Ok(None);
                     };
                     if this.u.arbitrary()? {
+                        let input_class = *this.u.choose(&this.remat_class_per_bank[bank])?;
                         constraint = OperandConstraint::Reuse(input_idx);
-                        Ok(Some(class))
+                        Ok(Some(input_class))
                     } else {
                         Ok(None)
                     }
