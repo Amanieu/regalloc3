@@ -75,12 +75,21 @@ impl SmallSetWord for u32 {
 /// This should be sized according to the implementation limits for the
 /// particular entity type.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "[W; N]: serde::Serialize",
+        deserialize = "[W; N]: serde::Deserialize<'de>"
+    ))
+)]
 pub struct SmallEntitySet<T, W, const N: usize>
 where
     T: EntityRef,
     W: SmallSetWord,
 {
     storage: [W; N],
+    #[cfg_attr(feature = "serde", serde(skip))]
     marker: PhantomData<T>,
 }
 
@@ -290,72 +299,6 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_set().entries(*self).finish()
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<T, W, const N: usize> serde::Serialize for SmallEntitySet<T, W, N>
-where
-    T: EntityRef + serde::Serialize,
-    W: SmallSetWord,
-{
-    #[inline]
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.collect_seq(*self)
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de, T, W, const N: usize> serde::Deserialize<'de> for SmallEntitySet<T, W, N>
-where
-    T: EntityRef + serde::Deserialize<'de>,
-    W: SmallSetWord,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct SeqVisitor<T, W, const N: usize>
-        where
-            T: EntityRef,
-            W: SmallSetWord,
-        {
-            marker: PhantomData<SmallEntitySet<T, W, N>>,
-        }
-
-        impl<'de, T, W, const N: usize> serde::de::Visitor<'de> for SeqVisitor<T, W, N>
-        where
-            T: EntityRef + serde::Deserialize<'de>,
-            W: SmallSetWord,
-        {
-            type Value = SmallEntitySet<T, W, N>;
-
-            fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                formatter.write_str("a sequence")
-            }
-
-            #[inline]
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
-                let mut values = SmallEntitySet::new();
-
-                while let Some(value) = seq.next_element()? {
-                    values.insert(value);
-                }
-
-                Ok(values)
-            }
-        }
-
-        let visitor = SeqVisitor {
-            marker: PhantomData,
-        };
-        deserializer.deserialize_seq(visitor)
     }
 }
 

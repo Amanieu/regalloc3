@@ -16,11 +16,14 @@ type SignedWord = isize;
 /// This is conceptually equivalent to a `HashSet<K>` or a `SecondaryMap<K, bool>`
 /// but is encoded much more efficiently as a bit vector.
 #[derive(PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(bound = ""))]
 pub struct EntitySet<T>
 where
     T: EntityRef,
 {
     storage: Vec<Word>,
+    #[cfg_attr(feature = "serde", serde(skip))]
     marker: PhantomData<T>,
 }
 
@@ -260,23 +263,14 @@ impl<T> Extend<T> for EntitySet<T>
 where
     T: EntityRef,
 {
+    /// Inserts elements into the set.
+    ///
+    /// The set must already be large enough to hold every element in `iter`.
     #[inline]
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for entity in iter {
             self.insert(entity);
         }
-    }
-}
-
-impl<T> FromIterator<T> for EntitySet<T>
-where
-    T: EntityRef,
-{
-    #[inline]
-    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        let mut set = Self::new();
-        set.extend(iter);
-        set
     }
 }
 
@@ -286,68 +280,6 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_set().entries(self.iter()).finish()
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<T> serde::Serialize for EntitySet<T>
-where
-    T: EntityRef + serde::Serialize,
-{
-    #[inline]
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.collect_seq(self.iter())
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de, T> serde::Deserialize<'de> for EntitySet<T>
-where
-    T: EntityRef + serde::Deserialize<'de>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct SeqVisitor<T>
-        where
-            T: EntityRef,
-        {
-            marker: PhantomData<EntitySet<T>>,
-        }
-
-        impl<'de, T> serde::de::Visitor<'de> for SeqVisitor<T>
-        where
-            T: EntityRef + serde::Deserialize<'de>,
-        {
-            type Value = EntitySet<T>;
-
-            fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                formatter.write_str("a sequence")
-            }
-
-            #[inline]
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
-                let mut values = EntitySet::new();
-
-                while let Some(value) = seq.next_element()? {
-                    values.insert(value);
-                }
-
-                Ok(values)
-            }
-        }
-
-        let visitor = SeqVisitor {
-            marker: PhantomData,
-        };
-        deserializer.deserialize_seq(visitor)
     }
 }
 
