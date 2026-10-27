@@ -120,7 +120,7 @@ use core::fmt;
 use crate::entity::EntityRange;
 use crate::entity::iter::Keys;
 use crate::entity::packed_option::ReservedValue as _;
-use crate::reginfo::{MAX_PHYSREGS, PhysReg, RegBank, RegClass, RegUnit};
+use crate::reginfo::{PhysReg, RegBank, RegClass, RegUnit};
 
 /// Maximum number of basic blocks.
 pub const MAX_BLOCKS: usize = 1 << 28;
@@ -330,7 +330,7 @@ pub struct Operand {
 
     /// `OperandConstraint` encoded in 16 bits:
     ///
-    /// type:2 unused:2 index:12
+    /// type:2 index:14
     constraint: u16,
 }
 
@@ -485,7 +485,7 @@ impl Operand {
     #[inline]
     #[must_use]
     pub fn constraint(self) -> OperandConstraint {
-        let index = self.constraint as usize & (MAX_PHYSREGS - 1);
+        let index = self.constraint as usize & ((1 << 14) - 1);
         match self.constraint >> 14 {
             0 => OperandConstraint::Class(RegClass::new(index)),
             1 => OperandConstraint::Fixed(PhysReg::new(index)),
