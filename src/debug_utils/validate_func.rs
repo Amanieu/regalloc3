@@ -129,9 +129,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
     /// Checks a range of instructions.
     fn check_inst_range(&mut self, range: InstRange) -> Result<()> {
+        ensure!(range.from < range.to, "{range}: Invalid instruction range");
         self.check_entity(Entity::Inst(range.from))?;
         self.check_entity(Entity::Inst(range.last()))?;
-        ensure!(range.to >= range.from, "{range}: Invalid instruction range");
         Ok(())
     }
 

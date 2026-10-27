@@ -21,8 +21,8 @@ pub trait EntityRef: Copy + Eq + ReservedValue {
 
 /// A sequential range of entities.
 ///
-/// A range is considered empty if the index of `from` is greater than or equal
-/// to the index of `to`.
+/// The index of `from` must be less than or equal to the index of `to`.
+/// A range is empty if the two indices are equal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EntityRange<T: EntityRef> {
@@ -41,6 +41,8 @@ impl<T: EntityRef + fmt::Display> fmt::Display for EntityRange<T> {
 
 impl<T: EntityRef> EntityRange<T> {
     /// Creates a new range.
+    ///
+    /// The index of `from` must be less than or equal to the index of `to`.
     #[inline]
     pub const fn new(from: T, to: T) -> Self {
         Self { from, to }
@@ -58,18 +60,21 @@ impl<T: EntityRef> EntityRange<T> {
     /// Returns whether the range is empty.
     #[inline]
     pub fn is_empty(self) -> bool {
-        self.to.index() <= self.from.index()
+        debug_assert!(self.from.index() <= self.to.index());
+        self.to.index() == self.from.index()
     }
 
     /// Number of elements in the range.
     #[inline]
     pub fn len(self) -> usize {
+        debug_assert!(self.from.index() <= self.to.index());
         self.to.index() - self.from.index()
     }
 
     /// Iterator over the elements in the range.
     #[inline]
     pub fn iter(self) -> impl DoubleEndedIterator<Item = T> + ExactSizeIterator {
+        debug_assert!(self.from.index() <= self.to.index());
         (self.from.index()..self.to.index()).map(|i| T::new(i))
     }
 }
