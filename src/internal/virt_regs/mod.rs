@@ -76,6 +76,11 @@ pub struct VirtRegData {
     ///
     /// When a virtual register is part of a group, the spill weight of each
     /// virtual register is set to the lowest spill weight of the group.
+    ///
+    /// There are 2 special spill weight values:
+    /// - `f32::MAX` indicates a single-instruction live range which needs
+    ///   specialized splitting to make forward progress.
+    /// - `f32::INFINITY` indicates an unsplittable live range.
     pub spill_weight: f32,
 }
 

@@ -11,7 +11,7 @@ use crate::internal::live_range::{LiveRangeSegment, Slot, ValueSegment};
 use crate::internal::reg_matrix::{
     InterferenceCursor, InterferenceKind, InterferenceSegment, RegMatrix,
 };
-use crate::internal::uses::{UseKind, Uses};
+use crate::internal::uses::{Use, UseKind, Uses};
 use crate::internal::value_live_ranges::ValueSet;
 use crate::internal::virt_regs::builder::{normalize_spill_weight, use_spill_cost};
 use crate::internal::virt_regs::{VirtReg, VirtRegGroup, VirtRegs};
@@ -142,6 +142,9 @@ pub struct Splitter {
     /// group uses.
     minimal_segments: Vec<(ValueSegment, ValueSet)>,
 
+    /// Class uses extracted from a segment into an input-only live range.
+    extracted_uses: Vec<Use>,
+
     /// Newly created virtual register from the minimal live ranges.
     new_vregs: Vec<VirtReg>,
 
@@ -161,6 +164,7 @@ impl Splitter {
         Self {
             segments: vec![],
             minimal_segments: vec![],
+            extracted_uses: vec![],
             new_vregs: vec![],
             uses: vec![],
             gaps: vec![],
@@ -916,6 +920,17 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// virtual registers, attempt to split it into smaller pieces that are
     /// alloctable.
     pub(super) fn split_or_spill(&mut self, vreg: impl AbstractVirtRegGroup) {
+        // Single-instruction ranges cannot be split at an instruction boundary,
+        // but coalesced segments can be separated and input constraints can be
+        // extracted into shorter fragments. Do this before ordinary splitting
+        // or group isolation, which could otherwise recreate the same range
+        // without making progress.
+        let first_vreg = &self.virt_regs[vreg.first_vreg(self.virt_regs)];
+        if first_vreg.spill_weight == f32::MAX {
+            self.split_single_inst(vreg);
+            return;
+        }
+
         if self.options.split_strategy == SplitStrategy::Spill {
             self.spill(vreg);
             return;
@@ -1392,6 +1407,125 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             .assignments
             .grow_to(self.virt_regs.num_virt_regs());
 
+        self.queue_new_vregs();
+    }
+
+    /// Special splitting logic for virtual registers which only cover a
+    /// single-instruction.
+    ///
+    /// These must be exactly one of two cases:
+    /// - Two segments: one with uses and one with a def, coalesced from
+    ///   different values.
+    /// - One segment containing only uses, but which is live-through to the
+    ///   next instruction boundary.
+    fn split_single_inst(&mut self, vreg: impl AbstractVirtRegGroup) {
+        self.invalidate_operand_group_mapping(vreg);
+
+        let splitter = &mut self.allocator.splitter;
+        splitter.minimal_segments.clear();
+        for vreg in vreg.vregs(self.virt_regs) {
+            let value_set = self.virt_regs[vreg].value_set;
+            let segments = self.virt_regs.segments(vreg);
+            debug_assert_eq!(ValueSegment::live_insts(segments), 1);
+
+            // The original vreg is no longer used after this point.
+            self.allocator.assignments[vreg] = Assignment::Dead;
+
+            if segments.len() == 2 {
+                // Separate the input and output segments of the instruction.
+                stat!(self.stats, single_inst_split_segments);
+                splitter.minimal_segments.push((segments[0], value_set));
+                splitter.minimal_segments.push((segments[1], value_set));
+                continue;
+            }
+
+            debug_assert!(segments.len() == 1);
+            let segment = segments[0];
+
+            // A group member may be irreducible even though the group's weight
+            // is f32::MAX. Rebuild it unchanged so it can rejoin its group.
+            if segment.live_range.from.slot() != Slot::Boundary
+                || segment.live_range.to.slot() != Slot::Boundary
+            {
+                debug_assert!(self.virt_regs[vreg].group.is_some());
+                splitter.minimal_segments.push((segment, value_set));
+                continue;
+            }
+
+            stat!(self.stats, single_inst_extracted_uses);
+            let inst = segment.live_range.from.inst();
+            splitter.extracted_uses.clear();
+
+            // If this is the first instruction of a block and the value comes
+            // from an incoming blockparam then need to insert a
+            // UseKind::BlockparamIn before the extracted uses.
+            let blockparam_in = match self.uses[segment.use_list].first().unwrap() {
+                u @ Use {
+                    kind: UseKind::BlockparamIn { .. },
+                    ..
+                } => Some(*u),
+                _ => None,
+            };
+            if let Some(u) = blockparam_in {
+                splitter.extracted_uses.push(u);
+            }
+
+            // Extract all class uses from the segment, which are the only
+            // things preventing the segment from being spilled to the stack.
+            // Then spill that segment.
+            for u in &mut self.uses[segment.use_list] {
+                if matches!(
+                    u.kind,
+                    UseKind::ClassUse { .. } | UseKind::GroupClassUse { .. }
+                ) {
+                    debug_assert_eq!(u.pos, inst);
+                    splitter.extracted_uses.push(*u);
+                    u.kind = UseKind::ConstraintConflict {};
+                }
+            }
+            self.spill_allocator.spill_segment(value_set, segment);
+
+            // Create a minimal segment with the extracted uses.
+            let mut use_list = self
+                .uses
+                .add_use_list(splitter.extracted_uses.iter().copied());
+            use_list.set_livein(blockparam_in.is_none());
+            splitter.minimal_segments.push((
+                ValueSegment {
+                    live_range: LiveRangeSegment::new(
+                        inst.slot(Slot::Boundary),
+                        inst.slot(Slot::Normal),
+                    ),
+                    use_list,
+                    value: segment.value,
+                },
+                value_set,
+            ));
+        }
+
+        // Create a new virtual register for each minimal segment that was
+        // created.
+        splitter.new_vregs.clear();
+        for &(segment, value_set) in &splitter.minimal_segments {
+            self.virt_regs.create_vreg_from_segments(
+                &mut [segment],
+                self.func,
+                self.reginfo,
+                self.uses,
+                self.hints,
+                self.virt_reg_builder,
+                self.coalescing,
+                self.stats,
+                self.options,
+                value_set,
+                &mut splitter.new_vregs,
+            );
+        }
+
+        // Initialize assignments for the new virtual registers.
+        self.allocator
+            .assignments
+            .grow_to(self.virt_regs.num_virt_regs());
         self.queue_new_vregs();
     }
 

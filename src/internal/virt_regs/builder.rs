@@ -51,9 +51,10 @@ pub fn normalize_spill_weight(spill_cost: f32, num_insts: u32, options: &Options
     debug_assert_ne!(num_insts, 0);
     let weight = spill_cost / (num_insts + k) as f32;
 
-    // Cap the spill weight at f32::MAX. Infinite spill weights are only
-    // for unspillable virtual registers.
-    weight.min(f32::MAX)
+    // Reserve f32::MAX for splittable single-instruction register-only ranges,
+    // and infinity for irreducible ones. Even an overflowing ordinary weight
+    // must remain below both priorities.
+    weight.min(f32::MAX.next_down())
 }
 
 /// Computes the spill cost for a single use after applying allocator-level
@@ -741,25 +742,54 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         unreachable!("No conflicting use found in reverse scan");
     }
 
-    /// Calculates the spill weight of the virtual register currently being
-    /// built.
-    ///
-    /// This also detects cases where a virtual register only spans a single
-    /// instruction, in which case it cannot be split further. This case is
-    /// represented by giving that virtual register an infinite spill weight.
+    /// Forces single-instruction register-only ranges above ordinary spill
+    /// weights: f32::MAX if they can be reduced further, infinity otherwise.
+    fn should_force_spill_weight(&self, segments: &[ValueSegment], num_insts: u32) -> Option<f32> {
+        debug_assert_ne!(num_insts, 0);
+        if num_insts > 1
+            || self
+                .reginfo
+                .class_includes_spillslots(self.constraints.class)
+        {
+            return None;
+        }
+
+        // We can further split single-instruction ranges in 2 circumstances:
+        // - They consist of 2 segments due to coalescing, in which case we can
+        //   split the use and def segments into separate vregs.
+        // - They consist of a single segment with a class use that is
+        //   live-through to the next boundary. In this case we can extract the
+        //   class uses into a vreg with a shorter live range ending at Normal,
+        //   leaving the live-through part with a spillable constraint.
+        let can_split = segments.len() > 1 || {
+            let segment = segments[0];
+            segment.live_range.from.slot() == Slot::Boundary
+                && segment.live_range.to.slot() == Slot::Boundary
+                && self.uses[segment.use_list].iter().any(|u| {
+                    matches!(
+                        u.kind,
+                        UseKind::ClassUse { .. } | UseKind::GroupClassUse { .. }
+                    )
+                })
+        };
+        if can_split {
+            trace!("-> Maximum finite spill weight");
+            Some(f32::MAX)
+        } else {
+            trace!("-> Infinite spill weight");
+            Some(f32::INFINITY)
+        }
+    }
+
+    /// Calculates the spill weight of the virtual register being built.
     fn calc_spill_weight(&self, segments: &[ValueSegment]) -> f32 {
         let num_insts = ValueSegment::live_insts(segments);
         trace!("Computing spill weight with {num_insts} instructions");
 
-        // Register classes that allow spillslots are always spillable.
-        debug_assert_ne!(num_insts, 0);
-        let mut spill_weight = if num_insts <= 1
-            && !self
-                .reginfo
-                .class_includes_spillslots(self.constraints.class)
+        let mut spill_weight = if let Some(weight) =
+            self.should_force_spill_weight(segments, num_insts)
         {
-            trace!("-> Infinite spill weight");
-            f32::INFINITY
+            weight
         } else {
             // Accumulate the spill cost weighed by the block frequency.
             let mut total_spill_cost = 0.0;
@@ -856,8 +886,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     &mut self.virt_regs.segment_pool,
                 );
 
-            // Update spill_weight, class and has_fixed_use for the virtual
-            // register.
+            // Recompute the spill weight after adding the segments.
             let spill_weight = self.calc_spill_weight(self.virt_regs.segments(vreg));
             self.virt_regs.virt_regs[vreg].has_fixed_hint |= has_fixed_hint;
             self.virt_regs.virt_regs[vreg].class = self.constraints.class;
@@ -936,10 +965,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     vreg_group
                 }
 
-                // We joined an existing group, propagate our class constraint
-                // and spill weight to all members since it may be smaller than
-                // the existing constraint and spill weight we inherited from
-                // the group.
+                // We joined an existing group. Broadcast the combined class
+                // and minimum spill weight.
                 Some(vreg_group) => {
                     for &member in
                         self.virt_regs.groups[vreg_group].as_slice(&self.virt_regs.group_pool)

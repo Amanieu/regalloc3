@@ -582,6 +582,8 @@ pub struct Stats {
     spill_minimal_segments: usize,
     isolated_group_vregs: usize,
     isolated_group_minimal_segments: usize,
+    single_inst_split_segments: usize,
+    single_inst_extracted_uses: usize,
 
     // Stats from interference checking
     interference_checks: usize,

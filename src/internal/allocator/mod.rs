@@ -608,17 +608,15 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 trace!("Failed to evict interference for {vreg}, re-queuing for splitting");
 
                 // If the virtual register has an infinite spill weight (meaning
-                // that it covers only a single instruction and cannot be
-                // split further) then it means that the allocation problem is
+                // that it covers only a single instruction and cannot be split
+                // further) then it means that the allocation problem is
                 // fundamentally unsatisfiable.
                 //
                 // Note that this doesn't apply if the register class allows
-                // allocation into a spillslot. This case is handled in the
+                // allocation into a spillslot or if it is a splittable
+                // single-instruction live range. These cases are handled in the
                 // splitting stage.
-                if self.virt_regs[vreg.first_vreg(self.virt_regs)]
-                    .spill_weight
-                    .is_infinite()
-                {
+                if self.virt_regs[first_vreg].spill_weight.is_infinite() {
                     trace!("Allocation failed: could not allocate unspillable {vreg}");
 
                     if trace_enabled!() {

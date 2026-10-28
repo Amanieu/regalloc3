@@ -168,10 +168,9 @@ pub enum UseKind {
         group_index: u8,
     },
 
-    /// If there are 2 conflicting register classes uses *on the same
-    /// instruction* (meaning the conflict can't be resolved by splitting) then
-    /// one of the uses is turned into a `ConstraintConflict` and the original
-    /// use is moved to a separate virtual register.
+    /// A class use extracted into a separate virtual register, either because
+    /// of conflicting constraints on the same instruction or to shorten its
+    /// register lifetime when splitting a single-instruction range.
     ///
     /// A move is emitted from the allocation for this live range to the
     /// allocation for the target virtual register.
