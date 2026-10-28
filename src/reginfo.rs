@@ -390,21 +390,31 @@ pub trait RegInfo {
     fn group_allocation_order(&self, class: RegClass) -> &[RegGroup];
 
     /// Returns the set of sub-classes of `class`, including itself.
+    /// This must include all transitive sub-classes.
     ///
     /// A sub-class must be from the same register bank as its superclass, and
     /// must contain a strict subset of the registers in the superclass.
     ///
     /// A class of register groups can only have other group classes of the same
     /// group size as sub-classes. However it may have a non-group class as a
-    /// superclass as long as
+    /// superclass as long as every register in every group belongs to that
+    /// superclass.
     ///
     /// Classes must be topologically ordered: sub-classes must have a higher
     /// index than their superclass. Additionally, all register classes in a
     /// register bank must be a subclass of the top-level class of that bank.
+    ///
+    /// For any two classes with common sub-classes, there must be a unique
+    /// largest common sub-class: one that is a superclass of every other common
+    /// sub-class. Its set of sub-classes must equal the intersection of the two
+    /// original sets. Multiple inheritance is allowed.
     fn sub_classes(&self, class: RegClass) -> RegClassSet;
 
     /// Computes the largest common sub-class of the two register classes, or
     /// `None` if no common sub-class exists.
+    ///
+    /// The returned class must have exactly the sub-classes common to `a` and
+    /// `b`, as required by [`RegInfo::sub_classes`].
     #[inline]
     fn common_subclass(&self, a: RegClass, b: RegClass) -> Option<RegClass> {
         // Since classes are ordered topologically, this is the lowest indexed

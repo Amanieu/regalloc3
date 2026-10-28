@@ -322,6 +322,25 @@ impl<R: RegInfo> Context<'_, R> {
             }
         }
 
+        // Topological ordering puts the largest common subclass first, if it
+        // exists. Every other common subclass must be a descendant of it.
+        for other in self.reginfo.classes() {
+            let common = self.reginfo.sub_classes(class) & self.reginfo.sub_classes(other);
+            let largest = common.into_iter().next();
+            if let Some(largest) = largest {
+                ensure!(
+                    self.reginfo.sub_classes(largest) == common,
+                    "Invalid subclass hierarchy for {class} and {other}: \
+                     their largest common subclass {largest} must have exactly \
+                     the subclasses shared by both classes"
+                );
+            }
+            ensure!(
+                self.reginfo.common_subclass(class, other) == largest,
+                "Inconsistent common_subclass({class}, {other}): expected {largest:?}"
+            );
+        }
+
         Ok(())
     }
 
