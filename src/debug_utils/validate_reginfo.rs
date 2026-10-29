@@ -7,8 +7,8 @@ use anyhow::{Result, bail, ensure};
 use crate::entity::SecondaryMap;
 use crate::reginfo::{
     MAX_GROUP_SIZE, MAX_PHYSREGS, MAX_REG_BANKS, MAX_REG_CLASSES, MAX_REG_GROUPS, MAX_REG_UNITS,
-    MAX_UNITS_PER_REG, PhysReg, PhysRegSet, RegBank, RegClass, RegGroup, RegInfo, RegUnit,
-    RegUnitSet,
+    MAX_UNITS_PER_REG, PhysReg, PhysRegSet, RegBank, RegClass, RegGroup, RegGroupSet, RegInfo,
+    RegUnit, RegUnitSet,
 };
 
 /// Checks `reginfo` to ensure it satisfies all of the pre-conditions required
@@ -248,22 +248,34 @@ impl<R: RegInfo> Context<'_, R> {
             );
         }
 
-        // Check that the allocation order only contains class members.
+        // Check that the allocation order only contains distinct class members.
         if group_size == 1 {
+            let mut seen = PhysRegSet::new();
             for &reg in self.reginfo.allocation_order(class) {
                 self.check_entity(Entity::PhysReg(reg))?;
                 ensure!(
                     self.reginfo.class_members(class).contains(reg),
                     "{class}: Allocation order contains {reg} which is outside class"
                 );
+                ensure!(
+                    !seen.contains(reg),
+                    "{class}: Allocation order contains duplicate register {reg}"
+                );
+                seen.insert(reg);
             }
         } else {
+            let mut seen = RegGroupSet::new();
             for &group in self.reginfo.group_allocation_order(class) {
                 self.check_entity(Entity::RegGroup(group))?;
                 ensure!(
                     self.reginfo.class_group_members(class).contains(group),
                     "{class}: Allocation order contains {group} which is outside class"
                 );
+                ensure!(
+                    !seen.contains(group),
+                    "{class}: Allocation order contains duplicate register group {group}"
+                );
+                seen.insert(group);
             }
         }
 
