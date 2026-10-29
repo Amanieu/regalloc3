@@ -110,6 +110,10 @@ impl<R: RegInfo> Context<'_, R> {
             self.reginfo.class_group_size(top_level_class) == 1,
             "{bank}: Top-level class {top_level_class} must have a group size of 1"
         );
+        ensure!(
+            self.reginfo.spillslot_size(bank).log2_bytes() < 32,
+            "{bank}: Spill slot size exponent must be less than 32"
+        );
 
         // Check registers in the bank
         let mut bank_is_empty = true;
