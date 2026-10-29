@@ -131,6 +131,9 @@ pub const MAX_INSTS: usize = 1 << 28;
 /// Maximum number of SSA values.
 pub const MAX_VALUES: usize = 1 << 28;
 
+/// Maximum number of value groups.
+pub const MAX_VALUE_GROUPS: usize = 1 << 28;
+
 /// Maximum number of operands per instruction.
 pub const MAX_INST_OPERANDS: usize = 1 << 10;
 
@@ -472,7 +475,7 @@ impl Operand {
     #[must_use]
     pub fn kind(self) -> OperandKind {
         let value = Value::new(self.kind as usize & (MAX_VALUES - 1));
-        let group = ValueGroup::new(self.kind as usize & (MAX_VALUES - 1));
+        let group = ValueGroup::new(self.kind as usize & (MAX_VALUE_GROUPS - 1));
         match (self.kind >> 29) & 7 {
             0 => OperandKind::Def(value),
             1 => OperandKind::Use(value),

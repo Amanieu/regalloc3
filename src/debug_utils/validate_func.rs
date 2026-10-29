@@ -12,7 +12,8 @@ use crate::debug_utils::postorder::PostOrder;
 use crate::entity::SecondaryMap;
 use crate::function::{
     Block, Function, Inst, InstRange, MAX_BLOCK_PARAMS, MAX_BLOCKS, MAX_INST_OPERANDS, MAX_INSTS,
-    MAX_VALUES, Operand, OperandConstraint, OperandKind, TerminatorKind, Value, ValueGroup,
+    MAX_VALUE_GROUPS, MAX_VALUES, Operand, OperandConstraint, OperandKind, TerminatorKind, Value,
+    ValueGroup,
 };
 use crate::reginfo::{PhysReg, RegInfo, RegUnitSet};
 
@@ -142,6 +143,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             self.func.num_values() <= MAX_VALUES,
             "Too many values: {} (max: {MAX_VALUES})",
             self.func.num_values(),
+        );
+        ensure!(
+            self.func.num_value_groups() <= MAX_VALUE_GROUPS,
+            "Too many value groups: {} (max: {MAX_VALUE_GROUPS})",
+            self.func.num_value_groups(),
         );
         ensure!(
             self.func.num_blocks() <= MAX_BLOCKS,
