@@ -220,17 +220,15 @@ impl<R: RegInfo> Context<'_, R> {
             }
         }
 
-        // Check that the allocation order isn't empty if spillslot are not
-        // allowed or if this is a group register class.
-        let bank_is_empty = self
-            .reginfo
-            .class_members(self.reginfo.top_level_class(bank))
-            .is_empty();
+        // Nonempty classes require an allocation order unless spillslots are
+        // allowed. Empty classes are permitted here, but cannot be used as
+        // operand constraints (checked by function validation).
         if group_size == 1 {
             if !self.reginfo.class_includes_spillslots(class) {
                 ensure!(
-                    bank_is_empty || !self.reginfo.allocation_order(class).is_empty(),
-                    "{class} cannot have an empty allocation order unless it allows spillslots"
+                    self.reginfo.class_members(class).is_empty()
+                        || !self.reginfo.allocation_order(class).is_empty(),
+                    "{class}: Nonempty class cannot have an empty allocation order unless it allows spillslots"
                 );
             }
             ensure!(
@@ -239,8 +237,9 @@ impl<R: RegInfo> Context<'_, R> {
             );
         } else {
             ensure!(
-                bank_is_empty || !self.reginfo.group_allocation_order(class).is_empty(),
-                "{class}: Group class cannot have an empty allocation order"
+                self.reginfo.class_group_members(class).is_empty()
+                    || !self.reginfo.group_allocation_order(class).is_empty(),
+                "{class}: Nonempty group class cannot have an empty allocation order"
             );
             ensure!(
                 self.reginfo.allocation_order(class).is_empty(),
