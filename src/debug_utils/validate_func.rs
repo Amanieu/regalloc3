@@ -12,8 +12,8 @@ use crate::debug_utils::postorder::PostOrder;
 use crate::entity::SecondaryMap;
 use crate::function::{
     Block, Function, Inst, InstRange, MAX_BLOCK_PARAMS, MAX_BLOCKS, MAX_INST_OPERANDS, MAX_INSTS,
-    MAX_VALUE_GROUPS, MAX_VALUES, Operand, OperandConstraint, OperandKind, TerminatorKind, Value,
-    ValueGroup,
+    MAX_VALUE_GROUPS, MAX_VALUE_USES, MAX_VALUES, Operand, OperandConstraint, OperandKind,
+    TerminatorKind, Value, ValueGroup,
 };
 use crate::reginfo::{PhysReg, RegInfo, RegUnitSet};
 
@@ -37,6 +37,7 @@ pub fn validate_function(func: &impl Function, reginfo: &impl RegInfo) -> Result
         late_fixed: RegUnitSet::new(),
         reuse_targets: vec![],
         domtree: DominatorTree::new(),
+        num_value_uses: 0,
     };
     ctx.check_function()?;
     Ok(())
@@ -114,6 +115,7 @@ struct Context<'a, F, R> {
     late_fixed: RegUnitSet,
     reuse_targets: Vec<usize>,
     domtree: DominatorTree,
+    num_value_uses: usize,
 }
 
 impl<F: Function, R: RegInfo> Context<'_, F, R> {
@@ -158,6 +160,16 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             self.func.num_insts() <= MAX_INSTS,
             "Too many instructions: {} (max: {MAX_INSTS})",
             self.func.num_insts(),
+        );
+        Ok(())
+    }
+
+    /// Count value occurrences and check the aggregate limit.
+    fn count_value_uses(&mut self, count: usize) -> Result<()> {
+        self.num_value_uses += count;
+        ensure!(
+            self.num_value_uses <= MAX_VALUE_USES,
+            "Too many value uses (max: {MAX_VALUE_USES})"
         );
         Ok(())
     }
@@ -402,6 +414,15 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     }
                 },
             }
+
+            let count = match op.kind() {
+                OperandKind::Def(_) | OperandKind::EarlyDef(_) | OperandKind::Use(_) => 1,
+                OperandKind::DefGroup(group)
+                | OperandKind::EarlyDefGroup(group)
+                | OperandKind::UseGroup(group) => self.func.value_group_members(group).len(),
+                OperandKind::NonAllocatable => 0,
+            };
+            self.count_value_uses(count)?;
         }
 
         // Check that clobbers don't overlap with fixed defs or other clobbers.
@@ -495,6 +516,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         }
 
         // Check incoming block parameters.
+        self.count_value_uses(self.func.block_params(block).len())?;
         if !self.func.block_params(block).is_empty() {
             ensure!(
                 self.func.block_preds(block).len() > 1,
@@ -511,6 +533,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         }
 
         // Check outgoing block parameters.
+        self.count_value_uses(self.func.jump_blockparams(block).len())?;
         if !self.func.jump_blockparams(block).is_empty() {
             let &[succ] = self.func.block_succs(block) else {
                 bail!("{block}: Jump blockparams can only be used with a single successor");

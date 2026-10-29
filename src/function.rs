@@ -134,6 +134,12 @@ pub const MAX_VALUES: usize = 1 << 28;
 /// Maximum number of value groups.
 pub const MAX_VALUE_GROUPS: usize = 1 << 28;
 
+/// Maximum total number of value occurrences in a function.
+///
+/// This includes uses and definitions, each member of group operands, incoming
+/// and outgoing jump arguments.
+pub const MAX_VALUE_USES: usize = 1 << 28;
+
 /// Maximum number of operands per instruction.
 pub const MAX_INST_OPERANDS: usize = 1 << 10;
 
