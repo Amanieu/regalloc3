@@ -281,7 +281,7 @@ impl<'a, 'b> RegInfoBuilder<'a, 'b> {
         // Create the register groups
         let mut out = vec![];
         #[allow(clippy::needless_range_loop)]
-        for i in 0..all.len() {
+        for i in 0..members.len() {
             let regs = (0..group_size).map(|group_idx| all[group_idx][i]).collect();
             let group = self.reginfo.groups.push(RegGroupData { regs });
             out.push(group);
