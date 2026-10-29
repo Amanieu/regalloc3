@@ -328,6 +328,13 @@ impl<R: RegInfo> Context<'_, R> {
             let common = self.reginfo.sub_classes(class) & self.reginfo.sub_classes(other);
             let largest = common.into_iter().next();
             if let Some(largest) = largest {
+                if group_size == 1 && self.reginfo.class_group_size(other) == 1 {
+                    ensure!(
+                        self.reginfo.class_group_size(largest) == 1,
+                        "Non-group classes {class} and {other} cannot have group class {largest} \
+                         as their largest common subclass"
+                    );
+                }
                 ensure!(
                     self.reginfo.sub_classes(largest) == common,
                     "Invalid subclass hierarchy for {class} and {other}: \

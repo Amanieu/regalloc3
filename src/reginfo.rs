@@ -408,6 +408,9 @@ pub trait RegInfo {
     /// largest common sub-class: one that is a superclass of every other common
     /// sub-class. Its set of sub-classes must equal the intersection of the two
     /// original sets. Multiple inheritance is allowed.
+    ///
+    /// If two classes are non-group classes, their largest common sub-class
+    /// must also be a non-group class.
     fn sub_classes(&self, class: RegClass) -> RegClassSet;
 
     /// Computes the largest common sub-class of the two register classes, or
@@ -415,6 +418,9 @@ pub trait RegInfo {
     ///
     /// The returned class must have exactly the sub-classes common to `a` and
     /// `b`, as required by [`RegInfo::sub_classes`].
+    ///
+    /// If both `a` and `b` are non-group classes, the returned class must also
+    /// be a non-group class.
     #[inline]
     fn common_subclass(&self, a: RegClass, b: RegClass) -> Option<RegClass> {
         // Since classes are ordered topologically, this is the lowest indexed
