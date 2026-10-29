@@ -6,6 +6,7 @@ use core::{fmt, slice};
 
 use anyhow::{Result, bail, ensure};
 
+use crate::debug_utils::constraint_checker::ConstraintChecker;
 use crate::debug_utils::dominator_tree::DominatorTree;
 use crate::debug_utils::postorder::PostOrder;
 use crate::entity::SecondaryMap;
@@ -19,9 +20,7 @@ use crate::reginfo::{PhysReg, RegInfo, RegUnitSet};
 /// the register allocator.
 ///
 /// As long as this validation succeeds, the register allocator is guaranteed to
-/// produce a valid allocation. The only exception is if operands are
-/// overconstrained: the register allocator may still fail in that case even if
-/// validation passes.
+/// produce a valid allocation.
 ///
 /// This assumes that `reginfo` has already been validated by
 /// [`validate_reginfo`].
@@ -31,6 +30,7 @@ pub fn validate_function(func: &impl Function, reginfo: &impl RegInfo) -> Result
     let mut ctx = Context {
         func,
         reginfo,
+        constraint_checker: ConstraintChecker::new(reginfo),
         value_defs: SecondaryMap::with_max_index(func.num_values()),
         early_fixed: RegUnitSet::new(),
         late_fixed: RegUnitSet::new(),
@@ -107,6 +107,7 @@ impl fmt::Display for ConstraintSource {
 struct Context<'a, F, R> {
     func: &'a F,
     reginfo: &'a R,
+    constraint_checker: ConstraintChecker<'a, R>,
     value_defs: SecondaryMap<Value, Option<ValueDef>>,
     early_fixed: RegUnitSet,
     late_fixed: RegUnitSet,
@@ -411,6 +412,9 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             clobbers.insert(unit);
         }
 
+        self.constraint_checker
+            .check(self.func, operands, clobbers)
+            .map_err(|error| anyhow::anyhow!("{inst}: {error}"))?;
         Ok(())
     }
 

@@ -1,17 +1,19 @@
 use alloc::vec;
 use alloc::vec::Vec;
+use core::debug_assert_matches;
 use core::ops::RangeInclusive;
 
 use arbitrary::{Result, Unstructured};
 
 use super::{BlockData, GenericFunction, IndirectRematData, InstData};
+use crate::debug_utils::constraint_checker::ConstraintChecker;
 use crate::debug_utils::dominator_tree::DominatorTree;
 use crate::debug_utils::generic_function::ValueData;
 use crate::debug_utils::postorder::PostOrder;
 use crate::entity::{PrimaryMap, SecondaryMap};
 use crate::function::{
     Block, Function, Inst, InstRange, MAX_INST_OPERANDS, Operand, OperandConstraint, OperandKind,
-    RematCost, TerminatorKind, Value,
+    RematCost, TerminatorKind, Value, ValueGroup,
 };
 use crate::reginfo::{MAX_REG_UNITS, PhysReg, RegBank, RegClass, RegInfo, RegUnit, RegUnitSet};
 
@@ -110,6 +112,10 @@ struct FunctionBuilder<'a, 'b, R> {
     /// Register description.
     reginfo: &'a R,
 
+    /// Constraint checker to ensure we emit instructions with satisfiable
+    /// constraints.
+    constraint_checker: ConstraintChecker<'a, R>,
+
     /// Function that is being built.
     func: GenericFunction,
 
@@ -198,6 +204,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
         Self {
             u,
             reginfo,
+            constraint_checker: ConstraintChecker::new(reginfo),
             func,
             config,
             domtree: DominatorTree::new(),
@@ -733,6 +740,7 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
                 }
             }
 
+            self.validate_constraints(&mut inst)?;
             self.block_insts[block].push(inst);
         }
 
@@ -831,7 +839,93 @@ impl<'a, 'b, R: RegInfo> FunctionBuilder<'a, 'b, R> {
             }
         }
 
+        self.validate_constraints(&mut inst)?;
         Ok(inst)
+    }
+
+    /// Validates the operand constraints of an instruction using
+    /// `ConstraintChecker`, relaxing a single constraint at a time until it
+    /// passes.
+    fn validate_constraints(&mut self, inst: &mut InstData) -> Result<()> {
+        let clobbers = inst.clobbers.iter().copied().collect();
+        while let Err(conflict) =
+            self.constraint_checker
+                .check(&self.func, &inst.operands, clobbers)
+        {
+            // Relax the operand whose register availability could not be
+            // guaranteed.
+            let op = &mut inst.operands[conflict.conflicting_operand()];
+            match op.kind() {
+                OperandKind::Def(value)
+                | OperandKind::EarlyDef(value)
+                | OperandKind::Use(value) => {
+                    // For scalar operands, just replace it with a top-level
+                    // class constraint.
+                    *op = Operand::new(
+                        op.kind(),
+                        OperandConstraint::Class(
+                            self.reginfo.top_level_class(self.func.values[value].bank),
+                        ),
+                    )
+                }
+                OperandKind::DefGroup(group)
+                | OperandKind::EarlyDefGroup(group)
+                | OperandKind::UseGroup(group) => {
+                    // For group operands, expand it into scalar operands.
+                    self.expand_group(inst, conflict.conflicting_operand(), group)?
+                }
+                OperandKind::NonAllocatable => unreachable!(),
+            };
+        }
+        Ok(())
+    }
+
+    /// Expands a group operand into scalar operands using the top-level
+    /// register class.
+    ///
+    /// Existing operand indices are preserved for tied operands.
+    fn expand_group(&self, inst: &mut InstData, slot: usize, group: ValueGroup) -> Result<()> {
+        // Check if we have space to add more operands.
+        let count = inst.operands.len() + self.func.value_groups[group].len() - 1;
+        if count > MAX_INST_OPERANDS {
+            return Err(arbitrary::Error::IncorrectFormat);
+        }
+
+        // If this group operand was the target of a group reuse, break the tie
+        // and give it our old register class.
+        let op = inst.operands[slot];
+        if let Some(output) = inst
+            .operands
+            .iter_mut()
+            .find(|other| other.constraint() == OperandConstraint::Reuse(slot))
+        {
+            debug_assert_matches!(
+                output.kind(),
+                OperandKind::DefGroup(_) | OperandKind::EarlyDefGroup(_)
+            );
+            *output = Operand::new(output.kind(), op.constraint());
+        }
+
+        // Replace the group with scalar operands, each minimally constrained to
+        // the top-level register class.
+        for (member, &value) in self.func.value_groups[group].iter().enumerate() {
+            let constraint = OperandConstraint::Class(
+                self.reginfo.top_level_class(self.func.values[value].bank),
+            );
+            let kind = match op.kind() {
+                OperandKind::DefGroup(_) => OperandKind::Def(value),
+                OperandKind::EarlyDefGroup(_) => OperandKind::EarlyDef(value),
+                OperandKind::UseGroup(_) => OperandKind::Use(value),
+                _ => unreachable!(),
+            };
+            let operand = Operand::new(kind, constraint);
+            if member == 0 {
+                inst.operands[slot] = operand;
+            } else {
+                inst.operands.push(operand);
+            }
+        }
+        Ok(())
     }
 
     /// Finalizes the function by assigning instruction numbers to each

@@ -278,11 +278,16 @@ pub enum OperandKind {
 /// operand and any constraints on the location where this value should be
 /// placed.
 ///
-/// The allocator's result will always satisfy all given constraints; however,
-/// if the input has a combination of constraints that are impossible to
-/// satisfy, then allocation may fail. Providing impossible constraints
-/// is usually a programming error in the client, rather than a function of bad
-/// input.
+/// Instruction constraints must permit register assignment without
+/// backtracking: within a single instruction, assigning a legal register to one
+/// operand must not prevent the remaining operands from being assigned. In
+/// practice this restriction mainly affects inline assembly with excessive
+/// hand-written constraints.
+///
+/// [`validate_function`](crate::debug_utils::validate_function) uses a
+/// conservative estimate of constraint pressure to reject functions with such
+/// constraints, though it may also reject some constraint combinations that
+/// could otherwise be allocated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum OperandConstraint {
