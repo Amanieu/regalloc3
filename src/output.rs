@@ -45,9 +45,6 @@ use crate::function::{Block, Function, Inst, InstRange, Value};
 use crate::internal::move_resolver::Edit;
 use crate::reginfo::{PhysReg, RegInfo, SpillSlotSize};
 
-/// Maximum size of the spill area.
-pub const MAX_SPILL_AREA_SIZE: u32 = 1 << 29;
-
 entity_def! {
     /// Space in the stackframe used by the allocator to temporarily store a value.
     ///
