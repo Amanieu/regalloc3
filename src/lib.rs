@@ -360,14 +360,14 @@ pub enum MoveOptimizationLevel {
 
     /// Optimize moves within blocks and across forward block edges.
     ///
-    /// This is the default since it provides a good balance between
-    /// optimization and runtime efficiency.
+    /// This provides a good balance between optimization and runtime
+    /// efficiency.
     Forward,
 
     /// Optimize moves across all blocks.
     ///
-    /// This will find the most optimizations but is relatively slow since it
-    /// requires several passes over the CFG.
+    /// This is the default: it will find the most optimizations but is
+    /// relatively slow since it requires several passes over the CFG.
     Global,
 }
 

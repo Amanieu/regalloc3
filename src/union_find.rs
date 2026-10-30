@@ -67,8 +67,7 @@ impl<K: EntityRef> UnionFind<K> {
     /// will remain as the leader of the unified set. The second argument is the
     /// leader of the other set that will be merged into the first set.
     ///
-    /// Returns whether the sets were successfully merged (or if both keys were
-    /// already in the same set).
+    /// If both keys are already in the same set, `unify` is not called.
     pub fn try_union(&mut self, a: K, b: K, unify: impl FnOnce(K, K) -> bool) {
         let a = self.find(a);
         let b = self.find(b);

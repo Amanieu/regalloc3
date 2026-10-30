@@ -21,8 +21,8 @@
 //! a terminator instruction:
 //! * A [`TerminatorKind::Jump`] has a single successor block *and* that
 //!   successor block has more than one predecessor blocks.
-//! * A [`TerminatorKind::Branch`] has multiple successor blocks, each of which
-//!   only has a single predecessor block.
+//! * A [`TerminatorKind::Branch`] has one or more successor blocks, each of
+//!   which only has a single predecessor block.
 //! * A [`TerminatorKind::Ret`] has no successor blocks and return from the
 //!   function.
 //!

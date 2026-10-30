@@ -23,13 +23,13 @@
 //!   spill slots at the start of each block. This is obtained by simulating
 //!   execution of each block and propagating the state to successor block,
 //!   until a fixed point is reached.
-//! - Then, once the set of registers on block entry is definitely known, we
-//!   can go through each block and optimize moves and uses.
+//! - Then, once the set of registers on block entry is definitely known, we can
+//!   go through each block and optimize moves and uses.
 //!
-//! However since this is rather expensive, by default we only track values
-//! across forward edges in the CFG. This allows move optimization to be done in
-//! a single pass. Any blocks that have incoming back edges are simply assumed
-//! to not have any live values on entry.
+//! In `MoveOptimizationLevel::Forward` mode, we only track values across
+//! forward edges in the CFG. This allows move optimization to be done in a
+//! single pass. Any blocks that have incoming back edges are simply assumed to
+//! not have any live values on entry.
 
 use alloc::collections::binary_heap::BinaryHeap;
 use alloc::vec;

@@ -38,8 +38,8 @@ struct Entry {
     /// - Virtual registers with a fixed-register hint are prioritized.
     /// - Larger groups are harder to allocate, and so are prioritized.
     /// - Large live ranges are harder to allocate, and so are prioritized.
-    /// - The virtual register index is used as a tiebreaker. It is negated to
-    ///   prefer lower-indexed virtual registers when the size is the same.
+    /// - The virtual register or group index is used as a tiebreaker,
+    ///   preferring higher indices when all other priorities are equal.
     ///
     /// stage:1 has_fixed_hint:1 group_size:3 size:27 index:32
     bits: u64,

@@ -171,16 +171,16 @@ entity_def! {
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity PhysReg(u16, "r");
 
-    /// A sequence of multiple registers which are assigned together for a single
-    /// operand.
+    /// A sequence of multiple registers which are assigned together for a
+    /// single operand.
     ///
-    /// This type is only used for groups with more than one register. When only a
-    /// single register is used, [`PhysReg`] is used directly.
+    /// This type is only used for groups with more than one register. When only
+    /// a single register is used, [`PhysReg`] is used directly.
     ///
-    /// In most cases these only consist of a single [`PhysReg`], but some
-    /// instruction operands require a sequence of registers from a specific set.
-    /// An example of this is an AArch64 SIMD structured load which only encodes the
-    /// first register of the sequence in the instruction.
+    /// Most instruction operands only require a single register, but some
+    /// require a sequence of registers from a specific set. An example is an
+    /// AArch64 SIMD structured load which only encodes the first register of
+    /// the sequence in the instruction.
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub entity RegGroup(u16, "rg");
 
