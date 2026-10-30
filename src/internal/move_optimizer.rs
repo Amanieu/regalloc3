@@ -981,6 +981,7 @@ impl StateTracker {
                             from: Allocation::reg(reg),
                             value,
                         });
+                        return Ok(());
                     }
                 }
 
