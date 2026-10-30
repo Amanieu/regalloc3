@@ -31,7 +31,7 @@ struct HintKey {
 impl fmt::Display for HintKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = Value::new((self.bits >> 32) as usize);
-        let inst = Inst::new((self.bits >> 1) as usize & 0x7ffffff);
+        let inst = Inst::new((self.bits >> 1) as usize & 0x7fffffff);
         let pos = if self.bits & 1 == 0 { "out" } else { "in" };
         write!(f, "{value} at {inst}-{pos}")
     }
