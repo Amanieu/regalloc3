@@ -21,12 +21,14 @@ use crate::reginfo::{PhysReg, RegInfo, RegUnitSet};
 /// the register allocator.
 ///
 /// As long as this validation succeeds, the register allocator is guaranteed to
-/// produce a valid allocation.
+/// produce a valid allocation, except if internal implementation limits are
+/// hit, in which case [`RegAllocError::FunctionTooBig`] is returned.
 ///
 /// This assumes that `reginfo` has already been validated by
 /// [`validate_reginfo`].
 ///
 /// [`validate_reginfo`]: super::validate_reginfo()
+/// [`RegAllocError::FunctionTooBig`]: crate::RegAllocError::FunctionTooBig
 pub fn validate_function(func: &impl Function, reginfo: &impl RegInfo) -> Result<()> {
     let mut ctx = Context {
         func,
