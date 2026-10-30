@@ -29,6 +29,7 @@ use super::hints::Hints;
 use super::live_range::{LiveRangeSegment, Slot, ValueSegment};
 use super::reg_matrix::RegMatrix;
 use super::uses::{Use, UseKind, Uses};
+use crate::RegAllocError;
 use crate::Stats;
 use crate::entity::{EntitySet, PackedOption, PrimaryMap, SecondaryMap};
 use crate::function::{
@@ -218,7 +219,7 @@ impl ValueLiveRanges {
         empty_segments: &mut Vec<ValueSegment>,
         func: &impl Function,
         reginfo: &impl RegInfo,
-    ) {
+    ) -> Result<(), RegAllocError> {
         uses.clear();
         hints.clear(func);
         reg_matrix.clear();
@@ -249,10 +250,11 @@ impl ValueLiveRanges {
 
         // Builds `ValueSegment`s for each value from the collected uses.
         for value in func.values() {
-            ctx.build_segments(value);
+            ctx.build_segments(value)?;
         }
 
         self.dump(uses);
+        Ok(())
     }
 
     /// Dumps the value live ranges to the log.
@@ -863,10 +865,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     }
 
     /// Computes the live range for the given value.
-    fn build_segments(&mut self, value: Value) {
+    fn build_segments(&mut self, value: Value) -> Result<(), RegAllocError> {
         // Ignore unused values.
         let Some(value_info) = self.value_live_ranges.value_info[value].as_ref() else {
-            return;
+            return Ok(());
         };
 
         trace!("Building live range segments for {value}");
@@ -880,7 +882,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             head = entry.next.expand();
             Some(entry.u)
         });
-        let mut full_use_list = self.uses.add_use_list(iter);
+        let mut full_use_list = self.uses.add_use_list(iter)?;
         if value_info.fixed_def {
             full_use_list.set_fixeddef(true);
         }
@@ -1068,5 +1070,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         }
 
         stat!(self.stats, value_segments, segments.len());
+        Ok(())
     }
 }

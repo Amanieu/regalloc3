@@ -4,6 +4,7 @@ use core::fmt;
 use core::ops::{Index, IndexMut, Range};
 
 use super::live_range::{LiveRangePoint, Slot};
+use crate::RegAllocError;
 use crate::function::Inst;
 use crate::reginfo::{PhysReg, RegClass, RegInfo};
 
@@ -488,11 +489,20 @@ impl Uses {
     }
 
     /// Adds a new `UseList` from an iterator.
-    pub fn add_use_list(&mut self, iter: impl IntoIterator<Item = Use>) -> UseList {
-        let from = self.uses.len() as u32;
+    pub fn add_use_list(
+        &mut self,
+        iter: impl IntoIterator<Item = Use>,
+    ) -> Result<UseList, RegAllocError> {
+        let from = self.uses.len();
         self.uses.extend(iter);
-        let to = self.uses.len() as u32;
-        UseList { from, to }
+        // Check that both endpoints fit in the packed 30-bit indices.
+        if self.uses.len() > USE_INDEX_MASK as usize {
+            return Err(RegAllocError::FunctionTooBig);
+        }
+        Ok(UseList {
+            from: from as u32,
+            to: self.uses.len() as u32,
+        })
     }
 }
 

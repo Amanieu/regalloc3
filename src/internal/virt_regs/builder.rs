@@ -24,6 +24,7 @@ use core::{array, mem};
 use hashbrown::HashMap;
 use rustc_hash::FxBuildHasher;
 
+use crate::RegAllocError;
 use crate::entity::CompactList;
 use crate::entity::packed_option::ReservedValue;
 use crate::function::{Function, Inst, OperandKind, RematCost, Value};
@@ -137,7 +138,7 @@ impl VirtRegBuilder {
         new_vregs: Option<&mut Vec<VirtReg>>,
         value_set: ValueSet,
         segments: &mut [ValueSegment],
-    ) {
+    ) -> Result<(), RegAllocError> {
         self.conflicting_uses.clear();
         let top_level_class = reginfo.top_level_class(bank);
         trace!("Building new vregs in {bank}");
@@ -160,10 +161,11 @@ impl VirtRegBuilder {
             constraints: VirtRegBuilderConstraints::new(top_level_class),
         };
 
-        ctx.compute_constraints(segments, split_placement.is_some());
+        ctx.compute_constraints(segments, split_placement.is_some())?;
         if !ctx.conflicting_uses.is_empty() {
-            ctx.emit_vregs_for_conflicts();
+            ctx.emit_vregs_for_conflicts()?;
         }
+        Ok(())
     }
 }
 
@@ -455,7 +457,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     ///
     /// Once all segments are processed, the remaining uses are packaged into a
     /// virtual register.
-    fn compute_constraints(&mut self, mut segments: &mut [ValueSegment], may_conflict: bool) {
+    fn compute_constraints(
+        &mut self,
+        mut segments: &mut [ValueSegment],
+        may_conflict: bool,
+    ) -> Result<(), RegAllocError> {
         trace!("Computing vreg constraints");
         'outer: loop {
             self.reset_constraints();
@@ -584,7 +590,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 self.hints,
                                 split_point,
                             );
-                            self.compute_constraints(split.first_half(), false);
+                            self.compute_constraints(split.first_half(), false)?;
 
                             // Then continue vreg creation as normal for the
                             // portion after the split, which may still have
@@ -600,14 +606,15 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 }
             }
 
-            self.emit_vreg(segments);
+            self.emit_vreg(segments)?;
             break;
         }
+        Ok(())
     }
 
     /// Emits a set of vregs containing single `Use`s which were removed from
     /// another vreg due to a constraint conflict on the same instruction.
-    fn emit_vregs_for_conflicts(&mut self) {
+    fn emit_vregs_for_conflicts(&mut self) -> Result<(), RegAllocError> {
         // Iterate over groups of conflicting uses at each instruction. We need
         // to attempt to merge each pair of uses so that group uses at the same
         // index for the same group are assigned to the same vreg.
@@ -665,7 +672,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                                 .iter()
                                 .map(|&(_value, u, _blockparam_idx)| u),
                         ),
-                );
+                )?;
                 if blockparam_idx.is_none() {
                     use_list.set_livein(true);
                 }
@@ -679,7 +686,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     use_list,
                     value,
                 };
-                self.emit_vreg(&mut [conflict_segment]);
+                self.emit_vreg(&mut [conflict_segment])?;
 
                 // Continue with any uses that we weren't able to merge into
                 // this vreg.
@@ -688,6 +695,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         }
 
         *self.conflicting_uses = conflicting_uses;
+        Ok(())
     }
 
     /// Starting from the `Use` that caused a conflict, scan backwards to find
@@ -841,7 +849,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
     /// Commits the current contents of `segments` and the current constraints
     /// to a virtual register.
-    fn emit_vreg(&mut self, segments: &mut [ValueSegment]) {
+    fn emit_vreg(&mut self, segments: &mut [ValueSegment]) -> Result<(), RegAllocError> {
         debug_assert!(!segments.is_empty());
         debug_assert!(segments.iter().all(|seg| !seg.live_range.is_empty()));
         let has_fixed_hint = segments.iter().any(|seg| seg.use_list.has_fixedhint());
@@ -880,11 +888,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 })
                 .unwrap_err();
             self.virt_regs.virt_regs[vreg].segments =
-                self.virt_regs.virt_regs[vreg].segments.insert_iter_at(
+                self.virt_regs.virt_regs[vreg].segments.try_insert_iter_at(
                     idx,
                     segments.iter().copied(),
                     &mut self.virt_regs.segment_pool,
-                );
+                )?;
 
             // Recompute the spill weight after adding the segments.
             let spill_weight = self.calc_spill_weight(self.virt_regs.segments(vreg));
@@ -901,23 +909,23 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 }
             }
 
-            return;
+            return Ok(());
         }
 
         // Allocate a virtual register.
         let spill_weight = self.calc_spill_weight(segments);
-        let vreg = self.virt_regs.virt_regs.push(VirtRegData {
-            segments: CompactList::from_iter(
+        let vreg = self.virt_regs.virt_regs.try_push(VirtRegData {
+            segments: CompactList::try_from_iter(
                 segments.iter().copied(),
                 &mut self.virt_regs.segment_pool,
-            ),
+            )?,
             class: self.constraints.class,
             group_index: 0,
             group: None.into(),
             value_set: self.value_set,
             has_fixed_hint,
             spill_weight,
-        });
+        })?;
 
         // Special handling for vregs that are part of a register group.
         if let Some(group) = &self.constraints.group {
@@ -926,10 +934,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 // create a new group.
                 None => {
                     let group_size = self.reginfo.class_group_size(self.constraints.class);
-                    let vreg_group = self.virt_regs.groups.push(CompactList::from_iter(
+                    let vreg_group = self.virt_regs.groups.try_push(CompactList::try_from_iter(
                         (0..group_size).map(|_| VirtReg::reserved_value()),
                         &mut self.virt_regs.group_pool,
-                    ));
+                    )?)?;
                     trace!("Created new vreg group {vreg_group}");
 
                     // Update the group operand mappings to our new group.
@@ -995,5 +1003,6 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         if let Some(new_vregs) = &mut self.new_vregs {
             new_vregs.push(vreg);
         }
+        Ok(())
     }
 }

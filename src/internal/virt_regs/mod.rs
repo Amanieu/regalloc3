@@ -14,6 +14,7 @@ use super::spill_allocator::SpillAllocator;
 use super::split_placement::SplitPlacement;
 use super::uses::Uses;
 use super::value_live_ranges::ValueLiveRanges;
+use crate::RegAllocError;
 use crate::debug_utils::display_iter;
 use crate::entity::iter::Keys;
 use crate::entity::packed_option::PackedOption;
@@ -169,7 +170,7 @@ impl VirtRegs {
         options: &Options,
         value_set: ValueSet,
         new_vregs: &mut Vec<VirtReg>,
-    ) {
+    ) -> Result<(), RegAllocError> {
         debug_assert!(!segments.is_empty());
         let bank = func.value_bank(segments[0].value);
         virt_reg_builder.build(
@@ -186,7 +187,7 @@ impl VirtRegs {
             Some(new_vregs),
             value_set,
             segments,
-        );
+        )
     }
 
     /// Builds virtual registers from value live ranges.
@@ -203,7 +204,7 @@ impl VirtRegs {
         virt_reg_builder: &mut VirtRegBuilder,
         stats: &mut Stats,
         options: &Options,
-    ) {
+    ) -> Result<(), RegAllocError> {
         self.clear();
         virt_reg_builder.clear();
         spill_allocator.clear(func);
@@ -230,7 +231,7 @@ impl VirtRegs {
                 None,
                 set,
                 &mut segments,
-            );
+            )?;
         }
 
         if trace_enabled!() {
@@ -247,6 +248,7 @@ impl VirtRegs {
                 .map(|vreg_data| vreg_data.segments.len())
                 .sum::<usize>()
         );
+        Ok(())
     }
 
     /// Dumps the virtual registers to the log.

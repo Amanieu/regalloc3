@@ -38,6 +38,8 @@ pub mod set;
 pub mod small_set;
 pub mod sparse;
 
+use core::{error::Error, fmt};
+
 pub use base::{EntityRange, EntityRef};
 pub use compact_list::{CompactList, CompactListPool};
 pub use packed_option::{PackedOption, ReservedValue};
@@ -46,3 +48,15 @@ pub use secondary_map::SecondaryMap;
 pub use set::EntitySet;
 pub use small_set::SmallEntitySet;
 pub use sparse::SparseMap;
+
+/// A collection exceeded the range of its entity indices or packed offsets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CapacityError;
+
+impl fmt::Display for CapacityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("entity collection capacity exceeded")
+    }
+}
+
+impl Error for CapacityError {}

@@ -6,7 +6,7 @@ use core::ops::{Index, IndexMut};
 use core::{fmt, slice};
 
 use super::iter::{IntoIter, Iter, IterMut, Keys};
-use super::{EntityRange, EntityRef};
+use super::{CapacityError, EntityRange, EntityRef};
 
 /// A primary mapping `K -> V` allocating dense entity references.
 ///
@@ -140,21 +140,57 @@ where
     }
 
     /// Append `v` to the mapping, assigning a new key which is returned.
+    ///
+    /// Panics if the maximum number of valid keys has been reached.
     #[inline]
+    #[track_caller]
     pub fn push(&mut self, v: V) -> K {
+        self.try_push(v).expect("primary map capacity exceeded")
+    }
+
+    /// Append `v` to the mapping, assigning a new key which is returned.
+    ///
+    /// Returns an error if the maximum number of valid keys has been reached.
+    #[inline]
+    pub fn try_push(&mut self, v: V) -> Result<K, CapacityError> {
+        if self.elems.len() >= K::reserved_value().index() {
+            return Err(CapacityError);
+        }
         let k = self.next_key();
         self.elems.push(v);
-        k
+        Ok(k)
     }
 
     /// Appends multiple values from the given iterator, returning a range of
     /// keys for the newly added elements.
+    ///
+    /// Panics if the maximum number of valid keys has been reached.
     #[inline]
+    #[track_caller]
     pub fn extend(&mut self, iter: impl IntoIterator<Item = V>) -> EntityRange<K> {
-        let from = self.next_key();
+        self.try_extend(iter)
+            .expect("primary map capacity exceeded")
+    }
+
+    /// Appends multiple values from the given iterator, returning a range of
+    /// keys for the newly added elements.
+    ///
+    /// Panics if the maximum number of valid keys has been reached.
+    #[inline]
+    pub fn try_extend(
+        &mut self,
+        iter: impl IntoIterator<Item = V>,
+    ) -> Result<EntityRange<K>, CapacityError> {
+        let start = self.elems.len();
         self.elems.extend(iter);
-        let to = self.next_key();
-        EntityRange { from, to }
+        if self.elems.len() >= K::reserved_value().index() {
+            self.elems.truncate(start);
+            return Err(CapacityError);
+        }
+        Ok(EntityRange {
+            from: K::new(start),
+            to: self.next_key(),
+        })
     }
 
     /// Returns the last element that was inserted in the map.

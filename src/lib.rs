@@ -244,7 +244,7 @@ impl RegisterAllocator {
             &mut self.allocator.empty_segments,
             func,
             reginfo,
-        );
+        )?;
 
         // Coalesce SSA values into non-overlapping sets to eliminate
         // unnecessary move instructions.
@@ -268,7 +268,7 @@ impl RegisterAllocator {
             &mut self.virt_reg_builder,
             &mut self.stats,
             options,
-        );
+        )?;
 
         // Allocate virtual registers to physical registers.
         self.allocator.run(
@@ -313,7 +313,7 @@ impl RegisterAllocator {
             func,
             reginfo,
             options.move_optimization,
-        );
+        )?;
 
         // Eliminate moves that write to spill slots that are never read.
         if options.dead_spill_elimination {
@@ -487,6 +487,13 @@ pub enum RegAllocError {
     /// E.g. number of virtual registers, total number of operands in the
     /// function, etc.
     FunctionTooBig,
+}
+
+impl From<entity::CapacityError> for RegAllocError {
+    #[inline]
+    fn from(_: entity::CapacityError) -> Self {
+        Self::FunctionTooBig
+    }
 }
 
 impl fmt::Display for RegAllocError {

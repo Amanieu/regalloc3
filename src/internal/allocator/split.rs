@@ -6,6 +6,7 @@ use core::ops::ControlFlow;
 
 use super::queue::VirtRegOrGroup;
 use super::{AbstractVirtRegGroup, Assignment, Context, Stage};
+use crate::RegAllocError;
 use crate::function::{Function, Inst, InstRange, Value};
 use crate::internal::live_range::{LiveRangeSegment, Slot, ValueSegment};
 use crate::internal::reg_matrix::{
@@ -849,7 +850,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         left: Option<Inst>,
         right: Option<Inst>,
         interference_weight: f32,
-    ) {
+    ) -> Result<(), RegAllocError> {
         trace!("Splitting {vreg}");
         stat!(self.stats, split_vregs);
 
@@ -863,41 +864,43 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // Helper function to create new virtual regsiters and initialize them
         // to unassigned with the given hint.
         let set = self.virt_regs[vreg].value_set;
-        let mut create_vregs = |segments: &mut [ValueSegment], uses: &mut Uses| {
-            self.virt_regs.create_vreg_from_segments(
-                segments,
-                self.func,
-                self.reginfo,
-                uses,
-                self.hints,
-                self.virt_reg_builder,
-                self.coalescing,
-                self.stats,
-                self.options,
-                set,
-                &mut splitter.new_vregs,
-            );
-            self.allocator
-                .assignments
-                .grow_to_with(self.virt_regs.num_virt_regs(), || Assignment::Unassigned {
-                    evicted_for_preference: false,
-                });
-        };
+        let mut create_vregs =
+            |segments: &mut [ValueSegment], uses: &mut Uses| -> Result<(), RegAllocError> {
+                self.virt_regs.create_vreg_from_segments(
+                    segments,
+                    self.func,
+                    self.reginfo,
+                    uses,
+                    self.hints,
+                    self.virt_reg_builder,
+                    self.coalescing,
+                    self.stats,
+                    self.options,
+                    set,
+                    &mut splitter.new_vregs,
+                )?;
+                self.allocator
+                    .assignments
+                    .grow_to_with(self.virt_regs.num_virt_regs(), || Assignment::Unassigned {
+                        evicted_for_preference: false,
+                    });
+                Ok(())
+            };
 
         let mut segments = &mut splitter.segments[..];
         if let Some(left) = left {
             let mut split = ValueSegment::split_segments_at(segments, self.uses, self.hints, left);
-            create_vregs(split.first_half(), self.uses);
+            create_vregs(split.first_half(), self.uses)?;
             segments = split.into_second_half();
         }
 
         if let Some(right) = right {
             let mut split2 =
                 ValueSegment::split_segments_at(segments, self.uses, self.hints, right);
-            create_vregs(split2.first_half(), self.uses);
-            create_vregs(split2.into_second_half(), self.uses);
+            create_vregs(split2.first_half(), self.uses)?;
+            create_vregs(split2.into_second_half(), self.uses)?;
         } else {
-            create_vregs(segments, self.uses);
+            create_vregs(segments, self.uses)?;
         }
 
         // At least one of the new virtual registers must be able to evict the
@@ -911,6 +914,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         self.allocator.assignments[vreg] = Assignment::Dead;
 
         self.queue_new_vregs();
+        Ok(())
     }
 
     /// Splits the given virtual register into smaller pieces.
@@ -919,7 +923,10 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// and which has too low of a spill weight to evict other interfering
     /// virtual registers, attempt to split it into smaller pieces that are
     /// alloctable.
-    pub(super) fn split_or_spill(&mut self, vreg: impl AbstractVirtRegGroup) {
+    pub(super) fn split_or_spill(
+        &mut self,
+        vreg: impl AbstractVirtRegGroup,
+    ) -> Result<(), RegAllocError> {
         // Single-instruction ranges cannot be split at an instruction boundary,
         // but coalesced segments can be separated and input constraints can be
         // extracted into shorter fragments. Do this before ordinary splitting
@@ -927,20 +934,17 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // without making progress.
         let first_vreg = &self.virt_regs[vreg.first_vreg(self.virt_regs)];
         if first_vreg.spill_weight == f32::MAX {
-            self.split_single_inst(vreg);
-            return;
+            return self.split_single_inst(vreg);
         }
 
         if self.options.split_strategy == SplitStrategy::Spill {
-            self.spill(vreg);
-            return;
+            return self.spill(vreg);
         }
 
         // We can't split register groups so instead isolate all group uses into
         // minimal segments and then try again with the remaining segments.
         if let VirtRegOrGroup::Group(group) = vreg.into() {
-            self.isolate_group_uses(group);
-            return;
+            return self.isolate_group_uses(group);
         }
         let vreg = vreg.first_vreg(self.virt_regs);
 
@@ -950,8 +954,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // the stack.
         if self.virt_regs[vreg].spill_weight == 0.0 {
             stat!(self.stats, spill_weight_zero);
-            self.spill(vreg);
-            return;
+            return self.spill(vreg);
         }
 
         // Collect a linear list of all the places where the virtual register is
@@ -965,8 +968,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
 
         // Find the "best" use (highest weight) to build a split region around.
         let Some(best_use) = self.find_best_use() else {
-            self.spill(vreg);
-            return;
+            return self.spill(vreg);
         };
 
         // Collect information about gaps between uses.
@@ -1013,8 +1015,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         let Some(best_split) = best_split else {
             trace!("Best use couldn't be evicted on any register, forcing a spill");
             stat!(self.stats, no_best_split);
-            self.spill(vreg);
-            return;
+            return self.spill(vreg);
         };
         trace!("Best split: {best_split:?}");
 
@@ -1029,7 +1030,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             if !self.try_evict(vreg) {
                 panic!("Failed to evict {vreg} when interference has lower weight");
             }
-            return;
+            return Ok(());
         }
 
         // If the register class for this virtual register allows allocation to
@@ -1051,8 +1052,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             trace!("{vreg} is directly spillable with a spill cost of {spill_cost}");
             if spill_cost < best_split.split_cost {
                 stat!(self.stats, spill_cheaper_than_split);
-                self.spill(vreg);
-                return;
+                return self.spill(vreg);
             }
         } else {
             trace!("{vreg} is not directly spillable");
@@ -1064,7 +1064,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             best_split.left,
             best_split.right,
             best_split.interference_weight,
-        );
+        )?;
+        Ok(())
     }
 
     // Invalidate any existing operand to group mappings for a vreg: the group
@@ -1102,7 +1103,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// The remaining live range pieces are collected into a separate non-group
     /// virtual register for each original group member, which can then be split
     /// as normal.
-    fn isolate_group_uses(&mut self, group: VirtRegGroup) {
+    fn isolate_group_uses(&mut self, group: VirtRegGroup) -> Result<(), RegAllocError> {
         self.invalidate_operand_group_mapping(group);
 
         // Find any group uses and split them into minimal segments
@@ -1205,30 +1206,27 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                     self.options,
                     value_set,
                     &mut splitter.new_vregs,
-                );
+                )?;
             }
         }
 
         // Create a new virtual register for each minimal segment that was created.
-        splitter
-            .minimal_segments
-            .iter()
-            .for_each(|&(segment, value_set)| {
-                stat!(self.stats, isolated_group_minimal_segments);
-                self.virt_regs.create_vreg_from_segments(
-                    &mut [segment],
-                    self.func,
-                    self.reginfo,
-                    self.uses,
-                    self.hints,
-                    self.virt_reg_builder,
-                    self.coalescing,
-                    self.stats,
-                    self.options,
-                    value_set,
-                    &mut splitter.new_vregs,
-                );
-            });
+        for &(segment, value_set) in &splitter.minimal_segments {
+            stat!(self.stats, isolated_group_minimal_segments);
+            self.virt_regs.create_vreg_from_segments(
+                &mut [segment],
+                self.func,
+                self.reginfo,
+                self.uses,
+                self.hints,
+                self.virt_reg_builder,
+                self.coalescing,
+                self.stats,
+                self.options,
+                value_set,
+                &mut splitter.new_vregs,
+            )?;
+        }
 
         // Initialize assignments for the new virtual registers.
         self.allocator
@@ -1236,6 +1234,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             .grow_to(self.virt_regs.num_virt_regs());
 
         self.queue_new_vregs();
+        Ok(())
     }
 
     /// Spills the given virtual register to a spillslot.
@@ -1243,7 +1242,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     /// Any uses which must be in a register are split off into separate virtual
     /// registers which only cover a single instruction and therefore are
     /// unspillable.
-    pub(super) fn spill(&mut self, vreg: impl AbstractVirtRegGroup) {
+    pub(super) fn spill(&mut self, vreg: impl AbstractVirtRegGroup) -> Result<(), RegAllocError> {
         // TODO(perf): Fast path if class allows spillslots?
 
         self.invalidate_operand_group_mapping(vreg);
@@ -1382,25 +1381,22 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         // Create a new virtual register for each minimal segment that was
         // created.
         splitter.new_vregs.clear();
-        splitter
-            .minimal_segments
-            .iter()
-            .for_each(|&(segment, value_set)| {
-                stat!(self.stats, spill_minimal_segments);
-                self.virt_regs.create_vreg_from_segments(
-                    &mut [segment],
-                    self.func,
-                    self.reginfo,
-                    self.uses,
-                    self.hints,
-                    self.virt_reg_builder,
-                    self.coalescing,
-                    self.stats,
-                    self.options,
-                    value_set,
-                    &mut splitter.new_vregs,
-                );
-            });
+        for &(segment, value_set) in &splitter.minimal_segments {
+            stat!(self.stats, spill_minimal_segments);
+            self.virt_regs.create_vreg_from_segments(
+                &mut [segment],
+                self.func,
+                self.reginfo,
+                self.uses,
+                self.hints,
+                self.virt_reg_builder,
+                self.coalescing,
+                self.stats,
+                self.options,
+                value_set,
+                &mut splitter.new_vregs,
+            )?;
+        }
 
         // Initialize assignments for the new virtual registers.
         self.allocator
@@ -1408,6 +1404,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             .grow_to(self.virt_regs.num_virt_regs());
 
         self.queue_new_vregs();
+        Ok(())
     }
 
     /// Special splitting logic for virtual registers which only cover a
@@ -1418,7 +1415,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     ///   different values.
     /// - One segment containing only uses, but which is live-through to the
     ///   next instruction boundary.
-    fn split_single_inst(&mut self, vreg: impl AbstractVirtRegGroup) {
+    fn split_single_inst(&mut self, vreg: impl AbstractVirtRegGroup) -> Result<(), RegAllocError> {
         self.invalidate_operand_group_mapping(vreg);
 
         let splitter = &mut self.allocator.splitter;
@@ -1488,7 +1485,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             // Create a minimal segment with the extracted uses.
             let mut use_list = self
                 .uses
-                .add_use_list(splitter.extracted_uses.iter().copied());
+                .add_use_list(splitter.extracted_uses.iter().copied())?;
             use_list.set_livein(blockparam_in.is_none());
             splitter.minimal_segments.push((
                 ValueSegment {
@@ -1519,7 +1516,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 self.options,
                 value_set,
                 &mut splitter.new_vregs,
-            );
+            )?;
         }
 
         // Initialize assignments for the new virtual registers.
@@ -1527,6 +1524,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             .assignments
             .grow_to(self.virt_regs.num_virt_regs());
         self.queue_new_vregs();
+        Ok(())
     }
 
     fn queue_new_vregs(&mut self) {

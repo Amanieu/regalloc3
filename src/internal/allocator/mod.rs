@@ -555,7 +555,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         if order.must_spill(vreg, self.virt_regs, self.reginfo) {
             trace!("Empty allocation order, spilling immediately");
             stat!(self.stats, must_spill_vreg);
-            self.spill(vreg);
+            self.spill(vreg)?;
             return Ok(());
         }
 
@@ -645,7 +645,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 trace!("Splitting {vreg} into smaller pieces");
                 stat!(self.stats, try_split_or_spill);
 
-                self.split_or_spill(vreg);
+                self.split_or_spill(vreg)?;
             }
         }
 

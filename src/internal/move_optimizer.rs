@@ -43,6 +43,7 @@ use super::allocations::Allocations;
 use super::coalescing::Coalescing;
 use super::move_resolver::{Edit, MoveResolver};
 use super::spill_allocator::SpillAllocator;
+use crate::RegAllocError;
 use crate::entity::CompactList;
 use crate::entity::packed_option::{PackedOption, ReservedValue};
 use crate::entity::sparse::Entry;
@@ -109,10 +110,10 @@ impl MoveOptimizer {
         func: &impl Function,
         reginfo: &impl RegInfo,
         move_optimization: MoveOptimizationLevel,
-    ) {
+    ) -> Result<(), RegAllocError> {
         // Nothing to do if move optimization is disabled.
         if move_optimization == MoveOptimizationLevel::Off {
-            return;
+            return Ok(());
         }
 
         self.state_tracker
@@ -152,12 +153,14 @@ impl MoveOptimizer {
                 stats,
                 func,
                 reginfo,
-            );
+            )?;
 
             if move_optimization == MoveOptimizationLevel::Forward {
                 self.propagate_to_succs(block, false, func);
             }
         }
+
+        Ok(())
     }
 
     /// Prepares the block entry states for forward-edge-only optimization.
@@ -713,35 +716,37 @@ impl StateTracker {
     }
 
     /// Finds the concrete input allocations needed for a shallow indirect
-    /// rematerialization of `value` into `dest`.
-    fn indirect_remat_inputs(
+    /// rematerialization of `value` into `dest`. Returns true on success, with
+    /// the input allocations stored in `self.remat_inputs`.
+    fn try_indirect_remat(
         &mut self,
         value: Value,
         dest: Allocation,
-        allocations: &mut Allocations,
         func: &impl Function,
         reginfo: &impl RegInfo,
-    ) -> Option<CompactList<Allocation>> {
+    ) -> bool {
         self.remat_inputs.clear();
-        let remat = func.can_indirectly_rematerialize(value)?;
+        let Some(remat) = func.can_indirectly_rematerialize(value) else {
+            return false;
+        };
 
         // Check that the destination matches the constraints.
         match remat.constraint {
             OperandConstraint::Class(class) => match dest.kind() {
                 AllocationKind::PhysReg(reg) => {
                     if !reginfo.class_members(class).contains(reg) {
-                        return None;
+                        return false;
                     }
                 }
                 AllocationKind::SpillSlot(_) => {
                     if !reginfo.class_includes_spillslots(class) {
-                        return None;
+                        return false;
                     }
                 }
             },
             OperandConstraint::Fixed(reg) => {
                 if dest.kind() != AllocationKind::PhysReg(reg) {
-                    return None;
+                    return false;
                 }
             }
             OperandConstraint::Reuse(_) => {
@@ -752,13 +757,13 @@ impl StateTracker {
         for (idx, &input) in remat.inputs.iter().enumerate() {
             let input_constraint = if remat.constraint == OperandConstraint::Reuse(idx) {
                 let AllocationKind::PhysReg(reg) = dest.kind() else {
-                    return None;
+                    return false;
                 };
                 let OperandConstraint::Class(class) = input.constraint() else {
                     unreachable!();
                 };
                 if !reginfo.class_members(class).contains(reg) {
-                    return None;
+                    return false;
                 }
                 OperandConstraint::Fixed(reg)
             } else {
@@ -776,11 +781,15 @@ impl StateTracker {
                             }) {
                             Allocation::reg(reg)
                         } else if reginfo.class_includes_spillslots(class) {
-                            let slot = self.slot_for_value[input_value].expand()?;
-                            (self.spillslot_values.get(slot) == Some(&input_value))
-                                .then_some(Allocation::spillslot(slot))?
+                            let Some(slot) = self.slot_for_value[input_value].expand() else {
+                                return false;
+                            };
+                            if self.spillslot_values.get(slot) != Some(&input_value) {
+                                return false;
+                            }
+                            Allocation::spillslot(slot)
                         } else {
-                            return None;
+                            return false;
                         };
                         if check_overlap
                             && dest.units(reginfo).any(|dest_unit| {
@@ -789,16 +798,19 @@ impl StateTracker {
                                     .any(|input_unit| dest_unit == input_unit)
                             })
                         {
-                            return None;
+                            return false;
                         }
                         input_alloc
                     }
                     OperandConstraint::Fixed(reg) => {
-                        let input_alloc = self
+                        if !self
                             .value_regs
                             .get(input_value)
                             .is_some_and(|regs| regs.contains(reg))
-                            .then_some(Allocation::reg(reg))?;
+                        {
+                            return false;
+                        }
+                        let input_alloc = Allocation::reg(reg);
                         if check_overlap
                             && dest.units(reginfo).any(|dest_unit| {
                                 input_alloc
@@ -806,7 +818,7 @@ impl StateTracker {
                                     .any(|input_unit| dest_unit == input_unit)
                             })
                         {
-                            return None;
+                            return false;
                         }
                         input_alloc
                     }
@@ -838,7 +850,9 @@ impl StateTracker {
                             }
                         }
                     }
-                    let (input_alloc, reg_group) = alloc?;
+                    let Some((input_alloc, reg_group)) = alloc else {
+                        return false;
+                    };
                     if check_overlap {
                         if reginfo.reg_group_members(reg_group).iter().any(|&reg| {
                             dest.units(reginfo).any(|dest_unit| {
@@ -847,7 +861,7 @@ impl StateTracker {
                                     .any(|input_unit| dest_unit == input_unit)
                             })
                         }) {
-                            return None;
+                            return false;
                         }
                     }
                     input_alloc
@@ -866,10 +880,7 @@ impl StateTracker {
             self.remat_inputs.push(input_alloc);
         }
 
-        Some(CompactList::from_iter(
-            self.remat_inputs.iter().copied(),
-            &mut allocations.remat_inputs,
-        ))
+        true
     }
 
     /// Attempts to optimize an `Edit` by eliminating it or making it cheaper.
@@ -881,9 +892,9 @@ impl StateTracker {
         stats: &mut Stats,
         func: &impl Function,
         reginfo: &impl RegInfo,
-    ) {
+    ) -> Result<(), RegAllocError> {
         let Some(edit_value) = *edit else {
-            return;
+            return Ok(());
         };
 
         let (value, to, from) = match edit_value {
@@ -891,7 +902,7 @@ impl StateTracker {
             Edit::Rematerialize { to, value } | Edit::IndirectRematerialize { to, value, .. } => {
                 (value, to, None)
             }
-            Edit::EmergencySpill { .. } | Edit::EmergencyReload { .. } => return,
+            Edit::EmergencySpill { .. } | Edit::EmergencyReload { .. } => return Ok(()),
         };
 
         // First, see if the destination already contains the desired value.
@@ -912,7 +923,7 @@ impl StateTracker {
                         }
                         trace!("Eliminated redundant edit");
                         *edit = None;
-                        return;
+                        return Ok(());
                     }
                 }
             }
@@ -921,7 +932,7 @@ impl StateTracker {
                     stat!(stats, optimized_redundant_spill);
                     trace!("Eliminated redundant spill");
                     *edit = None;
-                    return;
+                    return Ok(());
                 }
 
                 // We may not know that the value is already in the spill
@@ -944,7 +955,7 @@ impl StateTracker {
                             trace!(
                                 "Eliminated redundant spill: already spilled in dominating block"
                             );
-                            return;
+                            return Ok(());
                         }
                     }
                     self.last_spilled_in[value] = Some(block).into();
@@ -975,15 +986,18 @@ impl StateTracker {
 
                 // If this value can be indirectly rematerialized and all inputs
                 // are available then we can do that to avoid a load.
-                if let Some(inputs) =
-                    self.indirect_remat_inputs(value, to, allocations, func, reginfo)
-                {
+                if self.try_indirect_remat(value, to, func, reginfo) {
                     trace!("Optimizing reload to indirect remat");
                     stat!(stats, optimized_reload_to_indirect_remat);
+                    let inputs = CompactList::try_from_iter(
+                        self.remat_inputs.iter().copied(),
+                        &mut allocations.remat_inputs,
+                    )?;
                     *edit = Some(Edit::IndirectRematerialize { to, value, inputs });
                 }
             }
         }
+        Ok(())
     }
 
     /// This does the same processing as `process_block`, but additionally tries
@@ -996,7 +1010,7 @@ impl StateTracker {
         stats: &mut Stats,
         func: &impl Function,
         reginfo: &impl RegInfo,
-    ) {
+    ) -> Result<(), RegAllocError> {
         trace!("Optimizing {block}...");
 
         // Define blockparam values. The corresponding moves are in predecessor
@@ -1016,7 +1030,7 @@ impl StateTracker {
                 if let Some(edit) = first.1 {
                     trace!("Optimizing edit: {edit}");
                 }
-                self.optimize_edit(&mut first.1, allocations, block, stats, func, reginfo);
+                self.optimize_edit(&mut first.1, allocations, block, stats, func, reginfo)?;
                 if let Some(edit) = first.1 {
                     self.process_edit(edit, reginfo);
                 }
@@ -1104,5 +1118,6 @@ impl StateTracker {
         }
 
         trace!("Values: {self}");
+        Ok(())
     }
 }
