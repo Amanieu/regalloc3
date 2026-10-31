@@ -54,9 +54,14 @@ impl DeadSpillElimination {
         stats: &mut Stats,
         func: &impl Function,
     ) {
+        // Nothing to do if there are no spillslots.
+        let num_spillslots = spill_allocator.stack_layout.num_spillslots();
+        if num_spillslots == 0 {
+            return;
+        }
+
         // Initialize all spillslots to dead while preserving existing
         // allocations if available.
-        let num_spillslots = spill_allocator.stack_layout.num_spillslots();
         self.block_live_out
             .grow_to_with(func.num_blocks(), EntitySet::new);
         for live_out in self.block_live_out.values_mut().take(func.num_blocks()) {
