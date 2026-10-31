@@ -333,10 +333,12 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             }
 
             // Create uses for outgoing block parameters.
-            for &value in self.func.jump_blockparams(block) {
+            for (idx, &value) in self.func.jump_blockparams(block).iter().enumerate() {
                 trace!("Processing outgoing blockparam {value} in {block}");
                 stat!(self.stats, blockparam_out);
-                self.value_use(value, block_insts.last(), UseKind::BlockparamOut {});
+                let succ = self.func.block_succs(block)[0];
+                let dest = self.func.block_params(succ)[idx];
+                self.value_use(value, block_insts.last(), UseKind::BlockparamOut { dest });
             }
         }
     }

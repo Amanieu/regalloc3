@@ -192,13 +192,17 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         for segment in segments {
             for u in &self.uses[segment.use_list] {
                 // Ignore uses with no spill weight.
-                let spill_cost =
-                    use_spill_cost(self.func, self.reginfo, self.options, segment.value, *u);
-                if spill_cost == 0.0 {
+                let weight = use_spill_cost(
+                    self.func,
+                    self.reginfo,
+                    self.options,
+                    self.coalescing,
+                    segment.value,
+                    *u,
+                );
+                if weight == 0.0 {
                     continue;
                 }
-                let freq = self.func.block_frequency(self.func.inst_block(u.pos));
-                let weight = spill_cost * freq;
 
                 // Add a new use if this use is at a different position than the
                 // last one.
@@ -1043,10 +1047,14 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             let mut spill_cost = 0.0;
             for segment in self.virt_regs.segments(vreg) {
                 for &u in &self.uses[segment.use_list] {
-                    let block_freq = self.func.block_frequency(self.func.inst_block(u.pos));
-                    spill_cost +=
-                        use_spill_cost(self.func, self.reginfo, self.options, segment.value, u)
-                            * block_freq;
+                    spill_cost += use_spill_cost(
+                        self.func,
+                        self.reginfo,
+                        self.options,
+                        self.coalescing,
+                        segment.value,
+                        u,
+                    );
                 }
             }
             trace!("{vreg} is directly spillable with a spill cost of {spill_cost}");

@@ -5,8 +5,8 @@ use core::ops::{Index, IndexMut, Range};
 
 use super::live_range::{LiveRangePoint, Slot};
 use crate::RegAllocError;
-use crate::function::Inst;
-use crate::reginfo::{PhysReg, RegClass, RegInfo};
+use crate::function::{Inst, Value};
+use crate::reginfo::{PhysReg, RegClass};
 
 /// A `Use` describes the way a value is used in a live range.
 ///
@@ -26,65 +26,7 @@ pub struct Use {
     pub kind: UseKind,
 }
 
-/// Cost of a spill/reload of a register from memory.
-pub const SPILL_RELOAD_COST: f32 = 1.0;
-
-/// Cost of a move between 2 registers.
-pub const MOVE_COST: f32 = 0.5;
-
 impl Use {
-    /// Spill cost for this use.
-    ///
-    /// This is calculated as the cost to be paid if the virtual register
-    /// containing this use is spilled to the stack instead of allocated to a
-    /// register.
-    pub fn spill_cost(self, reginfo: &impl RegInfo) -> f32 {
-        match self.kind {
-            // Fixed uses/defs are simple: just pay the cost of the
-            // spill/reload, except if reg represents a memory location.
-            UseKind::FixedDef { reg } | UseKind::FixedUse { reg } => {
-                if reginfo.is_memory(reg) {
-                    0.0
-                } else {
-                    SPILL_RELOAD_COST
-                }
-            }
-
-            // Some instructions can directly accept stack operands, use the
-            // class spill cost to determine how much this costs.
-            UseKind::ClassUse { slot: _, class }
-            | UseKind::ClassDef { slot: _, class }
-            | UseKind::GroupClassUse {
-                slot: _,
-                class,
-                group_index: _,
-            }
-            | UseKind::GroupClassDef {
-                slot: _,
-                class,
-                group_index: _,
-            } => reginfo.class_spill_cost(class),
-
-            // Tied uses and constraint conflicts involve a move from one vreg
-            // to another.
-            //
-            // By allocating this to a register instead of a spill slot we can
-            // use a register-register move which is cheaper than memory access.
-            UseKind::TiedUse {
-                use_slot: _,
-                def_slot: _,
-                class: _,
-                group_index: _,
-            }
-            | UseKind::ConstraintConflict {} => SPILL_RELOAD_COST - MOVE_COST,
-
-            // Blockparams don't care about being in a spill slot or in a
-            // register. It may matter a little if this introduces a copy, but
-            // that is mostly covered by the live-in/live-out cost penalty.
-            UseKind::BlockparamIn { blockparam_idx: _ } | UseKind::BlockparamOut {} => 0.0,
-        }
-    }
-
     /// Returns the live range point at which this use ends.
     ///
     /// For a use, this is the point at which the value is used.
@@ -102,7 +44,7 @@ impl Use {
             UseKind::GroupClassUse { .. } => inst.slot(Slot::Normal),
             UseKind::GroupClassDef { .. } => inst.next().slot(Slot::Boundary),
             UseKind::BlockparamIn { .. } => inst.slot(Slot::Boundary),
-            UseKind::BlockparamOut {} => inst.next().slot(Slot::Boundary),
+            UseKind::BlockparamOut { .. } => inst.next().slot(Slot::Boundary),
         }
     }
 }
@@ -255,7 +197,7 @@ pub enum UseKind {
     /// This implies that the terminator cannot have any operands itself: a
     /// source half-move is emitted at the point before the terminator
     /// instruction.
-    BlockparamOut {},
+    BlockparamOut { dest: Value },
 }
 impl UseKind {
     /// Whether this `UseKind` represents the definition of a `Value`.
@@ -316,8 +258,8 @@ impl fmt::Display for UseKind {
             UseKind::BlockparamIn { blockparam_idx } => {
                 write!(f, "blockparam_in: idx={blockparam_idx}")
             }
-            UseKind::BlockparamOut {} => {
-                write!(f, "blockparam_out")
+            UseKind::BlockparamOut { dest } => {
+                write!(f, "blockparam_out: dest={dest}")
             }
         }
     }

@@ -58,18 +58,94 @@ pub fn normalize_spill_weight(spill_cost: f32, num_insts: u32, options: &Options
     weight.min(f32::MAX.next_down())
 }
 
-/// Computes the spill cost for a single use after applying allocator-level
-/// rematerialization heuristics.
+/// Cost of a spill/reload of a register from memory.
+const SPILL_RELOAD_COST: f32 = 1.0;
+
+/// Cost of a move between 2 registers.
+const MOVE_COST: f32 = 0.5;
+
+/// Computes the frequency-weighted spill cost of a use, including transfers
+/// across block-parameter edges which could not be coalesced.
 pub(crate) fn use_spill_cost(
     func: &impl Function,
     reginfo: &impl RegInfo,
     options: &Options,
+    coalescing: &mut Coalescing,
     value: Value,
     u: Use,
 ) -> f32 {
-    let spill_cost = u.spill_cost(reginfo);
+    let block = func.inst_block(u.pos);
+    let mut block_freq = func.block_frequency(block);
+    let spill_cost = match u.kind {
+        // Fixed uses/defs are simple: just pay the cost of the
+        // spill/reload, except if reg represents a memory location.
+        UseKind::FixedDef { reg } | UseKind::FixedUse { reg } => {
+            if reginfo.is_memory(reg) {
+                0.0
+            } else {
+                SPILL_RELOAD_COST
+            }
+        }
 
-    if let Some((cost, _class)) = func.can_rematerialize(value) {
+        // Some instructions can directly accept stack operands, use the
+        // class spill cost to determine how much this costs.
+        UseKind::ClassUse { slot: _, class }
+        | UseKind::ClassDef { slot: _, class }
+        | UseKind::GroupClassUse {
+            slot: _,
+            class,
+            group_index: _,
+        }
+        | UseKind::GroupClassDef {
+            slot: _,
+            class,
+            group_index: _,
+        } => reginfo.class_spill_cost(class),
+
+        // Tied uses and constraint conflicts involve a move from one vreg
+        // to another.
+        //
+        // By allocating this to a register instead of a spill slot we can
+        // use a register-register move which is cheaper than memory access.
+        UseKind::TiedUse {
+            use_slot: _,
+            def_slot: _,
+            class: _,
+            group_index: _,
+        }
+        | UseKind::ConstraintConflict {} => SPILL_RELOAD_COST - MOVE_COST,
+
+        // Block parameters involve a move when the corresponding value is not
+        // part of the same value set, meaning that coalescing has determined
+        // that they cannot share the same register or spill slot.
+        UseKind::BlockparamIn { blockparam_idx } => {
+            debug_assert_eq!(func.block_params(block)[blockparam_idx as usize], value);
+            let value_set = coalescing.set_for_value(value);
+
+            // For incoming block parameters, the move appears in predecessor
+            // blocks, so we need to use the sum of block frequencies of all
+            // predecessor blocks where the corresponding outgoing block
+            // parameter is from a different value set.
+            block_freq = 0.0;
+            for &pred in func.block_preds(block) {
+                let source = func.jump_blockparams(pred)[blockparam_idx as usize];
+                if coalescing.set_for_value(source) == value_set {
+                    continue;
+                }
+                block_freq += func.block_frequency(pred);
+            }
+
+            SPILL_RELOAD_COST - MOVE_COST
+        }
+        UseKind::BlockparamOut { dest } => {
+            if coalescing.set_for_value(value) == coalescing.set_for_value(dest) {
+                return 0.0;
+            }
+            SPILL_RELOAD_COST - MOVE_COST
+        }
+    };
+
+    let spill_cost = if let Some((cost, _class)) = func.can_rematerialize(value) {
         let scale = match cost {
             RematCost::CheaperThanMove => options.direct_remat_cheaper_than_move_cost_scale,
             RematCost::CheaperThanLoad => options.direct_remat_cheaper_than_load_cost_scale,
@@ -79,7 +155,8 @@ pub(crate) fn use_spill_cost(
         spill_cost * options.indirect_remat_cost_scale
     } else {
         spill_cost
-    }
+    };
+    spill_cost * block_freq
 }
 
 /// Utility type for building a virtual register from value live ranges.
@@ -790,7 +867,8 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
     }
 
     /// Calculates the spill weight of the virtual register being built.
-    fn calc_spill_weight(&self, segments: &[ValueSegment]) -> f32 {
+    fn calc_spill_weight(&mut self, segments: CompactList<ValueSegment>) -> f32 {
+        let segments = segments.as_slice(&self.virt_regs.segment_pool);
         let num_insts = ValueSegment::live_insts(segments);
         trace!("Computing spill weight with {num_insts} instructions");
 
@@ -803,22 +881,23 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
             let mut total_spill_cost = 0.0;
             for seg in segments {
                 for u in &self.uses[seg.use_list] {
-                    let spill_cost =
-                        use_spill_cost(self.func, self.reginfo, self.options, seg.value, *u);
+                    let spill_cost = use_spill_cost(
+                        self.func,
+                        self.reginfo,
+                        self.options,
+                        self.coalescing,
+                        seg.value,
+                        *u,
+                    );
                     if spill_cost == 0.0 {
                         // Fast path for spill cost of 0.
                         continue;
                     }
-                    let block_freq = self.func.block_frequency(self.func.inst_block(u.pos));
                     trace!(
-                        "Use of {} at {} ({}) has spill cost {} ({spill_cost} * \
-                                 {block_freq})",
-                        seg.value,
-                        u.pos,
-                        u.kind,
-                        spill_cost * block_freq
+                        "Use of {} at {} ({}) has weighted spill cost {spill_cost}",
+                        seg.value, u.pos, u.kind,
                     );
-                    total_spill_cost += spill_cost * block_freq;
+                    total_spill_cost += spill_cost;
                 }
             }
 
@@ -895,7 +974,7 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
                 )?;
 
             // Recompute the spill weight after adding the segments.
-            let spill_weight = self.calc_spill_weight(self.virt_regs.segments(vreg));
+            let spill_weight = self.calc_spill_weight(self.virt_regs[vreg].segments);
             self.virt_regs.virt_regs[vreg].has_fixed_hint |= has_fixed_hint;
             self.virt_regs.virt_regs[vreg].class = self.constraints.class;
 
@@ -913,12 +992,11 @@ impl<F: Function, R: RegInfo> Context<'_, F, R> {
         }
 
         // Allocate a virtual register.
+        let segments =
+            CompactList::try_from_iter(segments.iter().copied(), &mut self.virt_regs.segment_pool)?;
         let spill_weight = self.calc_spill_weight(segments);
         let vreg = self.virt_regs.virt_regs.try_push(VirtRegData {
-            segments: CompactList::try_from_iter(
-                segments.iter().copied(),
-                &mut self.virt_regs.segment_pool,
-            )?,
+            segments,
             class: self.constraints.class,
             group_index: 0,
             group: None.into(),

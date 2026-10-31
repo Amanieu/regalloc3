@@ -525,7 +525,7 @@ impl MoveResolver {
                 UseKind::FixedDef { reg: _ }
                 | UseKind::ConstraintConflict {}
                 | UseKind::BlockparamIn { blockparam_idx: _ }
-                | UseKind::BlockparamOut {} => {}
+                | UseKind::BlockparamOut { dest: _ } => {}
             }
         }
     }
@@ -994,7 +994,7 @@ impl<F: Function> Context<'_, F> {
                     );
                 }
             }
-            UseKind::BlockparamOut {} => {
+            UseKind::BlockparamOut { dest: _ } => {
                 // Treat this like a block live-out for a jump terminator.
                 self.move_resolver.emit_source_half_move(
                     MovePosition::late(u.pos),
