@@ -59,7 +59,7 @@ impl DeadSpillElimination {
         let num_spillslots = spill_allocator.stack_layout.num_spillslots();
         self.block_live_out
             .grow_to_with(func.num_blocks(), EntitySet::new);
-        for live_out in self.block_live_out.values_mut() {
+        for live_out in self.block_live_out.values_mut().take(func.num_blocks()) {
             live_out.clear_and_resize(num_spillslots);
         }
         self.live.resize(num_spillslots);
