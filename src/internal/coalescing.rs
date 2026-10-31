@@ -17,8 +17,8 @@ use core::mem;
 
 use smallvec::SmallVec;
 
-use super::live_range::ValueSegment;
-use super::uses::Uses;
+use super::live_range::{LiveRangePoint, LiveRangeSegment, ValueSegment};
+use super::uses::{UseList, Uses};
 use super::value_live_ranges::ValueLiveRanges;
 use crate::Stats;
 use crate::entity::SecondaryMap;
@@ -323,9 +323,8 @@ impl Coalescing {
             // Move all segments to the unified ValueSet.
             trace!("-> merging {set_b} into {set_a}");
             stat!(stats, coalesce_slow_path);
-            let segments = merge(&value_live_ranges[set_a], &value_live_ranges[set_b]);
-            value_live_ranges[set_a] = segments;
-            value_live_ranges[set_b].clear();
+            let mut segments_b = mem::take(&mut value_live_ranges[set_b]);
+            merge(&mut value_live_ranges[set_a], &mut segments_b);
             merged = true;
             true
         });
@@ -333,34 +332,51 @@ impl Coalescing {
     }
 }
 
-/// Merges 2 sorted value segment lists into a new list.
-fn merge(mut a: &[ValueSegment], mut b: &[ValueSegment]) -> SmallVec<[ValueSegment; 4]> {
-    let mut out = SmallVec::with_capacity(a.len() + b.len());
-    loop {
-        match (a, b) {
-            (&[seg_a, ref rest_a @ ..], &[seg_b, ref rest_b @ ..]) => {
-                debug_assert_ne!(seg_a.live_range.from, seg_b.live_range.from);
-                let seg = if seg_a.live_range.from < seg_b.live_range.from {
-                    a = rest_a;
-                    seg_a
-                } else {
-                    b = rest_b;
-                    seg_b
-                };
-                out.push(seg);
-            }
-            (&[], &[_, ..]) => {
-                out.extend_from_slice(b);
-                break;
-            }
-            (&[_, ..], &[]) => {
-                out.extend_from_slice(a);
-                break;
-            }
-            (&[], &[]) => break,
+/// Merges two sorted segment lists into `a`, reusing the larger list's storage.
+#[inline]
+fn merge(a: &mut SmallVec<[ValueSegment; 4]>, b: &mut SmallVec<[ValueSegment; 4]>) {
+    if a.len() < b.len() {
+        mem::swap(a, b);
+    }
+
+    if let &[segment] = &b[..] {
+        // Fast path if one list only has a single segment.
+        let index = a.partition_point(|s| s.live_range.from < segment.live_range.from);
+        a.insert(index, segment);
+    } else {
+        let mut a_len = a.len();
+
+        // Grow the destination vector to be large enough to hold all segments.
+        let empty = ValueSegment {
+            live_range: LiveRangeSegment {
+                from: LiveRangePoint { bits: 0 },
+                to: LiveRangePoint { bits: 0 },
+            },
+            use_list: UseList::empty(),
+            value: Value::new(0),
+        };
+        a.resize(a_len + b.len(), empty);
+
+        // Iterate backwards over every element in b.
+        for (index, &segment) in b.iter().enumerate().rev() {
+            // Find where this element belongs in the remaining prefix of a.
+            let insert =
+                a[..a_len].partition_point(|s| s.live_range.from < segment.live_range.from);
+
+            // Move the remaining elements of a at or after insert to their
+            // final positions, leaving room for this element and the index
+            // earlier elements of b.
+            a.copy_within(insert..a_len, insert + index + 1);
+
+            // Place this element after the insert earlier elements of a and the
+            // index earlier elements of b.
+            a[insert + index] = segment;
+
+            // Only the prefix before insert remains to be merged.
+            a_len = insert;
         }
     }
-    debug_assert!(out.is_sorted_by_key(|seg: &ValueSegment| seg.live_range.from));
-    debug_assert!(out.is_sorted_by_key(|seg: &ValueSegment| seg.live_range.to));
-    out
+
+    debug_assert!(a.is_sorted_by_key(|seg| seg.live_range.from));
+    debug_assert!(a.is_sorted_by_key(|seg| seg.live_range.to));
 }
